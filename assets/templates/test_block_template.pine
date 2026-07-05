@@ -1,0 +1,46 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © test-block-pattern
+
+//@version=6
+// This file is a RUNNABLE REFERENCE for the assertion-counter test pattern used
+// throughout this skill's scaffolded templates. It is not meant to be scaffolded
+// as a real project — copy the pieces you need into your own script's testMode
+// section. Tallying pass/fail counts in a small table (instead of one label per
+// assertion per bar) avoids spending your label/plot-count budget on a long
+// backtest, and gives an at-a-glance summary instead of a wall of markers.
+indicator("Test Block Pattern Reference", overlay=false)
+
+// ————— Inputs
+bool testModeInput = input.bool(true, "Test Mode", group="Debug/Test")
+
+// ————— Calculations
+var int passCount = 0
+var int failCount = 0
+
+// @function Records a pass/fail assertion. Draws a marker only on failure
+// (passing bars cost nothing beyond a counter increment).
+recordAssertion(bool condition, string label) =>
+    if testModeInput
+        if condition
+            passCount := passCount + 1
+        else
+            failCount := failCount + 1
+            label.new(
+                 bar_index, high, "FAIL: " + label, color=color.red,
+                 style=label.style_label_down, size=size.tiny
+                 )
+
+// Example assertions — replace with real checks about your own script's values.
+// Keep them cheap (no repainting side effects) since they run every bar.
+if testModeInput
+    recordAssertion(not na(close), "close should never be na")
+    recordAssertion(bar_index >= 0, "bar_index should never be negative")
+
+// ————— Visuals
+var table testDashboard = table.new(position.bottom_left, 2, 2, border_width=1)
+if testModeInput and barstate.islast
+    testDashboard.cell(0, 0, "Passed", text_size=size.small)
+    testDashboard.cell(1, 0, str.tostring(passCount), text_color=color.green, text_size=size.small)
+    testDashboard.cell(0, 1, "Failed", text_size=size.small)
+    testDashboard.cell(1, 1, str.tostring(failCount),
+         text_color=failCount > 0 ? color.red : color.green, text_size=size.small)
