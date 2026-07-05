@@ -1,0 +1,99 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © {{SHORTTITLE}}
+
+//@version=6
+strategy("{{TITLE}}", shorttitle="{{SHORTTITLE}}", overlay={{OVERLAY}},
+     default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+     initial_capital=10000, currency=currency.USD,
+     commission_type=strategy.commission.percent, commission_value=0.05,
+     slippage=1, margin_long=100, margin_short=100,
+     process_orders_on_close=true, max_labels_count=500)
+
+// ————— Constants
+string THEME_DARK  = "Dark"
+string THEME_LIGHT = "Light"
+color  BULL_DARK    = #26A69A
+color  BEAR_DARK    = #EF5350
+color  BULL_LIGHT   = #00796B
+color  BEAR_LIGHT   = #C62828
+
+// ————— Inputs
+int    fastLengthInput        = input.int(9, "Fast EMA Length", minval=1, group="Strategy")
+int    slowLengthInput        = input.int(21, "Slow EMA Length", minval=1, group="Strategy")
+float  stopLossPercentInput   = input.float(2.0, "Stop Loss %", minval=0.1, step=0.1, group="Risk Management")
+float  takeProfitPercentInput = input.float(4.0, "Take Profit %", minval=0.1, step=0.1, group="Risk Management")
+string themeInput = input.string(
+     THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
+bool   showDashboardInput = input.bool(true, "Show Dashboard", group="Appearance")
+bool   testModeInput       = input.bool(false, "Test Mode", group="Debug/Test")
+
+// ————— Function declarations
+// @function Returns the bullish accent color for the selected theme.
+getBullColor(string theme) =>
+    switch theme
+        THEME_DARK  => BULL_DARK
+        THEME_LIGHT => BULL_LIGHT
+        => BULL_DARK
+
+// @function Returns the bearish accent color for the selected theme.
+getBearColor(string theme) =>
+    switch theme
+        THEME_DARK  => BEAR_DARK
+        THEME_LIGHT => BEAR_LIGHT
+        => BEAR_DARK
+
+// ————— Calculations
+color bullColor = getBullColor(themeInput)
+color bearColor = getBearColor(themeInput)
+float fastMA = ta.ema(close, fastLengthInput)
+float slowMA = ta.ema(close, slowLengthInput)
+bool  longCondition  = ta.crossover(fastMA, slowMA)
+bool  shortCondition = ta.crossunder(fastMA, slowMA)
+
+float longStopPrice   = strategy.position_avg_price * (1 - stopLossPercentInput / 100)
+float longTakePrice   = strategy.position_avg_price * (1 + takeProfitPercentInput / 100)
+float shortStopPrice  = strategy.position_avg_price * (1 + stopLossPercentInput / 100)
+float shortTakePrice  = strategy.position_avg_price * (1 - takeProfitPercentInput / 100)
+
+// ————— Strategy calls
+if longCondition
+    strategy.entry("Long", strategy.long,
+         alert_message='{"action":"buy","ticker":"{{ticker}}","price":{{close}},"time":"{{time}}"}')
+
+if shortCondition
+    strategy.entry("Short", strategy.short,
+         alert_message='{"action":"sell","ticker":"{{ticker}}","price":{{close}},"time":"{{time}}"}')
+
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long", stop=longStopPrice, limit=longTakePrice,
+         alert_message='{"action":"close_buy","ticker":"{{ticker}}","time":"{{time}}"}')
+
+if strategy.position_size < 0
+    strategy.exit("Short Exit", "Short", stop=shortStopPrice, limit=shortTakePrice,
+         alert_message='{"action":"close_sell","ticker":"{{ticker}}","time":"{{time}}"}')
+
+// ————— Visuals
+plot(fastMA, "Fast EMA", color=bullColor, linewidth=2)
+plot(slowMA, "Slow EMA", color=bearColor, linewidth=2)
+
+float winRatePct = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100 : na
+string positionText = strategy.position_size > 0 ? "Long" : strategy.position_size < 0 ? "Short" : "Flat"
+color  positionColor = strategy.position_size > 0 ? bullColor : strategy.position_size < 0 ? bearColor : color.gray
+
+var table dashboard = table.new(position.top_right, 2, 3, border_width=1)
+if showDashboardInput and barstate.islast
+    dashboard.cell(0, 0, "Position", text_size=size.small)
+    dashboard.cell(1, 0, positionText, bgcolor=color.new(positionColor, 80), text_size=size.small)
+    dashboard.cell(0, 1, "Net Profit", text_size=size.small)
+    dashboard.cell(1, 1, str.tostring(strategy.netprofit, "#.##"), text_size=size.small)
+    dashboard.cell(0, 2, "Win Rate", text_size=size.small)
+    dashboard.cell(1, 2, na(winRatePct) ? "n/a" : str.tostring(winRatePct, "#.#") + "%", text_size=size.small)
+
+// ————— Debug / Test block (see references/pine-v6-guide.md — keep testModeInput false when handing off)
+if testModeInput
+    // Assertion 1: fast/slow MAs should never be na once past the warm-up period.
+    if bar_index > slowLengthInput and (na(fastMA) or na(slowMA))
+        label.new(bar_index, high, "FAIL: MA is na past warmup", color=color.red, style=label.style_label_down)
+    // Assertion 2: stop-loss % should never exceed take-profit % by convention here (sanity check on inputs).
+    if stopLossPercentInput <= 0 or takeProfitPercentInput <= 0
+        label.new(bar_index, low, "FAIL: risk % inputs must be positive", color=color.red, style=label.style_label_up)

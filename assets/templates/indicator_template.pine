@@ -1,0 +1,71 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © {{SHORTTITLE}}
+
+//@version=6
+indicator(
+     "{{TITLE}}", shorttitle="{{SHORTTITLE}}", overlay={{OVERLAY}},
+     max_labels_count=500
+     )
+
+// ————— Constants
+string THEME_DARK  = "Dark"
+string THEME_LIGHT = "Light"
+color  BULL_DARK    = #26A69A
+color  BEAR_DARK    = #EF5350
+color  BULL_LIGHT   = #00796B
+color  BEAR_LIGHT   = #C62828
+
+// ————— Inputs
+int    lengthInput        = input.int(14, "Length", minval=1, group="Settings")
+float  sourceInput         = input.source(close, "Source", group="Settings")
+string themeInput          = input.string(THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
+bool   showDashboardInput = input.bool(true, "Show Dashboard", group="Appearance")
+bool   testModeInput       = input.bool(false, "Test Mode", group="Debug/Test")
+
+// ————— Function declarations
+// @function Returns the bullish accent color for the selected theme.
+getBullColor(string theme) =>
+    switch theme
+        THEME_DARK  => BULL_DARK
+        THEME_LIGHT => BULL_LIGHT
+        => BULL_DARK
+
+// @function Returns the bearish accent color for the selected theme.
+getBearColor(string theme) =>
+    switch theme
+        THEME_DARK  => BEAR_DARK
+        THEME_LIGHT => BEAR_LIGHT
+        => BEAR_DARK
+
+// ————— Calculations
+color bullColor = getBullColor(themeInput)
+color bearColor = getBearColor(themeInput)
+float maValue = ta.sma(sourceInput, lengthInput)
+bool  trendUp = sourceInput > maValue
+
+// ————— Visuals
+plot(maValue, "MA", color=trendUp ? bullColor : bearColor, linewidth=2)
+
+var table dashboard = table.new(position.top_right, 2, 2, border_width=1)
+if showDashboardInput and barstate.islast
+    dashboard.cell(0, 0, "Trend", text_size=size.small)
+    dashboard.cell(1, 0, trendUp ? "Bullish" : "Bearish",
+         bgcolor=color.new(trendUp ? bullColor : bearColor, 80),
+         text_color=trendUp ? bullColor : bearColor, text_size=size.small)
+    dashboard.cell(0, 1, "MA Value", text_size=size.small)
+    dashboard.cell(1, 1, str.tostring(maValue, "#.##"), text_size=size.small)
+
+// ————— Alerts
+alertcondition(ta.cross(sourceInput, maValue), "Source crossed MA", "Source crossed the moving average")
+
+// ————— Debug / Test block (see references/pine-v6-guide.md — keep testModeInput false when handing off)
+if testModeInput
+    // Assertion 1: value should never be na once past the warm-up period.
+    if bar_index > lengthInput and na(maValue)
+        label.new(bar_index, high, "FAIL: maValue is na past warmup", color=color.red, style=label.style_label_down)
+    // Assertion 2: boundary bar shouldn't error even if maValue is na there.
+    if bar_index == 0 and not na(maValue)
+        label.new(
+             bar_index, low, "NOTE: maValue defined on bar 0 (check if expected)",
+             color=color.yellow, style=label.style_label_up
+             )

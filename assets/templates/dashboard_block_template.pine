@@ -1,0 +1,37 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © dashboard-block-pattern
+
+//@version=6
+// Runnable reference for the professional stats-dashboard + gradient-coloring
+// patterns described in references/design-system.md. Copy the table.new()/
+// cell() pattern into your own indicator/strategy — this file demonstrates it
+// standalone so it can be previewed and lint-checked on its own.
+indicator("Dashboard Block Pattern Reference", overlay=true)
+
+// ————— Constants
+color BULL_COLOR = #26A69A
+color BEAR_COLOR = #EF5350
+
+// ————— Inputs
+int  lengthInput         = input.int(14, "Length", minval=1, group="Settings")
+bool showDashboardInput = input.bool(true, "Show Dashboard", group="Appearance")
+
+// ————— Calculations
+float maValue  = ta.sma(close, lengthInput)
+float rsiValue = ta.rsi(close, lengthInput)
+bool  trendUp  = close > maValue
+
+// ————— Visuals
+plot(maValue, "MA", color=trendUp ? BULL_COLOR : BEAR_COLOR)
+
+var table dashboard = table.new(position.top_right, 2, 3, border_width=1, bgcolor=color.new(color.black, 85))
+if showDashboardInput and barstate.islast
+    dashboard.cell(0, 0, "Trend", text_size=size.small, text_color=color.gray)
+    dashboard.cell(1, 0, trendUp ? "Bullish" : "Bearish",
+         bgcolor=color.new(trendUp ? BULL_COLOR : BEAR_COLOR, 80),
+         text_color=trendUp ? BULL_COLOR : BEAR_COLOR, text_size=size.small)
+    dashboard.cell(0, 1, "MA", text_size=size.small, text_color=color.gray)
+    dashboard.cell(1, 1, str.tostring(maValue, "#.##"), text_size=size.small)
+    dashboard.cell(0, 2, "RSI", text_size=size.small, text_color=color.gray)
+    dashboard.cell(1, 2, str.tostring(rsiValue, "#.##"),
+         text_color=color.from_gradient(rsiValue, 30, 70, BEAR_COLOR, BULL_COLOR), text_size=size.small)
