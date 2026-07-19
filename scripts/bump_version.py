@@ -8,16 +8,26 @@ Usage:
     python3 bump_version.py path/to/project --bump patch --note "Fixed off-by-one bug"
     python3 bump_version.py path/to/project --bump minor --note "Added smoothing input"
     python3 bump_version.py path/to/project --bump major --note "Changed default alert format"
+
+Advanced:
+    python3 bump_version.py path/to/project --dry-run --bump patch
+    python3 bump_version.py path/to/project --json --bump minor
 """
 import argparse
 import datetime
 import json
 import re
+import sys
 from pathlib import Path
 
 
 def bump(version_str, part):
-    major, minor, patch = (int(x) for x in version_str.split("."))
+    parts = version_str.split(".")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        raise ValueError(
+            f"Invalid version string {version_str!r}: expected 'MAJOR.MINOR.PATCH' with integer parts."
+        )
+    major, minor, patch = (int(x) for x in parts)
     if part == "major":
         major, minor, patch = major + 1, 0, 0
     elif part == "minor":
@@ -63,6 +73,8 @@ def main():
     parser.add_argument("project_dir", help="Path to the project folder (contains version.json, CHANGELOG.md)")
     parser.add_argument("--bump", choices=["major", "minor", "patch"], required=True)
     parser.add_argument("--note", default="", help="One-line changelog note for this release")
+    parser.add_argument("--dry-run", action="store_true", help="Print what would change without modifying files")
+    parser.add_argument("--json", action="store_true", help="Emit result as JSON instead of human-readable text")
     args = parser.parse_args()
 
     project_dir = Path(args.project_dir)
@@ -70,22 +82,46 @@ def main():
     changelog_path = project_dir / "CHANGELOG.md"
 
     if not version_path.exists():
-        print(f"error: {version_path} not found.")
+        print(f"error: {version_path} not found.", file=sys.stderr)
         return 1
     if not changelog_path.exists():
-        print(f"error: {changelog_path} not found.")
+        print(f"error: {changelog_path} not found.", file=sys.stderr)
         return 1
 
     data = json.loads(version_path.read_text(encoding="utf-8"))
     old_version = data["version"]
-    new_version = bump(old_version, args.bump)
+    try:
+        new_version = bump(old_version, args.bump)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    today = datetime.date.today().isoformat()
+    result = {
+        "project": str(project_dir),
+        "old_version": old_version,
+        "new_version": new_version,
+        "bump_type": args.bump,
+        "note": args.note or "(no notes provided)",
+        "changelog_change": f"Moved [Unreleased] content to [{new_version}] - {today}",
+        "dry_run": args.dry_run,
+    }
+
+    if args.dry_run:
+        print(json.dumps(result, indent=2))
+        return 0
+
     data["version"] = new_version
     version_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
     update_changelog(changelog_path, new_version, args.note)
 
-    print(f"Bumped {data.get('name', project_dir.name)}: {old_version} -> {new_version}")
-    print(f"Updated {changelog_path}")
+    if args.json:
+        result["updated_files"] = [str(version_path), str(changelog_path)]
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Bumped {data.get('name', project_dir.name)}: {old_version} -> {new_version}")
+        print(f"Updated {changelog_path}")
     return 0
 
 
