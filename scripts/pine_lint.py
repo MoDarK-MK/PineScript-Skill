@@ -128,9 +128,11 @@ class LintResult:
 # Text helpers
 # ---------------------------------------------------------------------------
 def strip_strings_and_comments(line):
-    """Remove // comments AND blank out string contents (quotes included).
-    Use this for structural checks (brackets, keywords, param names) where
-    string contents would create false positives."""
+    """Remove // comments AND blank out string contents (the enclosing quotes
+    are kept, so a stripped line still shows WHERE a string literal was — e.g.
+    a switch arm `3 => "x"` strips to `3 => ""`, not `3 =>`). Use this for
+    structural checks (brackets, keywords, param names) where string contents
+    would create false positives."""
     out = []
     in_str = None
     i = 0
@@ -142,10 +144,12 @@ def strip_strings_and_comments(line):
                 continue
             if ch == in_str:
                 in_str = None
+                out.append(ch)
             i += 1
             continue
         if ch in ('"', "'"):
             in_str = ch
+            out.append(ch)
             i += 1
             continue
         if ch == '/' and i + 1 < len(line) and line[i + 1] == '/':

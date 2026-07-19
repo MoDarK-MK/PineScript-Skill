@@ -77,6 +77,18 @@ class TestCoreRules(unittest.TestCase):
         result = lint_text(VALID_INDICATOR + "x = math.max(1, 2\n")
         self.assertIn("PINE003", codes(result))
 
+    def test_switch_arm_with_string_value_not_flagged_as_empty_block(self):
+        # Regression: `3 => "★★★"` used to strip to `3 =>` and trip PINE020.
+        text = VALID_INDICATOR + (
+            'starString(int score) =>\n'
+            '    switch score\n'
+            '        3 => "***"\n'
+            '        2 => "**"\n'
+            '        => "-"\n'
+            'plotchar(close, "S", "", location.top)\n'
+        )
+        self.assertNotIn("PINE020", codes(lint_text(text)))
+
     def test_no_output_call(self):
         result = lint_text('//@version=6\nindicator("X", overlay=true)\nx = close\n')
         self.assertIn("PINE027", codes(result))

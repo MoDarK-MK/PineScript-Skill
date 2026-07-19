@@ -1,0 +1,144 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © REVPRO
+
+//@version=6
+indicator(
+     "Reversal Pro", shorttitle="REVPRO", overlay=true,
+     max_labels_count=500, max_lines_count=500
+     )
+
+// Pivot-based reversal detector covering the whole chart history, with a 0-3
+// confirmation strength score per signal (RSI exhaustion + volume spike +
+// candle confirmation).
+//
+// NOTE (repainting): ta.pivothigh/pivotlow only confirm a pivot `Pivot
+// Sensitivity` bars AFTER the actual high/low forms. Labels therefore appear
+// with that delay and could not have been traded in real time at the pivot bar
+// itself — treat them as zone markers, not instant entry signals.
+
+// ————— Constants
+int MAX_SCORE = 3
+color TRANSPARENT_COLOR = #00000000
+
+// ————— Inputs
+int   pivotLenInput    = input.int(15, "Pivot Sensitivity", minval=2, group="Reversal")
+bool  extendLinesInput = input.bool(false, "Extend Reversal Lines", group="Reversal")
+int   lineLengthInput  = input.int(20, "Fixed Line Length (if not extended)", minval=1, group="Reversal")
+
+int   minScoreInput    = input.int(0, "Min Score To Show (0 = all)", minval=0, maxval=3, group="Strength Filters")
+int   strongScoreInput = input.int(2, "'Strong' Alert Threshold", minval=1, maxval=3, group="Strength Filters")
+int   rsiLenInput      = input.int(14, "RSI Length", minval=1, group="Strength Filters")
+int   rsiObInput       = input.int(60, "RSI Exhaustion for Tops", minval=50, maxval=100, group="Strength Filters")
+int   rsiOsInput       = input.int(40, "RSI Exhaustion for Bottoms", minval=0, maxval=50, group="Strength Filters")
+int   volLenInput      = input.int(20, "Volume Average Length", minval=1, group="Strength Filters")
+float volMultInput     = input.float(1.5, "Volume Spike Multiplier", minval=1.0, step=0.1, group="Strength Filters")
+
+color bullColorInput   = input.color(#089981, "Bullish Color", group="Appearance")
+color bearColorInput   = input.color(#f23645, "Bearish Color", group="Appearance")
+bool  testModeInput    = input.bool(false, "Test Mode", group="Debug/Test")
+
+// ————— Function declarations
+// @function Builds a "★★☆"-style strength string for a 0-3 score.
+starString(int score) =>
+    switch score
+        3 => "★★★"
+        2 => "★★☆"
+        1 => "★☆☆"
+        => "☆☆☆"
+
+// @function Text transparency for a score — weak signals fade, strong ones pop.
+scoreTransp(int score) =>
+    switch score
+        3 => 0
+        2 => 10
+        1 => 30
+        => 50
+
+// @function Multi-line tooltip describing which confirmations passed.
+confirmationTooltip(bool rsiOk, bool volOk, bool candleOk) =>
+    string rsiTxt    = (rsiOk ? "✔" : "✘") + " RSI exhaustion at pivot"
+    string volTxt    = (volOk ? "✔" : "✘") + " Volume spike at pivot"
+    string candleTxt = (candleOk ? "✔" : "✘") + " Price broke past pivot candle"
+    rsiTxt + "\n" + volTxt + "\n" + candleTxt
+
+// ————— Calculations
+float rsiValue = ta.rsi(close, rsiLenInput)
+float volAvg   = ta.sma(nz(volume), volLenInput)
+
+float pivotHigh = ta.pivothigh(high, pivotLenInput, pivotLenInput)
+float pivotLow  = ta.pivotlow(low, pivotLenInput, pivotLenInput)
+bool  bearPivot = not na(pivotHigh)
+bool  bullPivot = not na(pivotLow)
+
+// Confirmations are evaluated at the pivot bar (pivotLenInput bars back), except
+// the candle check, which uses the current confirmation bar's close.
+bool volSpikeAtPivot = nz(volume[pivotLenInput]) > volAvg[pivotLenInput] * volMultInput
+
+bool bearRsiOk    = rsiValue[pivotLenInput] >= rsiObInput
+bool bearCandleOk = close < low[pivotLenInput]
+bool bullRsiOk    = rsiValue[pivotLenInput] <= rsiOsInput
+bool bullCandleOk = close > high[pivotLenInput]
+
+int bearScore = not bearPivot ? 0 : (bearRsiOk ? 1 : 0) + (volSpikeAtPivot ? 1 : 0) + (bearCandleOk ? 1 : 0)
+int bullScore = not bullPivot ? 0 : (bullRsiOk ? 1 : 0) + (volSpikeAtPivot ? 1 : 0) + (bullCandleOk ? 1 : 0)
+
+// ————— Visuals
+if bearPivot and bearScore >= minScoreInput
+    label.new(
+         bar_index[pivotLenInput], pivotHigh, "REVERSAL " + starString(bearScore),
+         color=TRANSPARENT_COLOR,
+         textcolor=color.new(bearColorInput, scoreTransp(bearScore)),
+         style=label.style_label_down,
+         size=bearScore == MAX_SCORE ? size.normal : size.small,
+         tooltip=confirmationTooltip(bearRsiOk, volSpikeAtPivot, bearCandleOk)
+         )
+    line.new(
+         bar_index[pivotLenInput], pivotHigh,
+         extendLinesInput ? bar_index : bar_index[pivotLenInput] + lineLengthInput, pivotHigh,
+         color=color.new(bearColorInput, bearScore >= strongScoreInput ? 50 : 70),
+         style=line.style_dotted,
+         width=bearScore == MAX_SCORE ? 2 : 1,
+         extend=extendLinesInput ? extend.right : extend.none
+         )
+
+if bullPivot and bullScore >= minScoreInput
+    label.new(
+         bar_index[pivotLenInput], pivotLow, "REVERSAL " + starString(bullScore),
+         color=TRANSPARENT_COLOR,
+         textcolor=color.new(bullColorInput, scoreTransp(bullScore)),
+         style=label.style_label_up,
+         size=bullScore == MAX_SCORE ? size.normal : size.small,
+         tooltip=confirmationTooltip(bullRsiOk, volSpikeAtPivot, bullCandleOk)
+         )
+    line.new(
+         bar_index[pivotLenInput], pivotLow,
+         extendLinesInput ? bar_index : bar_index[pivotLenInput] + lineLengthInput, pivotLow,
+         color=color.new(bullColorInput, bullScore >= strongScoreInput ? 50 : 70),
+         style=line.style_dotted,
+         width=bullScore == MAX_SCORE ? 2 : 1,
+         extend=extendLinesInput ? extend.right : extend.none
+         )
+
+// ————— Alerts
+alertcondition(bearPivot, "Bearish Reversal Pivot", "Bearish reversal pivot confirmed.")
+alertcondition(bullPivot, "Bullish Reversal Pivot", "Bullish reversal pivot confirmed.")
+alertcondition(
+     bearPivot and bearScore >= strongScoreInput,
+     "STRONG Bearish Reversal", "Strong bearish reversal — score at or above the alert threshold."
+     )
+alertcondition(
+     bullPivot and bullScore >= strongScoreInput,
+     "STRONG Bullish Reversal", "Strong bullish reversal — score at or above the alert threshold."
+     )
+
+// ————— Debug / Test block (keep testModeInput false when handing off)
+if testModeInput
+    // Assertion 1: scores must always stay inside the 0..MAX_SCORE range.
+    if bearScore < 0 or bearScore > MAX_SCORE or bullScore < 0 or bullScore > MAX_SCORE
+        label.new(bar_index, high, "FAIL: score out of 0-3 range", color=color.red, style=label.style_label_down)
+    // Assertion 2: a score without a pivot on the same bar would be a logic bug.
+    if (bearScore > 0 and not bearPivot) or (bullScore > 0 and not bullPivot)
+        label.new(bar_index, high, "FAIL: score set without a pivot", color=color.red, style=label.style_label_down)
+    // Assertion 3: RSI must stay within its mathematical 0-100 bounds past warm-up.
+    if bar_index > rsiLenInput and not na(rsiValue) and (rsiValue < 0 or rsiValue > 100)
+        label.new(bar_index, low, "FAIL: RSI out of 0-100 bounds", color=color.red, style=label.style_label_up)
