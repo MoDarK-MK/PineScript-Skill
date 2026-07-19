@@ -37,6 +37,11 @@ color bullColor = getBullColor(themeInput)
 color bearColor = getBearColor(themeInput)
 ```
 
+A ready-to-paste version of these constants and helpers lives in
+`references/snippets/color_helpers.pine`. Note that Pine has no local file
+imports — copy-paste the snippet, or publish it as a TradingView library for
+true cross-script reuse.
+
 **B. Detect the chart background and adapt automatically** using
 `chart.bg_color`/`chart.fg_color` (available via the `chart.*` namespace) — less
 predictable across custom background colors, so prefer (A) for anything published.

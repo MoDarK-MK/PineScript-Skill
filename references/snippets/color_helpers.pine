@@ -1,0 +1,36 @@
+// Reference snippet: theme color constants and helpers used by the templates.
+//
+// NOTE: Pine Script has no local file imports — you CANNOT `import` this file
+// from another script on disk. This snippet exists as a single copy-paste
+// source of truth: paste the block below into your indicator/strategy, or, if
+// you want true cross-script reuse, publish it as a TradingView library
+// (`//@version=6` + `library("ColorHelpers")`) and `import user/ColorHelpers/1`.
+//
+// This is a fragment, not a standalone script, so whole-script lint rules
+// (version pragma / declaration / output call) are suppressed here:
+// pine-lint-disable PINE001,PINE002,PINE027
+
+// ————— Theme Constants (SNAKE_CASE)
+string THEME_DARK  = "Dark"
+string THEME_LIGHT = "Light"
+
+// ————— Bullish/Bearish Colors per Theme
+color BULL_DARK    = #26A69A   // Teal accent on dark themes
+color BEAR_DARK    = #EF5350   // Red accent on dark themes
+color BULL_LIGHT   = #00796B   // Darker teal on light themes (better contrast)
+color BEAR_LIGHT   = #C62828   // Deep red on light themes
+
+// ————— Helper Functions (method-call syntax, camelCase)
+// @function Returns the bullish accent color for the selected theme.
+getBullColor(string theme) =>
+    switch theme
+        THEME_DARK  => BULL_DARK
+        THEME_LIGHT => BULL_LIGHT
+        =>           BULL_DARK
+
+// @function Returns the bearish accent color for the selected theme.
+getBearColor(string theme) =>
+    switch theme
+        THEME_DARK  => BEAR_DARK
+        THEME_LIGHT => BEAR_LIGHT
+        =>            BEAR_DARK
