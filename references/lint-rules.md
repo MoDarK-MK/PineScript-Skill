@@ -15,6 +15,10 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
+Note on numbering: there are 27 rules spanning codes PINE001–PINE028. The code
+**PINE024 is intentionally unassigned** (a rule retired before release; the
+number is kept vacant so existing suppression comments never change meaning).
+
 ---
 
 ### PINE001 — error — Missing or malformed `//@version=` pragma
@@ -193,6 +197,8 @@ ratio = 5 / 2
 ```
 Informational only — real scripts rarely divide two bare integer literals
 on purpose, but if you do, and you want v5's truncation, wrap in `int(...)`.
+
+*(PINE024 intentionally unassigned — see the numbering note at the top.)*
 
 ### PINE025 — warning — Approaching/over line/box/label/polyline/table limits
 Separate pools from PINE009: `line.new`/`box.new`/`label.new` cap at 500 IDs

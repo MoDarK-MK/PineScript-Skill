@@ -23,10 +23,11 @@ TradingView's servers.
 |---|---|
 | `references/pine-v6-guide.md` | v5→v6 breaking changes, dynamic requests, repainting traps, `var`/`varip`, verified hard platform limits |
 | `references/style-guide.md` | Official naming/structure/spacing conventions (camelCase, SNAKE_CASE, section order, line-wrapping) |
-| `references/lint-rules.md` | Full catalog of all 27 lint rules (PINE001-028) with bad/good examples |
+| `references/lint-rules.md` | Full catalog of all 27 lint rules (codes PINE001–PINE028; PINE024 unassigned) with bad/good examples |
 | `references/design-system.md` | Making indicators look professional: theming, dashboards, gradients, palettes |
 | `references/publishing-guide.md` | TradingView House Rules condensed: privacy/visibility, strategy realism, description format |
 | `references/repo-structure.md` | Folder layout, `version.json`, `CHANGELOG.md` format, optional pre-commit hook |
+| `references/snippets/` | Copy-paste Pine fragments (e.g. `color_helpers.pine` — theme color constants/helpers). Pine has no local imports; paste, or publish as a TradingView library for real reuse |
 
 Several of these apply to any single request — e.g. "write me an indicator" still
 benefits from `pine-v6-guide.md` (correctness) and `design-system.md` (it not looking

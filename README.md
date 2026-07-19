@@ -93,12 +93,17 @@ PineScript-Skill/
 ├── references/
 │   ├── pine-v6-guide.md             # v5→v6 breaking changes & platform limits
 │   ├── style-guide.md               # Naming, spacing, section order
-│   ├── lint-rules.md                # Full catalog of 27 lint rules (PINE001-028)
+│   ├── lint-rules.md                # Full catalog of 27 lint rules (PINE001–028, PINE024 unassigned)
 │   ├── design-system.md             # Theming, gradients, dashboards
 │   ├── publishing-guide.md          # TradingView House Rules condensed
-│   └── repo-structure.md            # Folder layout, versioning, changelog format
+│   ├── repo-structure.md            # Folder layout, versioning, changelog format
+│   └── snippets/                    # Copy-paste Pine fragments (e.g. color_helpers.pine)
+├── tests/                           # Unit tests for the Python tooling (stdlib unittest)
+├── .github/workflows/ci.yml        # CI: runs the tests + lints every .pine file
 └── SKILL.md                         # Full documentation
 ```
+
+> `indicators/` and `strategies/` don't exist in a fresh clone — `scaffold_project.py` creates them on demand.
 
 ---
 
@@ -146,6 +151,7 @@ python3 scripts/bump_version.py indicators/my_rsi_bands --bump major --note "Cha
 ```
 
 Updates `version.json` and moves `[Unreleased]` to a dated entry in `CHANGELOG.md`.
+Supports `--dry-run` (preview without touching files) and `--json` (machine-readable output).
 
 ### **generate_release_bundle.py** — One-Command Release
 ```bash
@@ -167,7 +173,7 @@ Every script benefits from these docs; required reading before shipping:
 |-------|---------|
 | **[pine-v6-guide.md](references/pine-v6-guide.md)** | v5→v6 breaking changes, platform limits, dynamic requests, repainting traps, `var`/`varip` semantics |
 | **[style-guide.md](references/style-guide.md)** | Official naming conventions (camelCase/SNAKE_CASE), section order, spacing, line wrapping |
-| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 27 lint rules (PINE001-028) with examples and rationale |
+| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 27 lint rules (codes PINE001–PINE028; PINE024 unassigned) with examples and rationale |
 | **[design-system.md](references/design-system.md)** | Theming, gradients, multi-color palettes, watermarks, dashboard patterns |
 | **[publishing-guide.md](references/publishing-guide.md)** | TradingView House Rules, description format, backtest realism, 15-min public edit window |
 | **[repo-structure.md](references/repo-structure.md)** | Folder layout, `version.json`, CHANGELOG format, optional pre-commit hook |
@@ -216,6 +222,19 @@ python3 scripts/generate_release_bundle.py indicators/rsi_custom
 ✅ **Professional Templates** — Indicators, strategies, dashboards, test patterns  
 ✅ **Comprehensive Docs** — v6 guide, style guide, design system, publish rules  
 ✅ **Git-Ready** — Structure supports multi-indicator repos and version control  
+
+---
+
+## 🧪 Development & CI
+
+The Python tooling has its own test suite (stdlib `unittest`, no dependencies):
+
+```bash
+python -m unittest discover -s tests -t . -v
+```
+
+GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the
+test suite and lints every `.pine` file in the repo on each push and pull request.
 
 ---
 
