@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  python-tests:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Byte-compile scripts
+        run: python -m compileall scripts/
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -t . -v
+
+  pine-lint:
+    name: Lint Pine templates & snippets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Lint every .pine file in the repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          while IFS= read -r -d '' f; do
+            echo "==> $f"
+            python scripts/pine_lint.py "$f" || status=1
+          done < <(find assets references -name '*.pine' -print0)
+          exit $status
