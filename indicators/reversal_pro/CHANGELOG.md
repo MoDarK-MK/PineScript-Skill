@@ -3,6 +3,13 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.3.0] - 2026-07-22
+- Upgraded the strength score from 0-3 to 0-5 stars
+- Added two confirmations: wick rejection on the pivot candle, and major-swing extreme over a wider lookback
+- New inputs: Wick Rejection ratio and Major Swing Lookback; 'Strong' threshold default raised to 4/5
+- Max-strength (★★★★★) signals now render at large size with a width-3 line
+- 5-star strength scoring (added wick-rejection and major-swing confirmations)
+
 ## [0.2.0] - 2026-07-19
 - Extracted the reversal engine from the original multi-module indicator (RSI boxes, volume profile, trend table, and background removed)
 - Signals now cover the whole chart history (old 300-bar window removed; capped only by TradingView's 500 label/line limit)

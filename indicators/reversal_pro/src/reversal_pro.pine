@@ -7,9 +7,13 @@ indicator(
      max_labels_count=500, max_lines_count=500
      )
 
-// Pivot-based reversal detector covering the whole chart history, with a 0-3
-// confirmation strength score per signal (RSI exhaustion + volume spike +
-// candle confirmation).
+// Pivot-based reversal detector covering the whole chart history, with a 0-5
+// confirmation strength score per signal:
+//   1. RSI exhaustion at the pivot bar
+//   2. Volume spike at the pivot bar
+//   3. Candle confirmation — price broke past the pivot candle
+//   4. Wick rejection — long rejection tail on the pivot candle
+//   5. Major swing — the pivot is the extreme of a wider lookback window
 //
 // NOTE (repainting): ta.pivothigh/pivotlow only confirm a pivot `Pivot
 // Sensitivity` bars AFTER the actual high/low forms. Labels therefore appear
@@ -17,7 +21,7 @@ indicator(
 // itself — treat them as zone markers, not instant entry signals.
 
 // ————— Constants
-int MAX_SCORE = 3
+int   MAX_SCORE         = 5
 color TRANSPARENT_COLOR = #00000000
 
 // ————— Inputs
@@ -25,50 +29,61 @@ int   pivotLenInput    = input.int(15, "Pivot Sensitivity", minval=2, group="Rev
 bool  extendLinesInput = input.bool(false, "Extend Reversal Lines", group="Reversal")
 int   lineLengthInput  = input.int(20, "Fixed Line Length (if not extended)", minval=1, group="Reversal")
 
-int   minScoreInput    = input.int(0, "Min Score To Show (0 = all)", minval=0, maxval=3, group="Strength Filters")
-int   strongScoreInput = input.int(2, "'Strong' Alert Threshold", minval=1, maxval=3, group="Strength Filters")
+int   minScoreInput    = input.int(0, "Min Score To Show (0 = all)", minval=0, maxval=5, group="Strength Filters")
+int   strongScoreInput = input.int(4, "'Strong' Alert Threshold", minval=1, maxval=5, group="Strength Filters")
 int   rsiLenInput      = input.int(14, "RSI Length", minval=1, group="Strength Filters")
 int   rsiObInput       = input.int(60, "RSI Exhaustion for Tops", minval=50, maxval=100, group="Strength Filters")
 int   rsiOsInput       = input.int(40, "RSI Exhaustion for Bottoms", minval=0, maxval=50, group="Strength Filters")
 int   volLenInput      = input.int(20, "Volume Average Length", minval=1, group="Strength Filters")
 float volMultInput     = input.float(1.5, "Volume Spike Multiplier", minval=1.0, step=0.1, group="Strength Filters")
+float wickRatioInput   = input.float(0.5, "Wick Rejection", minval=0.1, maxval=1.0, step=0.1, group="Strength Filters")
+int   swingLookInput   = input.int(50, "Major Swing Lookback", minval=2, group="Strength Filters")
 
 color bullColorInput   = input.color(#089981, "Bullish Color", group="Appearance")
 color bearColorInput   = input.color(#f23645, "Bearish Color", group="Appearance")
 bool  testModeInput    = input.bool(false, "Test Mode", group="Debug/Test")
 
 // ————— Function declarations
-// @function Builds a "★★☆"-style strength string for a 0-3 score.
+// @function Builds a "★★★☆☆"-style strength string for a 0..MAX_SCORE score.
 starString(int score) =>
-    switch score
-        3 => "★★★"
-        2 => "★★☆"
-        1 => "★☆☆"
-        => "☆☆☆"
+    string stars = ""
+    for i = 1 to MAX_SCORE
+        // pine-lint-disable-next-line PINE005
+        stars := stars + (i <= score ? "★" : "☆")
+    stars
 
 // @function Text transparency for a score — weak signals fade, strong ones pop.
 scoreTransp(int score) =>
-    switch score
-        3 => 0
-        2 => 10
-        1 => 30
-        => 50
+    math.max(0, 50 - score * 10)
+
+// @function Sums how many of the five confirmation flags are true (0..5).
+countConfirmations(bool a, bool b, bool c, bool d, bool e) =>
+    (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0) + (d ? 1 : 0) + (e ? 1 : 0)
 
 // @function Multi-line tooltip describing which confirmations passed.
-confirmationTooltip(bool rsiOk, bool volOk, bool candleOk) =>
+confirmationTooltip(bool rsiOk, bool volOk, bool candleOk, bool wickOk, bool swingOk) =>
     string rsiTxt    = (rsiOk ? "✔" : "✘") + " RSI exhaustion at pivot"
     string volTxt    = (volOk ? "✔" : "✘") + " Volume spike at pivot"
     string candleTxt = (candleOk ? "✔" : "✘") + " Price broke past pivot candle"
-    rsiTxt + "\n" + volTxt + "\n" + candleTxt
+    string wickTxt   = (wickOk ? "✔" : "✘") + " Rejection wick on pivot candle"
+    string swingTxt  = (swingOk ? "✔" : "✘") + " Major swing extreme"
+    rsiTxt + "\n" + volTxt + "\n" + candleTxt + "\n" + wickTxt + "\n" + swingTxt
 
 // ————— Calculations
 float rsiValue = ta.rsi(close, rsiLenInput)
 float volAvg   = ta.sma(nz(volume), volLenInput)
+float highestN = ta.highest(high, swingLookInput)
+float lowestN  = ta.lowest(low, swingLookInput)
 
 float pivotHigh = ta.pivothigh(high, pivotLenInput, pivotLenInput)
 float pivotLow  = ta.pivotlow(low, pivotLenInput, pivotLenInput)
 bool  bearPivot = not na(pivotHigh)
 bool  bullPivot = not na(pivotLow)
+
+// Pivot-bar candle geometry (pivotLenInput bars back).
+float pivotRange = high[pivotLenInput] - low[pivotLenInput]
+float upperWick  = high[pivotLenInput] - math.max(open[pivotLenInput], close[pivotLenInput])
+float lowerWick  = math.min(open[pivotLenInput], close[pivotLenInput]) - low[pivotLenInput]
 
 // Confirmations are evaluated at the pivot bar (pivotLenInput bars back), except
 // the candle check, which uses the current confirmation bar's close.
@@ -76,11 +91,16 @@ bool volSpikeAtPivot = nz(volume[pivotLenInput]) > volAvg[pivotLenInput] * volMu
 
 bool bearRsiOk    = rsiValue[pivotLenInput] >= rsiObInput
 bool bearCandleOk = close < low[pivotLenInput]
+bool bearWickOk   = pivotRange > 0 and upperWick >= wickRatioInput * pivotRange
+bool bearSwingOk  = high[pivotLenInput] >= highestN[pivotLenInput]
+
 bool bullRsiOk    = rsiValue[pivotLenInput] <= rsiOsInput
 bool bullCandleOk = close > high[pivotLenInput]
+bool bullWickOk   = pivotRange > 0 and lowerWick >= wickRatioInput * pivotRange
+bool bullSwingOk  = low[pivotLenInput] <= lowestN[pivotLenInput]
 
-int bearScore = not bearPivot ? 0 : (bearRsiOk ? 1 : 0) + (volSpikeAtPivot ? 1 : 0) + (bearCandleOk ? 1 : 0)
-int bullScore = not bullPivot ? 0 : (bullRsiOk ? 1 : 0) + (volSpikeAtPivot ? 1 : 0) + (bullCandleOk ? 1 : 0)
+int bearScore = bearPivot ? countConfirmations(bearRsiOk, volSpikeAtPivot, bearCandleOk, bearWickOk, bearSwingOk) : 0
+int bullScore = bullPivot ? countConfirmations(bullRsiOk, volSpikeAtPivot, bullCandleOk, bullWickOk, bullSwingOk) : 0
 
 // ————— Visuals
 if bearPivot and bearScore >= minScoreInput
@@ -89,15 +109,15 @@ if bearPivot and bearScore >= minScoreInput
          color=TRANSPARENT_COLOR,
          textcolor=color.new(bearColorInput, scoreTransp(bearScore)),
          style=label.style_label_down,
-         size=bearScore == MAX_SCORE ? size.normal : size.small,
-         tooltip=confirmationTooltip(bearRsiOk, volSpikeAtPivot, bearCandleOk)
+         size=bearScore == MAX_SCORE ? size.large : bearScore >= strongScoreInput ? size.normal : size.small,
+         tooltip=confirmationTooltip(bearRsiOk, volSpikeAtPivot, bearCandleOk, bearWickOk, bearSwingOk)
          )
     line.new(
          bar_index[pivotLenInput], pivotHigh,
          extendLinesInput ? bar_index : bar_index[pivotLenInput] + lineLengthInput, pivotHigh,
-         color=color.new(bearColorInput, bearScore >= strongScoreInput ? 50 : 70),
+         color=color.new(bearColorInput, bearScore >= strongScoreInput ? 45 : 70),
          style=line.style_dotted,
-         width=bearScore == MAX_SCORE ? 2 : 1,
+         width=bearScore == MAX_SCORE ? 3 : bearScore >= strongScoreInput ? 2 : 1,
          extend=extendLinesInput ? extend.right : extend.none
          )
 
@@ -107,15 +127,15 @@ if bullPivot and bullScore >= minScoreInput
          color=TRANSPARENT_COLOR,
          textcolor=color.new(bullColorInput, scoreTransp(bullScore)),
          style=label.style_label_up,
-         size=bullScore == MAX_SCORE ? size.normal : size.small,
-         tooltip=confirmationTooltip(bullRsiOk, volSpikeAtPivot, bullCandleOk)
+         size=bullScore == MAX_SCORE ? size.large : bullScore >= strongScoreInput ? size.normal : size.small,
+         tooltip=confirmationTooltip(bullRsiOk, volSpikeAtPivot, bullCandleOk, bullWickOk, bullSwingOk)
          )
     line.new(
          bar_index[pivotLenInput], pivotLow,
          extendLinesInput ? bar_index : bar_index[pivotLenInput] + lineLengthInput, pivotLow,
-         color=color.new(bullColorInput, bullScore >= strongScoreInput ? 50 : 70),
+         color=color.new(bullColorInput, bullScore >= strongScoreInput ? 45 : 70),
          style=line.style_dotted,
-         width=bullScore == MAX_SCORE ? 2 : 1,
+         width=bullScore == MAX_SCORE ? 3 : bullScore >= strongScoreInput ? 2 : 1,
          extend=extendLinesInput ? extend.right : extend.none
          )
 
@@ -135,7 +155,7 @@ alertcondition(
 if testModeInput
     // Assertion 1: scores must always stay inside the 0..MAX_SCORE range.
     if bearScore < 0 or bearScore > MAX_SCORE or bullScore < 0 or bullScore > MAX_SCORE
-        label.new(bar_index, high, "FAIL: score out of 0-3 range", color=color.red, style=label.style_label_down)
+        label.new(bar_index, high, "FAIL: score out of 0-5 range", color=color.red, style=label.style_label_down)
     // Assertion 2: a score without a pivot on the same bar would be a logic bug.
     if (bearScore > 0 and not bearPivot) or (bullScore > 0 and not bullPivot)
         label.new(bar_index, high, "FAIL: score set without a pivot", color=color.red, style=label.style_label_down)
