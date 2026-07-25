@@ -3,6 +3,10 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.5.2] - 2026-07-25
+- Default bias-table timeframes changed to 1m / 5m / 15m / 1H / 4H
+- Default bias-table timeframes: 1m/5m/15m/1H/4H
+
 ## [0.5.1] - 2026-07-25
 - Key-level labels now float just above their line (label.style_label_lower_left) instead of sitting on it, so the line no longer cuts through the text
 - Float key-level labels above the line for readability

@@ -65,11 +65,11 @@ int    tableTranspInput = input.int(80, "Table Transparency", minval=0, maxval=1
 color  headerColInput  = input.color(color.new(#5b9cf6, 0), "Header Color", group="Bias Table")
 color  upColInput      = input.color(#089981, "Up Color", group="Bias Table")
 color  downColInput    = input.color(#f23645, "Down Color", group="Bias Table")
-string tf1Input        = input.timeframe("5", "Bias Timeframe 1", group="Bias Table")
-string tf2Input        = input.timeframe("15", "Bias Timeframe 2", group="Bias Table")
-string tf3Input        = input.timeframe("60", "Bias Timeframe 3", group="Bias Table")
-string tf4Input        = input.timeframe("240", "Bias Timeframe 4", group="Bias Table")
-string tf5Input        = input.timeframe("D", "Bias Timeframe 5", group="Bias Table")
+string tf1Input        = input.timeframe("1", "Bias Timeframe 1", group="Bias Table")
+string tf2Input        = input.timeframe("5", "Bias Timeframe 2", group="Bias Table")
+string tf3Input        = input.timeframe("15", "Bias Timeframe 3", group="Bias Table")
+string tf4Input        = input.timeframe("60", "Bias Timeframe 4", group="Bias Table")
+string tf5Input        = input.timeframe("240", "Bias Timeframe 5", group="Bias Table")
 
 // ————— Inputs: Key Levels
 bool   showLevelsInput = input.bool(true, "Show Key Levels", group="Key Levels")
