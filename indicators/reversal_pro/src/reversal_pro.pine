@@ -15,6 +15,14 @@ indicator(
 //   4. Wick rejection — long rejection tail on the pivot candle
 //   5. Major swing — the pivot is the extreme of a wider lookback window
 //
+// Plus two dashboard modules:
+//   • Reversal-Bias table — a per-timeframe UP%/DOWN% estimate of where price
+//     leans relative to that timeframe's nearest pivot. This is a HEURISTIC
+//     confidence blend (pivot direction + how the pivot held + a lite strength
+//     score + RSI momentum), NOT a statistically back-tested probability.
+//   • Key Levels — previous day/week high-low-close and the day open, drawn as
+//     fully customizable horizontal lines.
+//
 // NOTE (repainting): ta.pivothigh/pivotlow only confirm a pivot `Pivot
 // Sensitivity` bars AFTER the actual high/low forms. Labels therefore appear
 // with that delay and could not have been traded in real time at the pivot bar
@@ -24,11 +32,12 @@ indicator(
 int   MAX_SCORE         = 5
 color TRANSPARENT_COLOR = #00000000
 
-// ————— Inputs
+// ————— Inputs: Reversal
 int   pivotLenInput    = input.int(15, "Pivot Sensitivity", minval=2, group="Reversal")
 bool  extendLinesInput = input.bool(false, "Extend Reversal Lines", group="Reversal")
 int   lineLengthInput  = input.int(20, "Fixed Line Length (if not extended)", minval=1, group="Reversal")
 
+// ————— Inputs: Strength Filters
 int   minScoreInput    = input.int(0, "Min Score To Show (0 = all)", minval=0, maxval=5, group="Strength Filters")
 int   strongScoreInput = input.int(4, "'Strong' Alert Threshold", minval=1, maxval=5, group="Strength Filters")
 int   rsiLenInput      = input.int(14, "RSI Length", minval=1, group="Strength Filters")
@@ -39,6 +48,52 @@ float volMultInput     = input.float(1.5, "Volume Spike Multiplier", minval=1.0,
 float wickRatioInput   = input.float(0.5, "Wick Rejection", minval=0.1, maxval=1.0, step=0.1, group="Strength Filters")
 int   swingLookInput   = input.int(50, "Major Swing Lookback", minval=2, group="Strength Filters")
 
+// ————— Inputs: Bias Table
+bool   showTableInput  = input.bool(true, "Show Bias Table", group="Bias Table")
+string tablePosInput   = input.string(
+     "Top Right", "Table Position",
+     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Bias Table")
+string tableSizeInput  = input.string(
+     "Small", "Table Text Size",
+     options=["Tiny", "Small", "Normal", "Large"], group="Bias Table")
+int    tableTranspInput = input.int(80, "Table Transparency", minval=0, maxval=100, group="Bias Table")
+color  headerColInput  = input.color(color.new(#5b9cf6, 0), "Header Color", group="Bias Table")
+color  upColInput      = input.color(#089981, "Up Color", group="Bias Table")
+color  downColInput    = input.color(#f23645, "Down Color", group="Bias Table")
+string tf1Input        = input.timeframe("5", "Bias Timeframe 1", group="Bias Table")
+string tf2Input        = input.timeframe("15", "Bias Timeframe 2", group="Bias Table")
+string tf3Input        = input.timeframe("60", "Bias Timeframe 3", group="Bias Table")
+string tf4Input        = input.timeframe("240", "Bias Timeframe 4", group="Bias Table")
+string tf5Input        = input.timeframe("D", "Bias Timeframe 5", group="Bias Table")
+
+// ————— Inputs: Key Levels
+bool   showLevelsInput      = input.bool(true, "Show Key Levels", group="Key Levels")
+string dayTfInput           = input.timeframe("D", "Daily Levels Timeframe", group="Key Levels")
+string weekTfInput          = input.timeframe("W", "Weekly Levels Timeframe", group="Key Levels")
+bool   showPdhInput = input.bool(true, "Prev Day High", inline="pdh", group="Key Levels")
+color  pdhColInput  = input.color(#f23645, "", inline="pdh", group="Key Levels")
+bool   showPdlInput = input.bool(true, "Prev Day Low", inline="pdl", group="Key Levels")
+color  pdlColInput  = input.color(#089981, "", inline="pdl", group="Key Levels")
+bool   showPdcInput = input.bool(false, "Prev Day Close", inline="pdc", group="Key Levels")
+color  pdcColInput  = input.color(#787b86, "", inline="pdc", group="Key Levels")
+bool   showPwhInput = input.bool(true, "Prev Week High", inline="pwh", group="Key Levels")
+color  pwhColInput  = input.color(#ff9800, "", inline="pwh", group="Key Levels")
+bool   showPwlInput = input.bool(true, "Prev Week Low", inline="pwl", group="Key Levels")
+color  pwlColInput  = input.color(#9c27b0, "", inline="pwl", group="Key Levels")
+bool   showOpenInput = input.bool(false, "Day Open", inline="dopen", group="Key Levels")
+color  openColInput  = input.color(#5b9cf6, "", inline="dopen", group="Key Levels")
+int    levelWidthInput = input.int(1, "Level Line Width", minval=1, maxval=4, group="Key Levels")
+string levelStyleInput = input.string(
+     "Dashed", "Level Line Style",
+     options=["Solid", "Dotted", "Dashed"], group="Key Levels")
+bool   levelExtendInput = input.bool(true, "Extend Levels Right", group="Key Levels")
+int    levelLeftInput   = input.int(50, "Level Start (bars back)", minval=1, group="Key Levels")
+bool   showLevelLabelsInput = input.bool(true, "Show Level Labels", group="Key Levels")
+string levelLabelSizeInput  = input.string(
+     "Small", "Level Label Size",
+     options=["Tiny", "Small", "Normal", "Large"], group="Key Levels")
+
+// ————— Inputs: Appearance
 color bullColorInput   = input.color(#089981, "Bullish Color", group="Appearance")
 color bearColorInput   = input.color(#f23645, "Bearish Color", group="Appearance")
 bool  testModeInput    = input.bool(false, "Test Mode", group="Debug/Test")
@@ -68,6 +123,132 @@ confirmationTooltip(bool rsiOk, bool volOk, bool candleOk, bool wickOk, bool swi
     string wickTxt   = (wickOk ? "✔" : "✘") + " Rejection wick on pivot candle"
     string swingTxt  = (swingOk ? "✔" : "✘") + " Major swing extreme"
     rsiTxt + "\n" + volTxt + "\n" + candleTxt + "\n" + wickTxt + "\n" + swingTxt
+
+// @function Maps a size-name string to the matching size.* constant.
+sizeFrom(string name) =>
+    switch name
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        "Large"  => size.large
+        => size.small
+
+// @function Maps a line-style-name string to the matching line.style_* constant.
+lineStyleFrom(string name) =>
+    switch name
+        "Solid"  => line.style_solid
+        "Dotted" => line.style_dotted
+        "Dashed" => line.style_dashed
+        => line.style_solid
+
+// @function Maps a position-name string to the matching position.* constant.
+tablePosFrom(string name) =>
+    switch name
+        "Top Right"    => position.top_right
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left"  => position.bottom_left
+        => position.top_right
+
+// @function Friendly short label for a timeframe string ("60" => "1H").
+tfLabel(string tf) =>
+    switch tf
+        "1"   => "1m"
+        "3"   => "3m"
+        "5"   => "5m"
+        "15"  => "15m"
+        "30"  => "30m"
+        "45"  => "45m"
+        "60"  => "1H"
+        "120" => "2H"
+        "240" => "4H"
+        "D"   => "1D"
+        "W"   => "1W"
+        "M"   => "1M"
+        => tf
+
+// @function Heuristic UP-probability (0..100) relative to this context's nearest
+// pivot. NOT a statistical probability — a transparent confidence blend of pivot
+// direction, whether price held the pivot, a lite 0-3 strength score, and RSI.
+reversalBias() =>
+    float ph   = ta.pivothigh(high, pivotLenInput, pivotLenInput)
+    float pl   = ta.pivotlow(low, pivotLenInput, pivotLenInput)
+    float r    = ta.rsi(close, rsiLenInput)
+    float vAvg = ta.sma(nz(volume), volLenInput)
+    var int   pivotDir   = 0            // +1 = last pivot was a low (bullish), -1 = high (bearish)
+    var float pivotPrice = na
+    var int   pivotScore = 0            // 0..3 lite strength of that last pivot
+    if not na(pl)
+        pivotDir   := 1
+        pivotPrice := pl
+        bool rOk = r[pivotLenInput] <= rsiOsInput
+        bool vOk = nz(volume[pivotLenInput]) > vAvg[pivotLenInput] * volMultInput
+        bool cOk = close > high[pivotLenInput]
+        pivotScore := (rOk ? 1 : 0) + (vOk ? 1 : 0) + (cOk ? 1 : 0)
+    if not na(ph)
+        pivotDir   := -1
+        pivotPrice := ph
+        bool rOk = r[pivotLenInput] >= rsiObInput
+        bool vOk = nz(volume[pivotLenInput]) > vAvg[pivotLenInput] * volMultInput
+        bool cOk = close < low[pivotLenInput]
+        pivotScore := (rOk ? 1 : 0) + (vOk ? 1 : 0) + (cOk ? 1 : 0)
+    float conf = 8 + pivotScore * 6
+    float base = pivotDir == 1 ? 50 + conf : pivotDir == -1 ? 50 - conf : 50
+    float hold = 0.0
+    if pivotDir == 1 and not na(pivotPrice)
+        hold := close >= pivotPrice ? 6 : -6
+    else if pivotDir == -1 and not na(pivotPrice)
+        hold := close <= pivotPrice ? -6 : 6
+    float rsiTilt = (r - 50) * 0.2
+    math.round(math.max(2, math.min(98, base + hold + rsiTilt)))
+
+// @function Fills one timeframe row of the bias table.
+biasRow(table t, int rowIdx, string tfStr, float up, string txtSize) =>
+    bool   valid = not na(up)
+    float  dn    = valid ? 100 - up : na
+    bool   upDom = valid and up >= 50
+    int    upT   = not valid ? 100 : upDom ? int(80 - (up - 50) * 0.6) : 92
+    int    dnT   = not valid ? 100 : upDom ? 92 : int(80 - (dn - 50) * 0.6)
+    string upTxt = valid ? str.tostring(up, "#") + "%" : "--"
+    string dnTxt = valid ? str.tostring(dn, "#") + "%" : "--"
+    table.cell(t, 0, rowIdx, tfLabel(tfStr), text_color=color.new(chart.fg_color, 15), text_size=txtSize)
+    table.cell(
+         t, 1, rowIdx, upTxt, text_color=chart.fg_color, text_size=txtSize,
+         bgcolor=color.new(upColInput, math.max(0, math.min(100, upT))))
+    table.cell(
+         t, 2, rowIdx, dnTxt, text_color=chart.fg_color, text_size=txtSize,
+         bgcolor=color.new(downColInput, math.max(0, math.min(100, dnT))))
+
+// @function Deletes and empties an array of lines.
+clearLines(array<line> arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            line.delete(array.get(arr, i))
+        array.clear(arr)
+
+// @function Deletes and empties an array of labels.
+clearLabels(array<label> arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            label.delete(array.get(arr, i))
+        array.clear(arr)
+
+// @function Draws one horizontal key level (and optional label), tracking the
+// created objects so they can be cleared and redrawn on the next bar.
+drawLevel(bool cond, float price, string name, color col, array<line> lnArr, array<label> lbArr) =>
+    if cond and not na(price)
+        int x1 = math.max(0, bar_index - levelLeftInput)
+        line ln = line.new(
+             x1, price, bar_index, price, xloc=xloc.bar_index, color=col,
+             width=levelWidthInput, style=lineStyleFrom(levelStyleInput),
+             extend=levelExtendInput ? extend.right : extend.none)
+        array.push(lnArr, ln)
+        if showLevelLabelsInput
+            label lb = label.new(
+                 bar_index, price, name + "  " + str.tostring(price, format.mintick),
+                 xloc=xloc.bar_index, style=label.style_label_left, color=TRANSPARENT_COLOR,
+                 textcolor=col, size=sizeFrom(levelLabelSizeInput))
+            array.push(lbArr, lb)
 
 // ————— Calculations
 float rsiValue = ta.rsi(close, rsiLenInput)
@@ -102,7 +283,25 @@ bool bullSwingOk  = low[pivotLenInput] <= lowestN[pivotLenInput]
 int bearScore = bearPivot ? countConfirmations(bearRsiOk, volSpikeAtPivot, bearCandleOk, bearWickOk, bearSwingOk) : 0
 int bullScore = bullPivot ? countConfirmations(bullRsiOk, volSpikeAtPivot, bullCandleOk, bullWickOk, bullSwingOk) : 0
 
-// ————— Visuals
+string tableSize = sizeFrom(tableSizeInput)
+
+// Per-timeframe reversal bias (heuristic UP-probability), one request per row.
+float up1 = request.security(syminfo.tickerid, tf1Input, reversalBias(), lookahead=barmerge.lookahead_off)
+float up2 = request.security(syminfo.tickerid, tf2Input, reversalBias(), lookahead=barmerge.lookahead_off)
+float up3 = request.security(syminfo.tickerid, tf3Input, reversalBias(), lookahead=barmerge.lookahead_off)
+float up4 = request.security(syminfo.tickerid, tf4Input, reversalBias(), lookahead=barmerge.lookahead_off)
+float up5 = request.security(syminfo.tickerid, tf5Input, reversalBias(), lookahead=barmerge.lookahead_off)
+
+// Key-level source values. lookahead_on + [1] is the correct NON-repainting way
+// to read a completed higher-timeframe period's high/low/close.
+[pdh, pdl, pdc] = request.security(
+     syminfo.tickerid, dayTfInput, [high[1], low[1], close[1]],
+     lookahead=barmerge.lookahead_on)
+float dayOpen = request.security(syminfo.tickerid, dayTfInput, open, lookahead=barmerge.lookahead_on)
+[pwh, pwl] = request.security(
+     syminfo.tickerid, weekTfInput, [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+// ————— Visuals: Reversal signals
 if bearPivot and bearScore >= minScoreInput
     label.new(
          bar_index[pivotLenInput], pivotHigh, "REVERSAL " + starString(bearScore),
@@ -139,6 +338,37 @@ if bullPivot and bullScore >= minScoreInput
          extend=extendLinesInput ? extend.right : extend.none
          )
 
+// ————— Visuals: Bias table
+var table biasTable = table.new(
+     tablePosFrom(tablePosInput), 3, 6,
+     bgcolor=color.new(chart.bg_color, tableTranspInput),
+     border_color=color.new(chart.fg_color, 80), border_width=1)
+
+if showTableInput and barstate.islast
+    table.cell(biasTable, 0, 0, "TF", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
+    table.cell(biasTable, 1, 0, "UP", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
+    table.cell(biasTable, 2, 0, "DOWN", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
+    biasRow(biasTable, 1, tf1Input, up1, tableSize)
+    biasRow(biasTable, 2, tf2Input, up2, tableSize)
+    biasRow(biasTable, 3, tf3Input, up3, tableSize)
+    biasRow(biasTable, 4, tf4Input, up4, tableSize)
+    biasRow(biasTable, 5, tf5Input, up5, tableSize)
+
+// ————— Visuals: Key levels (redrawn at the chart's right edge each last bar)
+var array<line>  levelLines  = array.new<line>()
+var array<label> levelLabels = array.new<label>()
+
+if barstate.islast
+    clearLines(levelLines)
+    clearLabels(levelLabels)
+    if showLevelsInput
+        drawLevel(showPdhInput, pdh, "PDH", pdhColInput, levelLines, levelLabels)
+        drawLevel(showPdlInput, pdl, "PDL", pdlColInput, levelLines, levelLabels)
+        drawLevel(showPdcInput, pdc, "PDC", pdcColInput, levelLines, levelLabels)
+        drawLevel(showPwhInput, pwh, "PWH", pwhColInput, levelLines, levelLabels)
+        drawLevel(showPwlInput, pwl, "PWL", pwlColInput, levelLines, levelLabels)
+        drawLevel(showOpenInput, dayOpen, "D.Open", openColInput, levelLines, levelLabels)
+
 // ————— Alerts
 alertcondition(bearPivot, "Bearish Reversal Pivot", "Bearish reversal pivot confirmed.")
 alertcondition(bullPivot, "Bullish Reversal Pivot", "Bullish reversal pivot confirmed.")
@@ -162,3 +392,6 @@ if testModeInput
     // Assertion 3: RSI must stay within its mathematical 0-100 bounds past warm-up.
     if bar_index > rsiLenInput and not na(rsiValue) and (rsiValue < 0 or rsiValue > 100)
         label.new(bar_index, low, "FAIL: RSI out of 0-100 bounds", color=color.red, style=label.style_label_up)
+    // Assertion 4: the heuristic bias must always land inside 0-100.
+    if not na(up1) and (up1 < 0 or up1 > 100)
+        label.new(bar_index, high, "FAIL: bias out of 0-100 bounds", color=color.red, style=label.style_label_down)

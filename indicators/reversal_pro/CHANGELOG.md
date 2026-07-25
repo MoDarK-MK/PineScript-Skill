@@ -3,6 +3,13 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.4.0] - 2026-07-25
+- Added a per-timeframe Reversal-Bias table (UP%/DOWN% relative to each timeframe's nearest pivot, 5 configurable timeframes)
+- Added a Key Levels module: previous day/week high-low-close and day open as fully customizable horizontal lines with labels
+- Bias table and levels are fully customizable (position, size, colors, transparency, line style/width, which levels to show)
+- Documented the bias number as a transparent heuristic blend, not a back-tested statistical probability
+- Add per-timeframe bias table and customizable key levels
+
 ## [0.3.0] - 2026-07-22
 - Upgraded the strength score from 0-3 to 0-5 stars
 - Added two confirmations: wick rejection on the pivot candle, and major-swing extreme over a wider lookback
