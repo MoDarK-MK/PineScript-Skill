@@ -3,6 +3,10 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.5.1] - 2026-07-25
+- Key-level labels now float just above their line (label.style_label_lower_left) instead of sitting on it, so the line no longer cuts through the text
+- Float key-level labels above the line for readability
+
 ## [0.5.0] - 2026-07-25
 - Added a LIVE header to the table: current price with an up/down tick arrow and the exact swing position (% of price between the last reversal low and high), recomputed every tick
 - Expanded Key Levels: added previous-month high/low, live current-day high/low, and the most recent reversal swing high/low

@@ -271,7 +271,8 @@ addLevel(bool cond, float price, string name, color col, array<float> pArr, arra
         array.push(nArr, name)
         array.push(cArr, col)
 
-// @function Draws one horizontal key level (and optional live-distance label),
+// @function Draws one horizontal key level (and optional live-distance label
+// floated just ABOVE the line so the line never cuts through the text),
 // tracking the created objects so they can be cleared and redrawn next bar.
 drawOneLevel(float price, string name, color col, bool isNear, array<line> lnArr, array<label> lbArr) =>
     int x1 = math.max(0, bar_index - levelLeftInput)
@@ -284,7 +285,7 @@ drawOneLevel(float price, string name, color col, bool isNear, array<line> lnArr
     if showLevelLabelsInput
         string txt = name + "  " + str.tostring(price, format.mintick) + levelSuffix(price)
         label lb = label.new(
-             bar_index, price, txt, xloc=xloc.bar_index, style=label.style_label_left,
+             bar_index, price, txt, xloc=xloc.bar_index, style=label.style_label_lower_left,
              color=isNear ? color.new(col, 80) : TRANSPARENT_COLOR, textcolor=col,
              size=sizeFrom(levelLabelSizeInput))
         array.push(lbArr, lb)
