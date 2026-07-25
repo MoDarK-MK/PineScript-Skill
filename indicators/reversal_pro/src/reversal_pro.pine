@@ -15,13 +15,17 @@ indicator(
 //   4. Wick rejection — long rejection tail on the pivot candle
 //   5. Major swing — the pivot is the extreme of a wider lookback window
 //
-// Plus two dashboard modules:
-//   • Reversal-Bias table — a per-timeframe UP%/DOWN% estimate of where price
-//     leans relative to that timeframe's nearest pivot. This is a HEURISTIC
-//     confidence blend (pivot direction + how the pivot held + a lite strength
-//     score + RSI momentum), NOT a statistically back-tested probability.
-//   • Key Levels — previous day/week high-low-close and the day open, drawn as
-//     fully customizable horizontal lines.
+// Dashboard modules (both rebuild on every realtime tick, so they track price
+// live and to the tick):
+//   • Live + Bias table — a LIVE price/swing-position header plus a per-timeframe
+//     UP%/DOWN% estimate of where price leans relative to that timeframe's
+//     nearest pivot. The bias is a HEURISTIC confidence blend (pivot direction +
+//     how the pivot held + a lite strength score + RSI momentum), NOT a
+//     statistically back-tested probability.
+//   • Key Levels — previous day/week/month H-L-C, day open, live current-day
+//     high/low, and the most recent reversal swing high/low. Each is drawn as a
+//     fully customizable horizontal line, optionally labelled with its live
+//     distance from price, with the nearest level above/below highlighted.
 //
 // NOTE (repainting): ta.pivothigh/pivotlow only confirm a pivot `Pivot
 // Sensitivity` bars AFTER the actual high/low forms. Labels therefore appear
@@ -50,6 +54,7 @@ int   swingLookInput   = input.int(50, "Major Swing Lookback", minval=2, group="
 
 // ————— Inputs: Bias Table
 bool   showTableInput  = input.bool(true, "Show Bias Table", group="Bias Table")
+bool   showLiveInput   = input.bool(true, "Show Live Price/Swing rows", group="Bias Table")
 string tablePosInput   = input.string(
      "Top Right", "Table Position",
      options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Bias Table")
@@ -67,9 +72,10 @@ string tf4Input        = input.timeframe("240", "Bias Timeframe 4", group="Bias 
 string tf5Input        = input.timeframe("D", "Bias Timeframe 5", group="Bias Table")
 
 // ————— Inputs: Key Levels
-bool   showLevelsInput      = input.bool(true, "Show Key Levels", group="Key Levels")
-string dayTfInput           = input.timeframe("D", "Daily Levels Timeframe", group="Key Levels")
-string weekTfInput          = input.timeframe("W", "Weekly Levels Timeframe", group="Key Levels")
+bool   showLevelsInput = input.bool(true, "Show Key Levels", group="Key Levels")
+string dayTfInput      = input.timeframe("D", "Daily Levels Timeframe", group="Key Levels")
+string weekTfInput     = input.timeframe("W", "Weekly Levels Timeframe", group="Key Levels")
+string monthTfInput    = input.timeframe("M", "Monthly Levels Timeframe", group="Key Levels")
 bool   showPdhInput = input.bool(true, "Prev Day High", inline="pdh", group="Key Levels")
 color  pdhColInput  = input.color(#f23645, "", inline="pdh", group="Key Levels")
 bool   showPdlInput = input.bool(true, "Prev Day Low", inline="pdl", group="Key Levels")
@@ -80,8 +86,24 @@ bool   showPwhInput = input.bool(true, "Prev Week High", inline="pwh", group="Ke
 color  pwhColInput  = input.color(#ff9800, "", inline="pwh", group="Key Levels")
 bool   showPwlInput = input.bool(true, "Prev Week Low", inline="pwl", group="Key Levels")
 color  pwlColInput  = input.color(#9c27b0, "", inline="pwl", group="Key Levels")
+bool   showPmhInput = input.bool(false, "Prev Month High", inline="pmh", group="Key Levels")
+color  pmhColInput  = input.color(#e91e63, "", inline="pmh", group="Key Levels")
+bool   showPmlInput = input.bool(false, "Prev Month Low", inline="pml", group="Key Levels")
+color  pmlColInput  = input.color(#00bcd4, "", inline="pml", group="Key Levels")
 bool   showOpenInput = input.bool(false, "Day Open", inline="dopen", group="Key Levels")
 color  openColInput  = input.color(#5b9cf6, "", inline="dopen", group="Key Levels")
+bool   showCdhInput = input.bool(false, "Curr Day High (live)", inline="cdh", group="Key Levels")
+color  cdhColInput  = input.color(#ef9a9a, "", inline="cdh", group="Key Levels")
+bool   showCdlInput = input.bool(false, "Curr Day Low (live)", inline="cdl", group="Key Levels")
+color  cdlColInput  = input.color(#a5d6a7, "", inline="cdl", group="Key Levels")
+bool   showSwingHInput = input.bool(true, "Recent Reversal High", inline="swh", group="Key Levels")
+color  swingHColInput  = input.color(#f23645, "", inline="swh", group="Key Levels")
+bool   showSwingLInput = input.bool(true, "Recent Reversal Low", inline="swl", group="Key Levels")
+color  swingLColInput  = input.color(#089981, "", inline="swl", group="Key Levels")
+string distanceModeInput = input.string(
+     "Percent", "Show Distance On Labels",
+     options=["Percent", "Price", "Off"], group="Key Levels")
+bool   highlightNearestInput = input.bool(true, "Highlight Nearest Level", group="Key Levels")
 int    levelWidthInput = input.int(1, "Level Line Width", minval=1, maxval=4, group="Key Levels")
 string levelStyleInput = input.string(
      "Dashed", "Level Line Style",
@@ -219,6 +241,14 @@ biasRow(table t, int rowIdx, string tfStr, float up, string txtSize) =>
          t, 2, rowIdx, dnTxt, text_color=chart.fg_color, text_size=txtSize,
          bgcolor=color.new(downColInput, math.max(0, math.min(100, dnT))))
 
+// @function Live distance suffix for a level label (percent, price, or nothing).
+levelSuffix(float price) =>
+    float dist = close - price
+    switch distanceModeInput
+        "Percent" => price != 0 ? "  (" + str.tostring(dist / price * 100, "+0.00") + "%)" : ""
+        "Price"   => "  (" + str.tostring(dist, format.mintick) + ")"
+        => ""
+
 // @function Deletes and empties an array of lines.
 clearLines(array<line> arr) =>
     if array.size(arr) > 0
@@ -233,22 +263,31 @@ clearLabels(array<label> arr) =>
             label.delete(array.get(arr, i))
         array.clear(arr)
 
-// @function Draws one horizontal key level (and optional label), tracking the
-// created objects so they can be cleared and redrawn on the next bar.
-drawLevel(bool cond, float price, string name, color col, array<line> lnArr, array<label> lbArr) =>
+// @function Collects an enabled, non-na level into the parallel price/name/color
+// arrays so the nearest-level pass can see the full set before drawing.
+addLevel(bool cond, float price, string name, color col, array<float> pArr, array<string> nArr, array<color> cArr) =>
     if cond and not na(price)
-        int x1 = math.max(0, bar_index - levelLeftInput)
-        line ln = line.new(
-             x1, price, bar_index, price, xloc=xloc.bar_index, color=col,
-             width=levelWidthInput, style=lineStyleFrom(levelStyleInput),
-             extend=levelExtendInput ? extend.right : extend.none)
-        array.push(lnArr, ln)
-        if showLevelLabelsInput
-            label lb = label.new(
-                 bar_index, price, name + "  " + str.tostring(price, format.mintick),
-                 xloc=xloc.bar_index, style=label.style_label_left, color=TRANSPARENT_COLOR,
-                 textcolor=col, size=sizeFrom(levelLabelSizeInput))
-            array.push(lbArr, lb)
+        array.push(pArr, price)
+        array.push(nArr, name)
+        array.push(cArr, col)
+
+// @function Draws one horizontal key level (and optional live-distance label),
+// tracking the created objects so they can be cleared and redrawn next bar.
+drawOneLevel(float price, string name, color col, bool isNear, array<line> lnArr, array<label> lbArr) =>
+    int x1 = math.max(0, bar_index - levelLeftInput)
+    int w  = isNear ? levelWidthInput + 1 : levelWidthInput
+    line ln = line.new(
+         x1, price, bar_index, price, xloc=xloc.bar_index, color=col,
+         width=w, style=lineStyleFrom(levelStyleInput),
+         extend=levelExtendInput ? extend.right : extend.none)
+    array.push(lnArr, ln)
+    if showLevelLabelsInput
+        string txt = name + "  " + str.tostring(price, format.mintick) + levelSuffix(price)
+        label lb = label.new(
+             bar_index, price, txt, xloc=xloc.bar_index, style=label.style_label_left,
+             color=isNear ? color.new(col, 80) : TRANSPARENT_COLOR, textcolor=col,
+             size=sizeFrom(levelLabelSizeInput))
+        array.push(lbArr, lb)
 
 // ————— Calculations
 float rsiValue = ta.rsi(close, rsiLenInput)
@@ -260,6 +299,20 @@ float pivotHigh = ta.pivothigh(high, pivotLenInput, pivotLenInput)
 float pivotLow  = ta.pivotlow(low, pivotLenInput, pivotLenInput)
 bool  bearPivot = not na(pivotHigh)
 bool  bullPivot = not na(pivotLow)
+
+// Track the most recent confirmed pivots for the live swing-position readout.
+var float lastPH = na
+var float lastPL = na
+if bearPivot
+    lastPH := pivotHigh
+if bullPivot
+    lastPL := pivotLow
+
+// Live swing position: where the current (tick) price sits between the last
+// reversal low (0%) and the last reversal high (100%). Recomputed every tick.
+float swingPos = na
+if not na(lastPH) and not na(lastPL) and lastPH > lastPL
+    swingPos := math.max(0, math.min(100, (close - lastPL) / (lastPH - lastPL) * 100))
 
 // Pivot-bar candle geometry (pivotLenInput bars back).
 float pivotRange = high[pivotLenInput] - low[pivotLenInput]
@@ -292,14 +345,21 @@ float up3 = request.security(syminfo.tickerid, tf3Input, reversalBias(), lookahe
 float up4 = request.security(syminfo.tickerid, tf4Input, reversalBias(), lookahead=barmerge.lookahead_off)
 float up5 = request.security(syminfo.tickerid, tf5Input, reversalBias(), lookahead=barmerge.lookahead_off)
 
-// Key-level source values. lookahead_on + [1] is the correct NON-repainting way
-// to read a completed higher-timeframe period's high/low/close.
+// Completed-period levels: lookahead_on + [1] is the correct NON-repainting way
+// to read a finished higher-timeframe period's high/low/close.
 [pdh, pdl, pdc] = request.security(
      syminfo.tickerid, dayTfInput, [high[1], low[1], close[1]],
      lookahead=barmerge.lookahead_on)
 float dayOpen = request.security(syminfo.tickerid, dayTfInput, open, lookahead=barmerge.lookahead_on)
 [pwh, pwl] = request.security(
      syminfo.tickerid, weekTfInput, [high[1], low[1]], lookahead=barmerge.lookahead_on)
+[pmh, pml] = request.security(
+     syminfo.tickerid, monthTfInput, [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+// Live current-day extremes: the developing period's running high/low, which
+// update on every tick (intentionally "live", not the previous period).
+[curDayHigh, curDayLow] = request.security(
+     syminfo.tickerid, dayTfInput, [high, low], lookahead=barmerge.lookahead_off)
 
 // ————— Visuals: Reversal signals
 if bearPivot and bearScore >= minScoreInput
@@ -338,36 +398,78 @@ if bullPivot and bullScore >= minScoreInput
          extend=extendLinesInput ? extend.right : extend.none
          )
 
-// ————— Visuals: Bias table
+// ————— Visuals: Live + Bias table (rebuilt every tick on the last bar)
+int biasBase   = showLiveInput ? 2 : 0
+int tableRows  = biasBase + 6
 var table biasTable = table.new(
-     tablePosFrom(tablePosInput), 3, 6,
+     tablePosFrom(tablePosInput), 3, tableRows,
      bgcolor=color.new(chart.bg_color, tableTranspInput),
      border_color=color.new(chart.fg_color, 80), border_width=1)
 
 if showTableInput and barstate.islast
-    table.cell(biasTable, 0, 0, "TF", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
-    table.cell(biasTable, 1, 0, "UP", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
-    table.cell(biasTable, 2, 0, "DOWN", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
-    biasRow(biasTable, 1, tf1Input, up1, tableSize)
-    biasRow(biasTable, 2, tf2Input, up2, tableSize)
-    biasRow(biasTable, 3, tf3Input, up3, tableSize)
-    biasRow(biasTable, 4, tf4Input, up4, tableSize)
-    biasRow(biasTable, 5, tf5Input, up5, tableSize)
+    if showLiveInput
+        bool   tickUp     = close >= nz(close[1], close)
+        string swingTxt   = na(swingPos) ? "--" : str.tostring(swingPos, "#") + "%"
+        string swingArrow = na(swingPos) ? "" : swingPos >= 50 ? "↑" : "↓"
+        color  swingCol   = na(swingPos) ? chart.fg_color : swingPos >= 50 ? upColInput : downColInput
+        table.cell(biasTable, 0, 0, "PRICE", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
+        table.cell(biasTable, 1, 0, str.tostring(close, format.mintick), text_color=chart.fg_color, text_size=tableSize)
+        table.cell(
+             biasTable, 2, 0, tickUp ? "▲" : "▼",
+             text_color=tickUp ? upColInput : downColInput, text_size=tableSize)
+        table.cell(biasTable, 0, 1, "SWING", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
+        table.cell(biasTable, 1, 1, swingTxt, text_color=chart.fg_color, text_size=tableSize)
+        table.cell(biasTable, 2, 1, swingArrow, text_color=swingCol, text_size=tableSize)
+    table.cell(biasTable, 0, biasBase, "TF", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
+    table.cell(biasTable, 1, biasBase, "UP", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
+    table.cell(biasTable, 2, biasBase, "DOWN", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
+    biasRow(biasTable, biasBase + 1, tf1Input, up1, tableSize)
+    biasRow(biasTable, biasBase + 2, tf2Input, up2, tableSize)
+    biasRow(biasTable, biasBase + 3, tf3Input, up3, tableSize)
+    biasRow(biasTable, biasBase + 4, tf4Input, up4, tableSize)
+    biasRow(biasTable, biasBase + 5, tf5Input, up5, tableSize)
 
-// ————— Visuals: Key levels (redrawn at the chart's right edge each last bar)
-var array<line>  levelLines  = array.new<line>()
-var array<label> levelLabels = array.new<label>()
+// ————— Visuals: Key levels (collected, then drawn with nearest-level highlight)
+var array<line>   levelLines  = array.new<line>()
+var array<label>  levelLabels = array.new<label>()
+var array<float>  lvlPrices   = array.new<float>()
+var array<string> lvlNames    = array.new<string>()
+var array<color>  lvlColors   = array.new<color>()
 
 if barstate.islast
     clearLines(levelLines)
     clearLabels(levelLabels)
+    array.clear(lvlPrices)
+    array.clear(lvlNames)
+    array.clear(lvlColors)
     if showLevelsInput
-        drawLevel(showPdhInput, pdh, "PDH", pdhColInput, levelLines, levelLabels)
-        drawLevel(showPdlInput, pdl, "PDL", pdlColInput, levelLines, levelLabels)
-        drawLevel(showPdcInput, pdc, "PDC", pdcColInput, levelLines, levelLabels)
-        drawLevel(showPwhInput, pwh, "PWH", pwhColInput, levelLines, levelLabels)
-        drawLevel(showPwlInput, pwl, "PWL", pwlColInput, levelLines, levelLabels)
-        drawLevel(showOpenInput, dayOpen, "D.Open", openColInput, levelLines, levelLabels)
+        addLevel(showPdhInput, pdh, "PDH", pdhColInput, lvlPrices, lvlNames, lvlColors)
+        addLevel(showPdlInput, pdl, "PDL", pdlColInput, lvlPrices, lvlNames, lvlColors)
+        addLevel(showPdcInput, pdc, "PDC", pdcColInput, lvlPrices, lvlNames, lvlColors)
+        addLevel(showPwhInput, pwh, "PWH", pwhColInput, lvlPrices, lvlNames, lvlColors)
+        addLevel(showPwlInput, pwl, "PWL", pwlColInput, lvlPrices, lvlNames, lvlColors)
+        addLevel(showPmhInput, pmh, "PMH", pmhColInput, lvlPrices, lvlNames, lvlColors)
+        addLevel(showPmlInput, pml, "PML", pmlColInput, lvlPrices, lvlNames, lvlColors)
+        addLevel(showOpenInput, dayOpen, "D.Open", openColInput, lvlPrices, lvlNames, lvlColors)
+        addLevel(showCdhInput, curDayHigh, "CDH", cdhColInput, lvlPrices, lvlNames, lvlColors)
+        addLevel(showCdlInput, curDayLow, "CDL", cdlColInput, lvlPrices, lvlNames, lvlColors)
+        addLevel(showSwingHInput, lastPH, "Swing H", swingHColInput, lvlPrices, lvlNames, lvlColors)
+        addLevel(showSwingLInput, lastPL, "Swing L", swingLColInput, lvlPrices, lvlNames, lvlColors)
+        float nearAbove = na
+        float nearBelow = na
+        if array.size(lvlPrices) > 0
+            for i = 0 to array.size(lvlPrices) - 1
+                float p = array.get(lvlPrices, i)
+                if p >= close and (na(nearAbove) or p < nearAbove)
+                    nearAbove := p
+                if p <= close and (na(nearBelow) or p > nearBelow)
+                    nearBelow := p
+            for i = 0 to array.size(lvlPrices) - 1
+                float p = array.get(lvlPrices, i)
+                bool near = false
+                if highlightNearestInput
+                    near := (not na(nearAbove) and p == nearAbove) or (not na(nearBelow) and p == nearBelow)
+                drawOneLevel(p, array.get(lvlNames, i), array.get(lvlColors, i), near, levelLines, levelLabels)
 
 // ————— Alerts
 alertcondition(bearPivot, "Bearish Reversal Pivot", "Bearish reversal pivot confirmed.")
@@ -395,3 +497,6 @@ if testModeInput
     // Assertion 4: the heuristic bias must always land inside 0-100.
     if not na(up1) and (up1 < 0 or up1 > 100)
         label.new(bar_index, high, "FAIL: bias out of 0-100 bounds", color=color.red, style=label.style_label_down)
+    // Assertion 5: live swing position must stay inside 0-100 when defined.
+    if not na(swingPos) and (swingPos < 0 or swingPos > 100)
+        label.new(bar_index, low, "FAIL: swing pos out of 0-100 bounds", color=color.red, style=label.style_label_up)

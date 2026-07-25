@@ -3,6 +3,13 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.5.0] - 2026-07-25
+- Added a LIVE header to the table: current price with an up/down tick arrow and the exact swing position (% of price between the last reversal low and high), recomputed every tick
+- Expanded Key Levels: added previous-month high/low, live current-day high/low, and the most recent reversal swing high/low
+- Level labels now show the live distance from price (percent or price, configurable) and the nearest level above/below is highlighted
+- Whole dashboard and levels rebuild on every realtime tick, so everything tracks price live and to the tick
+- Live price/swing tracker and expanded key levels with live distance
+
 ## [0.4.0] - 2026-07-25
 - Added a per-timeframe Reversal-Bias table (UP%/DOWN% relative to each timeframe's nearest pivot, 5 configurable timeframes)
 - Added a Key Levels module: previous day/week high-low-close and day open as fully customizable horizontal lines with labels
