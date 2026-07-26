@@ -3,6 +3,12 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.8.0] - 2026-07-26
+- Removed the per-timeframe UP/DOWN rows from the table; it now shows the live price/swing header and the trade suggestion only
+- The Bias Timeframe inputs are kept and still drive the 35% timeframe-consensus component of the suggestion's vote
+- Dropped the now-unused biasRow() and tfLabel() helpers
+- Remove per-timeframe rows from the table
+
 ## [0.7.0] - 2026-07-26
 - Added a Trade Suggestion block to the table: BUY/SELL/WAIT with a confidence %, plus entry, stop, target, position size and risk amount
 - Direction comes from a transparent weighted vote of the three signals the indicator already computes (pivot 45%, timeframe bias 35%, swing position 20%); the tooltip shows each vote

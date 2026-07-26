@@ -18,11 +18,11 @@ indicator(
 //
 // Dashboard modules (both rebuild on every realtime tick, so they track price
 // live and to the tick):
-//   • Live + Bias table — a LIVE price/swing-position header plus a per-timeframe
-//     UP%/DOWN% estimate of where price leans relative to that timeframe's
-//     nearest pivot. The bias is a HEURISTIC confidence blend (pivot direction +
-//     how the pivot held + a lite strength score + RSI momentum), NOT a
-//     statistically back-tested probability.
+//   • Table — a LIVE price/swing-position header plus the trade suggestion below.
+//     The per-timeframe bias is still computed from the Bias Timeframe inputs (a
+//     HEURISTIC blend of pivot direction, how the pivot held, a lite strength
+//     score, and RSI momentum — NOT a back-tested probability); it no longer has
+//     its own rows and now feeds the suggestion's vote instead.
 //   • Key Levels — previous day/week/month H-L-C, day open, live current-day
 //     high/low, and the most recent reversal swing high/low. Each is drawn as a
 //     fully customizable horizontal line, optionally labelled with its live
@@ -75,7 +75,9 @@ float wickRatioInput   = input.float(0.5, "Wick Rejection", minval=0.1, maxval=1
 int   swingLookInput   = input.int(50, "Major Swing Lookback", minval=2, group="Strength Filters")
 
 // ————— Inputs: Bias Table
-bool   showTableInput  = input.bool(true, "Show Bias Table", group="Bias Table")
+// The five Bias Timeframe inputs below no longer have their own table rows —
+// they feed the 35% timeframe-consensus component of the trade suggestion.
+bool   showTableInput  = input.bool(true, "Show Table", group="Bias Table")
 bool   showLiveInput   = input.bool(true, "Show Live Price/Swing rows", group="Bias Table")
 string tablePosInput   = input.string(
      "Top Right", "Table Position",
@@ -250,23 +252,6 @@ tablePosFrom(string name) =>
         "Bottom Left"  => position.bottom_left
         => position.top_right
 
-// @function Friendly short label for a timeframe string ("60" => "1H").
-tfLabel(string tf) =>
-    switch tf
-        "1"   => "1m"
-        "3"   => "3m"
-        "5"   => "5m"
-        "15"  => "15m"
-        "30"  => "30m"
-        "45"  => "45m"
-        "60"  => "1H"
-        "120" => "2H"
-        "240" => "4H"
-        "D"   => "1D"
-        "W"   => "1W"
-        "M"   => "1M"
-        => tf
-
 // @function Heuristic UP-probability (0..100) relative to this context's nearest
 // pivot. NOT a statistical probability — a transparent confidence blend of pivot
 // direction, whether price held the pivot, a lite 0-3 strength score, and RSI.
@@ -301,23 +286,6 @@ reversalBias() =>
         hold := close <= pivotPrice ? -6 : 6
     float rsiTilt = (r - 50) * 0.2
     math.round(math.max(2, math.min(98, base + hold + rsiTilt)))
-
-// @function Fills one timeframe row of the bias table.
-biasRow(table t, int rowIdx, string tfStr, float up, string txtSize) =>
-    bool   valid = not na(up)
-    float  dn    = valid ? 100 - up : na
-    bool   upDom = valid and up >= 50
-    int    upT   = not valid ? 100 : upDom ? int(80 - (up - 50) * 0.6) : 92
-    int    dnT   = not valid ? 100 : upDom ? 92 : int(80 - (dn - 50) * 0.6)
-    string upTxt = valid ? str.tostring(up, "#") + "%" : "--"
-    string dnTxt = valid ? str.tostring(dn, "#") + "%" : "--"
-    table.cell(t, 0, rowIdx, tfLabel(tfStr), text_color=color.new(chart.fg_color, 15), text_size=txtSize)
-    table.cell(
-         t, 1, rowIdx, upTxt, text_color=chart.fg_color, text_size=txtSize,
-         bgcolor=color.new(upColInput, math.max(0, math.min(100, upT))))
-    table.cell(
-         t, 2, rowIdx, dnTxt, text_color=chart.fg_color, text_size=txtSize,
-         bgcolor=color.new(downColInput, math.max(0, math.min(100, dnT))))
 
 // @function Live distance suffix for a level label (percent, price, or nothing).
 levelSuffix(float price) =>
@@ -559,8 +527,7 @@ if bullPivot and bullScore >= minScoreInput
          )
 
 // ————— Visuals: Live + Bias table (rebuilt every tick on the last bar)
-int biasBase   = showLiveInput ? 2 : 0
-int sugBase    = biasBase + 6
+int sugBase    = showLiveInput ? 2 : 0
 int tableRows  = sugBase + (showSugInput ? 6 : 0)
 var table biasTable = table.new(
      tablePosFrom(tablePosInput), 3, tableRows,
@@ -581,14 +548,6 @@ if showTableInput and barstate.islast
         table.cell(biasTable, 0, 1, "SWING", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
         table.cell(biasTable, 1, 1, swingTxt, text_color=chart.fg_color, text_size=tableSize)
         table.cell(biasTable, 2, 1, swingArrow, text_color=swingCol, text_size=tableSize)
-    table.cell(biasTable, 0, biasBase, "TF", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
-    table.cell(biasTable, 1, biasBase, "UP", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
-    table.cell(biasTable, 2, biasBase, "DOWN", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
-    biasRow(biasTable, biasBase + 1, tf1Input, up1, tableSize)
-    biasRow(biasTable, biasBase + 2, tf2Input, up2, tableSize)
-    biasRow(biasTable, biasBase + 3, tf3Input, up3, tableSize)
-    biasRow(biasTable, biasBase + 4, tf4Input, up4, tableSize)
-    biasRow(biasTable, biasBase + 5, tf5Input, up5, tableSize)
     if showSugInput
         color  sugColor = not sugActive ? chart.fg_color : sugDir > 0 ? upColInput : downColInput
         string sizeTxt  = sugActive ? str.tostring(sugSize, sugSize >= 100 ? "#" : "#.####") : "--"
