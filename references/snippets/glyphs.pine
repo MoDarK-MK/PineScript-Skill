@@ -1,0 +1,41 @@
+// Reference snippet: named glyph constants.
+//
+// NOTE: Pine Script has no local file imports — paste these, don't import them.
+//
+// Why constants: glyphs scattered as literals drift (one file uses ✔, another ✓),
+// and they render at different widths across platforms, which breaks column
+// alignment in tables and tooltips. Naming them makes a swap one edit, and keeps
+// the set small enough to stay visually consistent.
+//
+// Width warning: ★ ▲ ● are full-width in most fonts; ✔ ✘ ↑ ↓ are not. Don't mix
+// widths inside a column you want aligned — pick one family per column.
+//
+// This is a fragment, not a standalone script:
+// pine-lint-disable PINE001,PINE002,PINE027
+
+// ————— Strength (full-width, safe to repeat in a row)
+string GLYPH_STAR_ON  = "★"
+string GLYPH_STAR_OFF = "☆"
+
+// ————— Direction (full-width)
+string GLYPH_UP   = "▲"
+string GLYPH_DOWN = "▼"
+string GLYPH_FLAT = "▬"
+
+// ————— Direction (narrow — for inline text, not columns)
+string GLYPH_ARROW_UP   = "↑"
+string GLYPH_ARROW_DOWN = "↓"
+
+// ————— Verdicts (narrow — tooltips and single cells)
+string GLYPH_PASS = "✔"
+string GLYPH_FAIL = "✘"
+string GLYPH_NONE = "–"
+
+// @function Repeats an on/off glyph pair into a filled/empty meter.
+// @param score How many positions are filled.
+// @param maxScore Total positions.
+glyphMeter(int score, int maxScore) =>
+    string meter = ""
+    for i = 1 to maxScore
+        meter := meter + (i <= score ? GLYPH_STAR_ON : GLYPH_STAR_OFF)
+    meter

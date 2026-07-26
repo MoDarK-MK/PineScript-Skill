@@ -1,0 +1,91 @@
+// Reference snippet: keeping a script live without paying for it every tick.
+//
+// NOTE: Pine Script has no local file imports — paste these, don't import them.
+//
+// Inside `if barstate.islast`, code runs on EVERY realtime tick, not once per
+// bar. That is what makes a dashboard feel live — and what turns a 900-iteration
+// loop into a 900-iteration loop several times a second. The three patterns
+// below are how you stay live and cheap at the same time.
+//
+// See references/performance-guide.md for the reasoning and the budget numbers.
+//
+// This is a fragment, not a standalone script:
+// pine-lint-disable PINE001,PINE002,PINE027
+
+// ————— Pattern 1: recompute only when the inputs actually changed
+//
+// Cheap things (price, a distance, a percentage) can be recomputed every tick.
+// Expensive things (a volume profile, a long scan) should recompute only when
+// something they depend on moved. Keep a fingerprint of the inputs and compare.
+
+var int   cachedFrom   = na
+var int   cachedTo     = na
+var float cachedResult = na
+
+heavyCalculation(int fromBar, int toBar) =>
+    float total = 0.0
+    for i = fromBar to toBar
+        total += nz(volume[i])
+    total
+
+int scanFrom = math.max(0, bar_index - 500)
+int scanTo   = bar_index
+
+if barstate.islast
+    // The fingerprint is whatever the result genuinely depends on. If none of it
+    // changed, the previous answer is still correct — skip the work entirely.
+    bool inputsChanged = cachedFrom != scanFrom or cachedTo != scanTo
+    if inputsChanged or na(cachedResult)
+        cachedResult := heavyCalculation(scanFrom, scanTo)
+        cachedFrom   := scanFrom
+        cachedTo     := scanTo
+
+// ————— Pattern 2: reuse one buffer instead of allocating per tick
+//
+// `array.new` inside a per-tick block allocates and discards a fresh array every
+// tick. Declare it once with `var` and clear it with array.fill().
+
+var array<float> bins = array.new<float>(24, 0.0)
+
+if barstate.islast
+    array.fill(bins, 0.0)      // reset, don't reallocate
+    array.set(bins, 0, nz(volume))
+
+// ————— Pattern 3: update drawings in place, don't delete and recreate
+//
+// Deleting and recreating N objects every tick costs N destructions plus N
+// allocations and makes the drawing visibly flicker. Create once, then move.
+
+var line  levelLine  = na
+var label levelLabel = na
+
+if barstate.islast
+    float levelPrice = close
+    if na(levelLine)
+        levelLine := line.new(bar_index - 50, levelPrice, bar_index, levelPrice,
+             xloc=xloc.bar_index, color=color.blue, width=1)
+        levelLabel := label.new(bar_index, levelPrice, "LEVEL", xloc=xloc.bar_index,
+             style=label.style_label_lower_left, color=#00000000,
+             textcolor=color.blue, size=size.small)
+    else
+        line.set_xy1(levelLine, bar_index - 50, levelPrice)
+        line.set_xy2(levelLine, bar_index, levelPrice)
+        label.set_xy(levelLabel, bar_index, levelPrice)
+        label.set_text(levelLabel, "LEVEL " + str.tostring(levelPrice, format.mintick))
+
+// ————— Pattern 4: a genuine tick-direction arrow needs varip
+//
+// `close[1]` is the PREVIOUS BAR's close, so `close >= close[1]` is bar
+// direction, not tick direction. Only `varip` survives between intrabar ticks.
+// This is the rare case where varip is correct — see the performance guide for
+// why it is wrong almost everywhere else.
+
+varip float prevTickClose = na
+varip bool  tickWasUp     = true
+
+if barstate.isrealtime
+    if not na(prevTickClose) and close != prevTickClose
+        tickWasUp := close > prevTickClose
+    prevTickClose := close
+
+plot(cachedResult, "Cached volume", display=display.data_window)

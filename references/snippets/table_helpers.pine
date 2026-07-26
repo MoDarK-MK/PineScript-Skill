@@ -1,0 +1,52 @@
+// Reference snippet: dashboard table builders.
+//
+// NOTE: Pine Script has no local file imports — paste these, don't import them.
+//
+// The point of dashRow() is that a row is ONE call with the colours as required
+// arguments. Hand-writing two table.cell() calls per row is how this repo ended
+// up with 23 cells that had no text_color= and therefore rendered black-on-black
+// (Pine's default cell text colour is black). A builder cannot forget.
+//
+// Requires the constants and helpers from palette.pine.
+//
+// This is a fragment, not a standalone script:
+// pine-lint-disable PINE001,PINE002,PINE027
+
+// @function A title row spanning the whole table. Call table.merge_cells after
+// filling the first cell, not before — merging an empty cell drops the text.
+// @param cols Total column count of the table.
+dashTitle(table t, int cols, string title, color textCol, color bgCol) =>
+    table.cell(t, 0, 0, title, text_color=textCol, bgcolor=bgCol,
+         text_size=size.normal, text_halign=text.align_center)
+    if cols > 1
+        for c = 1 to cols - 1
+            table.cell(t, c, 0, "", bgcolor=bgCol)
+        table.merge_cells(t, 0, 0, cols - 1, 0)
+
+// @function One label/value row. Labels align left, values align right so the
+// digits form a column and don't jitter as the price ticks.
+dashRow(table t, int row, string label, string value, color labelCol, color valueCol) =>
+    table.cell(t, 0, row, label, text_color=labelCol, text_size=size.small,
+         text_halign=text.align_left)
+    table.cell(t, 1, row, value, text_color=valueCol, text_size=size.small,
+         text_halign=text.align_right)
+
+// @function A row whose value cell carries a tinted background — use for the one
+// or two rows that are a verdict (position side, pass/fail), never for every row.
+dashRowTinted(table t, int row, string label, string value, color labelCol, color accent) =>
+    table.cell(t, 0, row, label, text_color=labelCol, text_size=size.small,
+         text_halign=text.align_left)
+    table.cell(t, 1, row, value, text_color=accent, text_size=size.small,
+         text_halign=text.align_right, bgcolor=color.new(accent, 85))
+
+// @function A thin separator between logical sections of a dashboard. Cheaper to
+// read than a blank row and much cheaper than a second table.
+dashDivider(table t, int row, int cols, color dividerCol) =>
+    for c = 0 to cols - 1
+        table.cell(t, c, row, "", height=0.4, bgcolor=dividerCol)
+
+// @function Updates an existing row's value in place. Prefer this over rebuilding
+// the whole table when only the numbers change on each realtime tick.
+dashSetValue(table t, int row, string value, color valueCol) =>
+    table.cell_set_text(t, 1, row, value)
+    table.cell_set_text_color(t, 1, row, valueCol)

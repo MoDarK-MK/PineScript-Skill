@@ -1,0 +1,74 @@
+// Reference snippet: the canonical Reversal-Pro palette and theme helpers.
+//
+// NOTE: Pine Script has no local file imports — you CANNOT `import` this file.
+// Paste the block below, or publish it as a TradingView library for real reuse.
+//
+// This is the SINGLE source of truth for colour in this repo. Earlier versions
+// carried two competing bull/bear pairs (#26A69A/#EF5350 in the snippets and
+// #089981/#f23645 in the shipped scripts); the values below are the ones to use.
+//
+// This is a fragment, not a standalone script:
+// pine-lint-disable PINE001,PINE002,PINE027
+
+// ————— Accents (TradingView's own chart colours)
+color BULL_DARK  = #089981   // green on dark backgrounds
+color BEAR_DARK  = #f23645   // red on dark backgrounds
+color BULL_LIGHT = #00796b   // deeper green — needs more weight on white
+color BEAR_LIGHT = #c62828   // deeper red
+
+// ————— Neutrals. Three steps is enough for a whole dashboard: a primary value,
+// a secondary label, and a divider. More steps read as noise, not hierarchy.
+color NEUTRAL_DARK   = #b2b5be   // label text on dark
+color NEUTRAL_LIGHT  = #4a4e58   // label text on light
+color DIVIDER_DARK   = #2a2e39
+color DIVIDER_LIGHT  = #e0e3eb
+
+// ————— Accent for anything that is neither bullish nor bearish (zones, POC).
+color ACCENT_DARK  = #ffb703
+color ACCENT_LIGHT = #b07800
+
+string THEME_DARK  = "Dark"
+string THEME_LIGHT = "Light"
+
+// @function Bullish accent for the selected theme.
+getBullColor(string theme) =>
+    switch theme
+        THEME_LIGHT => BULL_LIGHT
+        => BULL_DARK
+
+// @function Bearish accent for the selected theme.
+getBearColor(string theme) =>
+    switch theme
+        THEME_LIGHT => BEAR_LIGHT
+        => BEAR_DARK
+
+// @function Accent for non-directional elements.
+getAccentColor(string theme) =>
+    switch theme
+        THEME_LIGHT => ACCENT_LIGHT
+        => ACCENT_DARK
+
+// @function Primary text colour — the value column of a dashboard.
+getTextColor(string theme) =>
+    switch theme
+        THEME_LIGHT => #131722
+        => #d1d4dc
+
+// @function Secondary text colour — the label column. Deliberately lower
+// contrast than getTextColor so the value reads first.
+getMutedColor(string theme) =>
+    switch theme
+        THEME_LIGHT => NEUTRAL_LIGHT
+        => NEUTRAL_DARK
+
+// @function Table background. Keep transparency between 10 and 25: at 80+ the
+// candles behind the table win and the numbers become unreadable.
+getPanelColor(string theme, int transp) =>
+    color base = theme == THEME_LIGHT ? #ffffff : #131722
+    color.new(base, math.max(0, math.min(100, transp)))
+
+// @function Divider / frame colour for table borders.
+getDividerColor(string theme) =>
+    switch theme
+        THEME_LIGHT => DIVIDER_LIGHT
+        => DIVIDER_DARK
