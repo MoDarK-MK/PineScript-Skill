@@ -21,17 +21,17 @@ def codes(result):
 
 
 class TestRuleCatalog(unittest.TestCase):
-    def test_has_34_rules_and_no_pine024(self):
-        self.assertEqual(len(pine_lint.RULES), 34)
+    def test_has_40_rules_and_no_pine024(self):
+        self.assertEqual(len(pine_lint.RULES), 40)
         self.assertNotIn("PINE024", pine_lint.RULES)
         self.assertIn("PINE001", pine_lint.RULES)
-        self.assertIn("PINE035", pine_lint.RULES)
+        self.assertIn("PINE041", pine_lint.RULES)
 
     def test_list_rules_cli(self):
         proc = run_script("pine_lint.py", "--list-rules")
         self.assertEqual(proc.returncode, 0)
         lines = [l for l in proc.stdout.splitlines() if l.strip()]
-        self.assertEqual(len(lines), 34)
+        self.assertEqual(len(lines), 40)
 
 
 class TestCoreRules(unittest.TestCase):
@@ -248,6 +248,144 @@ class TestStrategyRules(unittest.TestCase):
         result = lint_text(VALID_INDICATOR)
         for code in ("PINE029", "PINE030", "PINE031", "PINE032", "PINE033", "PINE034", "PINE035"):
             self.assertNotIn(code, codes(result))
+
+
+class TestVisualAndPerfRules(unittest.TestCase):
+    # PINE036 — invisible table text
+    def test_pine036_cell_without_text_color(self):
+        method_form = VALID_INDICATOR + (
+            'var table t = table.new(position.top_right, 2, 1)\n'
+            'if barstate.islast\n'
+            '    t.cell(0, 0, "Trend", text_size=size.small)\n'
+        )
+        self.assertIn("PINE036", codes(lint_text(method_form)))
+        func_form = VALID_INDICATOR + (
+            'var table t = table.new(position.top_right, 2, 1)\n'
+            'if barstate.islast\n'
+            '    table.cell(t, 0, 0, "Trend", text_size=size.small)\n'
+        )
+        self.assertIn("PINE036", codes(lint_text(func_form)))
+
+    def test_pine036_accepts_explicit_text_color(self):
+        for call in ('t.cell(0, 0, "Trend", text_color=color.gray)',
+                     'table.cell(t, 0, 0, "Trend", text_color=color.gray)'):
+            text = VALID_INDICATOR + (
+                'var table t = table.new(position.top_right, 2, 1)\n'
+                'if barstate.islast\n'
+                '    ' + call + '\n')
+            self.assertNotIn("PINE036", codes(lint_text(text)), msg=call)
+
+    def test_pine036_ignores_spacer_cells(self):
+        text = VALID_INDICATOR + (
+            'var table t = table.new(position.top_right, 2, 1)\n'
+            'if barstate.islast\n'
+            '    t.cell(0, 0, "")\n'
+        )
+        self.assertNotIn("PINE036", codes(lint_text(text)))
+
+    # PINE037 — array reallocated every execution
+    def test_pine037_array_new_in_block_without_var(self):
+        text = VALID_INDICATOR + (
+            'if barstate.islast\n'
+            '    array<float> bins = array.new<float>(20, 0.0)\n'
+            '    array.set(bins, 0, close)\n'
+        )
+        self.assertIn("PINE037", codes(lint_text(text)))
+
+    def test_pine037_accepts_var_and_global_and_function_local(self):
+        with_var = VALID_INDICATOR + (
+            'if barstate.islast\n'
+            '    var array<float> bins = array.new<float>(20, 0.0)\n'
+            '    array.fill(bins, 0.0)\n'
+        )
+        self.assertNotIn("PINE037", codes(lint_text(with_var)))
+        at_global = VALID_INDICATOR + 'array<float> bins = array.new<float>(20, 0.0)\n'
+        self.assertNotIn("PINE037", codes(lint_text(at_global)))
+        # A temporary inside a function body is a normal local, not per-bar churn.
+        in_function = VALID_INDICATOR + (
+            'buildBins(int n) =>\n'
+            '    array<float> bins = array.new<float>(n, 0.0)\n'
+            '    bins\n'
+        )
+        self.assertNotIn("PINE037", codes(lint_text(in_function)))
+
+    # PINE038 — drawing churn
+    def test_pine038_delete_and_recreate_in_barstate_block(self):
+        text = VALID_INDICATOR + (
+            'var line ln = na\n'
+            'if barstate.islast\n'
+            '    line.delete(ln)\n'
+            '    ln := line.new(bar_index - 10, close, bar_index, close)\n'
+        )
+        self.assertIn("PINE038", codes(lint_text(text)))
+
+    def test_pine038_accepts_incremental_update(self):
+        text = VALID_INDICATOR + (
+            'var line ln = line.new(na, na, na, na)\n'
+            'if barstate.islast\n'
+            '    line.set_xy1(ln, bar_index - 10, close)\n'
+            '    line.set_xy2(ln, bar_index, close)\n'
+        )
+        self.assertNotIn("PINE038", codes(lint_text(text)))
+
+    # PINE039 — mergeable requests
+    def test_pine039_duplicate_security_call(self):
+        text = VALID_INDICATOR + (
+            'float a = request.security(syminfo.tickerid, "D", high[1], '
+            'lookahead=barmerge.lookahead_on)\n'
+            'float b = request.security(syminfo.tickerid, "D", low[1], '
+            'lookahead=barmerge.lookahead_on)\n'
+            'plot(a + b, title="Sum")\n'
+        )
+        self.assertIn("PINE039", codes(lint_text(text)))
+
+    def test_pine039_accepts_distinct_and_merged_calls(self):
+        distinct = VALID_INDICATOR + (
+            'float a = request.security(syminfo.tickerid, "D", high[1], '
+            'lookahead=barmerge.lookahead_on)\n'
+            'float b = request.security(syminfo.tickerid, "W", low[1], '
+            'lookahead=barmerge.lookahead_on)\n'
+            'plot(a + b, title="Sum")\n'
+        )
+        self.assertNotIn("PINE039", codes(lint_text(distinct)))
+        merged = VALID_INDICATOR + (
+            '[a, b] = request.security(syminfo.tickerid, "D", [high[1], low[1]], '
+            'lookahead=barmerge.lookahead_on)\n'
+            'plot(a + b, title="Sum")\n'
+        )
+        self.assertNotIn("PINE039", codes(lint_text(merged)))
+
+    # PINE040 — untitled plots
+    def test_pine040_plot_without_title(self):
+        text = VALID_INDICATOR + "plot(ta.sma(close, 20))\n"
+        self.assertIn("PINE040", codes(lint_text(text)))
+
+    def test_pine040_accepts_positional_and_named_titles(self):
+        positional = VALID_INDICATOR + 'plot(ta.sma(close, 20), "SMA")\n'
+        self.assertNotIn("PINE040", codes(lint_text(positional)))
+        named = VALID_INDICATOR + 'plot(ta.sma(close, 20), title="SMA")\n'
+        self.assertNotIn("PINE040", codes(lint_text(named)))
+
+    # PINE041 — oversized chart text
+    def test_pine041_flags_large_and_huge(self):
+        for size_name in ("size.large", "size.huge"):
+            text = VALID_INDICATOR + (
+                f'label.new(bar_index, high, "X", size={size_name})\n')
+            self.assertIn("PINE041", codes(lint_text(text)), msg=size_name)
+
+    def test_pine041_accepts_normal_and_below(self):
+        text = VALID_INDICATOR + 'label.new(bar_index, high, "X", size=size.normal)\n'
+        self.assertNotIn("PINE041", codes(lint_text(text)))
+
+    # PINE022 rescoped to the declaration statement
+    def test_pine022_ignores_overlay_mentioned_only_in_a_comment(self):
+        text = (
+            "//@version=6\n"
+            'indicator("X")\n'
+            "// this script deliberately leaves overlay= at the default\n"
+            "plot(close, title=\"Close\")\n"
+        )
+        self.assertIn("PINE022", codes(lint_text(text)))
 
 
 class TestCli(unittest.TestCase):

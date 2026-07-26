@@ -82,6 +82,12 @@ RULES = {
     "PINE033": ("error", "qty=/qty_percent= literal outside its valid range"),
     "PINE034": ("error", "strategy.exit(from_entry=) names an entry id no strategy.entry() creates"),
     "PINE035": ("warning", "Strategy places entries but never any exit/close/risk call"),
+    "PINE036": ("error", "table.cell() without text_color= (Pine defaults to black — invisible on dark themes)"),
+    "PINE037": ("warning", "array.new inside a per-bar block without 'var' (reallocated every execution)"),
+    "PINE038": ("warning", "Drawing objects deleted and recreated inside a barstate guard (churn)"),
+    "PINE039": ("warning", "Duplicate request.security() — same symbol, timeframe and lookahead"),
+    "PINE040": ("warning", "plot()/plotshape()/plotchar() without a title"),
+    "PINE041": ("warning", "size.large/size.huge used (design guide caps chart text at size.normal)"),
 }
 
 STRATEGY_ORDER_FUNCS = [
@@ -392,13 +398,13 @@ def check_declaration(text, statements, result):
     if not (has_indicator or has_strategy or has_library):
         result.add(0, "PINE002", "No indicator(), strategy(), or library() declaration found.")
         return
-    if (has_indicator or has_strategy) and "overlay=" not in text and "overlay =" not in text:
+    # Scope the parameter search to the declaration call itself — a whole-file
+    # substring test is satisfied by a mention in a comment.
+    decl = find_declaration_statement(statements)
+    decl_text = decl["stripped"] if decl else text
+    if (has_indicator or has_strategy) and "overlay=" not in decl_text and "overlay =" not in decl_text:
         result.add(0, "PINE022", "indicator()/strategy() doesn't set overlay= explicitly.")
     if has_strategy:
-        # Scope the parameter search to the declaration call itself — the old
-        # whole-file substring test was satisfied by a mention in a comment.
-        decl = find_declaration_statement(statements)
-        decl_text = decl["stripped"] if decl else text
         missing = [p for p in ("default_qty_type", "default_qty_value", "commission_",
                                "initial_capital", "slippage")
                    if p not in decl_text]
@@ -684,6 +690,180 @@ def check_entries_have_exits(text, result):
                 "This strategy places entries but never calls strategy.exit(), strategy.close(), "
                 "strategy.close_all(), or a strategy.risk.* rule — positions are only ever closed "
                 "by an opposite entry, so no trade has a defined risk.")
+
+
+# ---------------------------------------------------------------------------
+# Visual / performance rules (PINE036-PINE041)
+# ---------------------------------------------------------------------------
+TABLE_CELL_FUNCS = ("table.cell(", ".cell(")
+
+
+def check_table_cell_text_color(statements, result):
+    """PINE036 — a cell without text_color= renders with Pine's default, which is
+    black. Over a dark table background or a dark chart that text is invisible.
+
+    Both call forms are handled: table.cell(id, col, row, text, ...) takes the
+    text as the 4th positional argument, while the method form
+    myTable.cell(col, row, text, ...) takes it as the 3rd."""
+    seen = set()
+    for func in TABLE_CELL_FUNCS:
+        text_index = 3 if func == "table.cell(" else 2
+        for stmt, arg_text in statements_calling(statements, func):
+            if stmt["start"] in seen:
+                continue
+            seen.add(stmt["start"])
+            args = split_top_level_args(arg_text)
+            if named_arg(args, "text_color") is not None:
+                continue
+            text_value = named_arg(args, "text")
+            if text_value is None:
+                positional = positional_args(args)
+                if len(positional) <= text_index:
+                    continue          # no text argument — a spacer cell
+                text_value = positional[text_index]
+            # An empty string literal is a deliberate spacer and needs no colour.
+            if re.fullmatch(r'""|\'\'', text_value.strip()):
+                continue
+            result.add(stmt["start"], "PINE036",
+                        "table cell sets no text_color= — Pine defaults cell text to black, so "
+                        "this cell is invisible on a dark table background or a dark chart. Set "
+                        "text_color= explicitly on every cell that shows text.")
+
+
+ARRAY_NEW_RE = re.compile(r'\barray\.new(?:<[^>]*>)?\s*\(|\bmatrix\.new(?:<[^>]*>)?\s*\(')
+FUNC_DECL_RE = re.compile(r'^[a-zA-Z_]\w*\s*\([^)]*\)\s*=>')
+
+
+def check_array_alloc_in_block(lines, result):
+    """PINE037 — array.new inside an indented block that is not a function body.
+    Such a block re-runs every bar (or every realtime tick under barstate.islast),
+    so the allocation is repeated; `var` + array.fill() reuses one buffer."""
+    stripped = [strip_strings_and_comments(l) for l in lines]
+    # Track which indented regions belong to a user function body, where a local
+    # array is a normal temporary rather than per-bar churn.
+    in_function_until_indent = None
+    for i, line in enumerate(stripped):
+        if not line.strip():
+            continue
+        indent = indent_width(lines[i])
+        if in_function_until_indent is not None and indent <= in_function_until_indent:
+            in_function_until_indent = None
+        if indent == 0 and FUNC_DECL_RE.match(line.strip()):
+            in_function_until_indent = 0
+            continue
+        if in_function_until_indent is not None or indent == 0:
+            continue
+        if not ARRAY_NEW_RE.search(line):
+            continue
+        if re.match(r'\s*var(?:ip)?\s', line):
+            continue
+        result.add(i + 1, "PINE037",
+                    "array.new/matrix.new inside an indented block without 'var' — this block "
+                    "re-runs every bar (every realtime tick inside a barstate.islast guard), so "
+                    "the buffer is reallocated each time. Declare it once with 'var' and reset it "
+                    "with array.fill() instead.")
+
+
+DRAWING_TYPES = ("line", "box", "label", "polyline")
+
+
+def check_drawing_churn(lines, result):
+    """PINE038 — deleting and recreating the same drawing type inside a barstate
+    guard. Updating a `var` object with .set_*() is far cheaper and doesn't flicker."""
+    stripped = [strip_strings_and_comments(l) for l in lines]
+    n = len(lines)
+    for i in range(n):
+        if "barstate.islast" not in stripped[i] and "barstate.isrealtime" not in stripped[i]:
+            continue
+        if not re.search(r'\bif\b', stripped[i]):
+            continue
+        guard_indent = indent_width(lines[i])
+        body = []
+        j = i + 1
+        while j < n:
+            if not stripped[j].strip():
+                j += 1
+                continue
+            if indent_width(lines[j]) <= guard_indent:
+                break
+            body.append(stripped[j])
+            j += 1
+        block = "\n".join(body)
+        for kind in DRAWING_TYPES:
+            if f"{kind}.new(" in block and f"{kind}.delete(" in block:
+                result.add(i + 1, "PINE038",
+                            f"this barstate block both deletes and recreates {kind} objects, so "
+                            f"they churn on every realtime tick. Create them once with 'var' and "
+                            f"update them with {kind}.set_*() instead — cheaper and no flicker.")
+
+
+def check_duplicate_security(statements, result):
+    """PINE039 — two request.security() calls sharing symbol, timeframe and
+    lookahead can be merged into one tuple request, saving a whole HTF series
+    evaluation and one slot against the 40-unique-call cap."""
+    seen = {}
+    for stmt, arg_text in statements_calling(statements, "request.security("):
+        args = split_top_level_args(arg_text)
+        positional = positional_args(args)
+        symbol = named_arg(args, "symbol")
+        if symbol is None:
+            symbol = positional[0] if positional else None
+        timeframe = named_arg(args, "timeframe")
+        if timeframe is None:
+            timeframe = positional[1] if len(positional) > 1 else None
+        lookahead = named_arg(args, "lookahead") or "(default)"
+        if symbol is None or timeframe is None:
+            continue
+        key = (symbol.strip(), timeframe.strip(), lookahead.strip())
+        if key in seen:
+            result.add(stmt["start"], "PINE039",
+                        f"request.security({key[0]}, {key[1]}, ... lookahead={key[2]}) duplicates "
+                        f"the call on line {seen[key]} — same symbol, timeframe and lookahead. "
+                        f"Merge them into one call returning a tuple to save an HTF evaluation.")
+        else:
+            seen[key] = stmt["start"]
+
+
+TITLED_PLOT_FUNCS = ("plot(", "plotshape(", "plotchar(", "plotarrow(")
+
+
+def check_plot_has_title(statements, result):
+    """PINE040 — an untitled plot shows as 'Plot' in the settings panel, the data
+    window and the status line. Mirrors PINE007 for inputs."""
+    seen = set()
+    for func in TITLED_PLOT_FUNCS:
+        for stmt, arg_text in statements_calling(statements, func):
+            if stmt["start"] in seen:
+                continue
+            args = split_top_level_args(arg_text)
+            if named_arg(args, "title") is not None:
+                continue
+            positional = positional_args(args)
+            has_title_positional = (
+                len(positional) > 1 and re.match(r'^["\']', positional[1].strip()))
+            if has_title_positional:
+                continue
+            seen.add(stmt["start"])
+            result.add(stmt["start"], "PINE040",
+                        f"{func[:-1]}() has no title — it will appear as an unnamed entry in the "
+                        f"settings panel, data window and status line. Pass a title as the second "
+                        f"positional argument or with title=.")
+
+
+BIG_SIZE_RE = re.compile(r'\bsize\.(large|huge)\b')
+
+
+def check_oversized_text(lines, result):
+    """PINE041 — references/design-system.md caps chart text at size.normal;
+    anything larger clips or wraps badly at real panel widths."""
+    for i, raw in enumerate(lines):
+        line = strip_strings_and_comments(raw)
+        m = BIG_SIZE_RE.search(line)
+        if m:
+            result.add(i + 1, "PINE041",
+                        f"size.{m.group(1)} is larger than references/design-system.md allows for "
+                        f"chart text — at real panel widths it clips or wraps. Use size.normal for "
+                        f"a headline value and size.small elsewhere.")
 
 
 def check_transp_removed(statements, result):
@@ -1001,6 +1181,12 @@ def lint_file(path, cfg):
     check_order_qty_range(statements, result)
     check_exit_from_entry(statements, result)
     check_entries_have_exits(text, result)
+    check_table_cell_text_color(statements, result)
+    check_array_alloc_in_block(lines, result)
+    check_drawing_churn(lines, result)
+    check_duplicate_security(statements, result)
+    check_plot_has_title(statements, result)
+    check_oversized_text(lines, result)
     check_transp_removed(statements, result)
     check_linewidth_minimum(statements, result)
     check_switch_default(lines, result)
