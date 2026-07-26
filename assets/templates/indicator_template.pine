@@ -7,65 +7,139 @@ indicator(
      max_labels_count=500
      )
 
+// Starting point for a new indicator. Replace the moving-average calculation
+// with your own idea; the theme system, dashboard and test block are generic.
+//
+// The dashboard rebuilds inside `if barstate.islast`, which runs on every
+// realtime tick — so it tracks price live. Keep anything expensive out of that
+// block, or gate it behind a change check (references/performance-guide.md).
+
 // ————— Constants
 string THEME_DARK  = "Dark"
 string THEME_LIGHT = "Light"
-color  BULL_DARK    = #26A69A
-color  BEAR_DARK    = #EF5350
-color  BULL_LIGHT   = #00796B
-color  BEAR_LIGHT   = #C62828
+color  BULL_DARK   = #089981
+color  BEAR_DARK   = #f23645
+color  BULL_LIGHT  = #00796b
+color  BEAR_LIGHT  = #c62828
 
 // ————— Inputs
-int    lengthInput        = input.int(14, "Length", minval=1, group="Settings")
-float  sourceInput         = input.source(close, "Source", group="Settings")
-string themeInput          = input.string(THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
+int    lengthInput        = input.int(14, "Length", minval=1, maxval=2000, group="Settings")
+float  sourceInput        = input.source(close, "Source", group="Settings")
+string themeInput         = input.string(
+     THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
 bool   showDashboardInput = input.bool(true, "Show Dashboard", group="Appearance")
-bool   testModeInput       = input.bool(false, "Test Mode", group="Debug/Test")
+string tablePosInput      = input.string(
+     "Top Right", "Dashboard Position",
+     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Appearance")
+int    panelTranspInput   = input.int(
+     15, "Dashboard Transparency", minval=0, maxval=90, group="Appearance")
+bool   testModeInput      = input.bool(false, "Test Mode", group="Debug/Test")
 
 // ————— Function declarations
 // @function Returns the bullish accent color for the selected theme.
 getBullColor(string theme) =>
     switch theme
-        THEME_DARK  => BULL_DARK
         THEME_LIGHT => BULL_LIGHT
         => BULL_DARK
 
 // @function Returns the bearish accent color for the selected theme.
 getBearColor(string theme) =>
     switch theme
-        THEME_DARK  => BEAR_DARK
         THEME_LIGHT => BEAR_LIGHT
         => BEAR_DARK
 
+// @function Primary text color — the value column reads first.
+getTextColor(string theme) =>
+    switch theme
+        THEME_LIGHT => #131722
+        => #d1d4dc
+
+// @function Secondary text color — deliberately lower contrast than the value.
+getMutedColor(string theme) =>
+    switch theme
+        THEME_LIGHT => #4a4e58
+        => #b2b5be
+
+// @function Panel background for the selected theme.
+getPanelColor(string theme, int transp) =>
+    color base = theme == THEME_LIGHT ? #ffffff : #131722
+    color.new(base, transp)
+
+// @function Maps a position-name string to the matching position.* constant.
+tablePosFrom(string name) =>
+    switch name
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left"  => position.bottom_left
+        => position.top_right
+
+// @function One label/value dashboard row. Taking both colors as arguments is
+// what stops a cell shipping without text_color — Pine defaults cell text to
+// BLACK, which is invisible on a dark panel.
+dashRow(table t, int row, string label, string value, color labelCol, color valueCol) =>
+    table.cell(t, 0, row, label, text_color=labelCol, text_size=size.small,
+         text_halign=text.align_left)
+    table.cell(t, 1, row, value, text_color=valueCol, text_size=size.small,
+         text_halign=text.align_right)
+
 // ————— Calculations
-color bullColor = getBullColor(themeInput)
-color bearColor = getBearColor(themeInput)
-float maValue = ta.sma(sourceInput, lengthInput)
-bool  trendUp = sourceInput > maValue
+color bullColor  = getBullColor(themeInput)
+color bearColor  = getBearColor(themeInput)
+color textColor  = getTextColor(themeInput)
+color mutedColor = getMutedColor(themeInput)
+float maValue    = ta.sma(sourceInput, lengthInput)
+bool  trendUp    = sourceInput > maValue
+// Hoisted out of the assertions below: a ta.* call placed after an and/or is
+// skipped by v6's lazy evaluation on some bars, which corrupts its state.
+float srcLowest  = ta.lowest(sourceInput, lengthInput)
+float srcHighest = ta.highest(sourceInput, lengthInput)
 
 // ————— Visuals
 plot(maValue, "MA", color=trendUp ? bullColor : bearColor, linewidth=2)
 
-var table dashboard = table.new(position.top_right, 2, 2, border_width=1)
+var table dashboard = table.new(
+     tablePosFrom(tablePosInput), 2, 3,
+     bgcolor=getPanelColor(themeInput, panelTranspInput),
+     border_color=getPanelColor(themeInput, 100), border_width=1,
+     frame_color=color.new(mutedColor, 70), frame_width=1)
+
 if showDashboardInput and barstate.islast
-    dashboard.cell(0, 0, "Trend", text_size=size.small)
-    dashboard.cell(1, 0, trendUp ? "Bullish" : "Bearish",
-         bgcolor=color.new(trendUp ? bullColor : bearColor, 80),
-         text_color=trendUp ? bullColor : bearColor, text_size=size.small)
-    dashboard.cell(0, 1, "MA Value", text_size=size.small)
-    dashboard.cell(1, 1, str.tostring(maValue, "#.##"), text_size=size.small)
+    table.cell(dashboard, 0, 0, "{{SHORTTITLE}}", text_color=textColor,
+         text_size=size.normal, text_halign=text.align_center)
+    table.cell(dashboard, 1, 0, "", text_color=textColor)
+    table.merge_cells(dashboard, 0, 0, 1, 0)
+    dashRow(dashboard, 1, "Trend", trendUp ? "Bullish" : "Bearish",
+         mutedColor, trendUp ? bullColor : bearColor)
+    dashRow(dashboard, 2, "MA", str.tostring(maValue, format.mintick), mutedColor, textColor)
 
 // ————— Alerts
 alertcondition(ta.cross(sourceInput, maValue), "Source crossed MA", "Source crossed the moving average")
 
-// ————— Debug / Test block (see references/pine-v6-guide.md — keep testModeInput false when handing off)
+// ————— Debug / Test block (keep testModeInput false when handing off)
+var int passCount = 0
+var int failCount = 0
+
+// @function Counts an assertion and draws a label only on failure, so a long
+// history can't spend the whole 500-label budget on passing bars.
+recordAssertion(bool condition, string description) =>
+    if condition
+        passCount += 1
+    else
+        failCount += 1
+        label.new(bar_index, high, "FAIL: " + description, color=bearColor,
+             textcolor=color.white, style=label.style_label_down, size=size.small)
+
 if testModeInput
-    // Assertion 1: value should never be na once past the warm-up period.
-    if bar_index > lengthInput and na(maValue)
-        label.new(bar_index, high, "FAIL: maValue is na past warmup", color=color.red, style=label.style_label_down)
-    // Assertion 2: boundary bar shouldn't error even if maValue is na there.
-    if bar_index == 0 and not na(maValue)
-        label.new(
-             bar_index, low, "NOTE: maValue defined on bar 0 (check if expected)",
-             color=color.yellow, style=label.style_label_up
-             )
+    // 1. The average must be defined once past its warm-up period.
+    recordAssertion(bar_index <= lengthInput or not na(maValue), "maValue is na past warm-up")
+    // 2. An average of a positive series can never fall outside its range.
+    recordAssertion(
+         na(maValue) or (maValue >= srcLowest and maValue <= srcHighest),
+         "maValue outside the source range")
+
+var table testTable = table.new(position.bottom_left, 2, 2, border_width=1,
+     bgcolor=getPanelColor(themeInput, panelTranspInput))
+if testModeInput and barstate.islast
+    dashRow(testTable, 0, "Passed", str.tostring(passCount), mutedColor, bullColor)
+    dashRow(testTable, 1, "Failed", str.tostring(failCount), mutedColor,
+         failCount > 0 ? bearColor : bullColor)

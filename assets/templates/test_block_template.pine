@@ -37,10 +37,24 @@ if testModeInput
     recordAssertion(bar_index >= 0, "bar_index should never be negative")
 
 // ————— Visuals
-var table testDashboard = table.new(position.bottom_left, 2, 2, border_width=1)
+// Every cell sets text_color explicitly: Pine defaults cell text to BLACK, so a
+// cell without it is invisible on a dark chart — and a table with no bgcolor is
+// fully transparent, which makes that worse.
+color PASS_COLOR  = #089981
+color FAIL_COLOR  = #f23645
+color MUTED_COLOR = #b2b5be
+color PANEL_COLOR = #131722
+
+var table testDashboard = table.new(
+     position.bottom_left, 2, 2, border_width=1,
+     bgcolor=color.new(PANEL_COLOR, 15),
+     frame_color=color.new(MUTED_COLOR, 70), frame_width=1)
 if testModeInput and barstate.islast
-    testDashboard.cell(0, 0, "Passed", text_size=size.small)
-    testDashboard.cell(1, 0, str.tostring(passCount), text_color=color.green, text_size=size.small)
-    testDashboard.cell(0, 1, "Failed", text_size=size.small)
-    testDashboard.cell(1, 1, str.tostring(failCount),
-         text_color=failCount > 0 ? color.red : color.green, text_size=size.small)
+    testDashboard.cell(0, 0, "Passed", text_size=size.small, text_color=MUTED_COLOR,
+         text_halign=text.align_left)
+    testDashboard.cell(1, 0, str.tostring(passCount), text_color=PASS_COLOR,
+         text_size=size.small, text_halign=text.align_right)
+    testDashboard.cell(0, 1, "Failed", text_size=size.small, text_color=MUTED_COLOR,
+         text_halign=text.align_left)
+    testDashboard.cell(1, 1, str.tostring(failCount), text_size=size.small,
+         text_color=failCount > 0 ? FAIL_COLOR : PASS_COLOR, text_halign=text.align_right)

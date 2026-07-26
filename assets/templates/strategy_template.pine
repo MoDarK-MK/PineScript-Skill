@@ -131,6 +131,11 @@ bool   reanchorInput     = input.bool(true, "Re-anchor Plan To Fill Price", grou
 // ————— Inputs: Appearance
 string themeInput         = input.string(THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
 bool   showDashboardInput = input.bool(true, "Show Dashboard", group="Appearance")
+string tablePosInput      = input.string(
+     "Top Right", "Dashboard Position",
+     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Appearance")
+int    panelTranspInput   = input.int(
+     15, "Dashboard Transparency", minval=0, maxval=90, group="Appearance")
 bool   showLevelsInput    = input.bool(true, "Plot Stop / Target Levels", group="Appearance")
 bool   testModeInput      = input.bool(false, "Test Mode", group="Debug/Test")
 
@@ -148,6 +153,42 @@ getBearColor(string theme) =>
         THEME_DARK  => BEAR_DARK
         THEME_LIGHT => BEAR_LIGHT
         => BEAR_DARK
+
+// @function Primary text color — the value column reads first.
+getTextColor(string theme) =>
+    switch theme
+        THEME_LIGHT => #131722
+        => #d1d4dc
+
+// @function Secondary text color — deliberately lower contrast than the value.
+getMutedColor(string theme) =>
+    switch theme
+        THEME_LIGHT => #4a4e58
+        => #b2b5be
+
+// @function Panel background. Keep transparency low (10-25): at 80+ the candles
+// behind the panel win and the numbers stop being readable.
+getPanelColor(string theme, int transp) =>
+    color base = theme == THEME_LIGHT ? #ffffff : #131722
+    color.new(base, transp)
+
+// @function Maps a position-name string to the matching position.* constant.
+tablePosFrom(string name) =>
+    switch name
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left"  => position.bottom_left
+        => position.top_right
+
+// @function One label/value dashboard row. Both colors are required arguments,
+// which is what stops a cell shipping without text_color — Pine defaults cell
+// text to BLACK, invisible on a dark panel. Labels align left and values align
+// right so the digits form a column and don't jitter as the price ticks.
+dashRow(table t, int row, string label, string value, color labelCol, color valueCol) =>
+    table.cell(t, 0, row, label, text_color=labelCol, text_size=size.small,
+         text_halign=text.align_left)
+    table.cell(t, 1, row, value, text_color=valueCol, text_size=size.small,
+         text_halign=text.align_right)
 
 // @function Stop distance in PRICE units, floored at a minimum tick count so a
 // tight-range bar can't produce a zero-width stop — that would divide by zero in
@@ -189,8 +230,10 @@ positionQty(float stopDist, float px) =>
     qtyStepInput > 0 ? math.floor(raw / qtyStepInput) * qtyStepInput : raw
 
 // ————— Calculations
-color bullColor = getBullColor(themeInput)
-color bearColor = getBearColor(themeInput)
+color bullColor  = getBullColor(themeInput)
+color bearColor  = getBearColor(themeInput)
+color textColor  = getTextColor(themeInput)
+color mutedColor = getMutedColor(themeInput)
 
 // Every ta.*/request.* result is computed into a named variable BEFORE any
 // condition uses it — v6 evaluates and/or lazily, so a call placed after an
@@ -376,20 +419,34 @@ if useSessionInput and closeOutsideSessInput and not inSession and strategy.posi
     strategy.close_all(comment="Session end")
 
 // ————— Visuals
+// Emphasis follows proximity: the stop is the loudest line, TP1 (the nearer,
+// more actionable target) next, TP2 faintest. display= keeps the three level
+// series out of the status line, where three `na`s add nothing.
 plot(showLevelsInput and strategy.position_size != 0 ? activeStop : na, "Stop",
-     color=color.new(bearColor, 20), style=plot.style_linebr, linewidth=2)
+     color=color.new(bearColor, 10), style=plot.style_linebr, linewidth=2,
+     display=display.pane + display.price_scale)
 plot(showLevelsInput and strategy.position_size != 0 and not tp1Done ? tp1Price : na, "TP1",
-     color=color.new(bullColor, 40), style=plot.style_linebr)
+     color=color.new(bullColor, 20), style=plot.style_linebr, linewidth=2,
+     display=display.pane + display.price_scale)
 plot(showLevelsInput and strategy.position_size != 0 and useTp2Input ? tp2Price : na, "TP2",
-     color=color.new(bullColor, 20), style=plot.style_linebr)
+     color=color.new(bullColor, 45), style=plot.style_linebr, linewidth=1,
+     display=display.pane + display.price_scale)
 
+// plotshape rather than label.new: markers on every signal bar would otherwise
+// consume the finite 500-label pool and silently drop the oldest ones.
 plotshape(longEntry and plannedQty > 0, "Long Entry", shape.triangleup,
      location.belowbar, color=bullColor, size=size.tiny)
 plotshape(shortEntry and plannedQty > 0, "Short Entry", shape.triangledown,
      location.abovebar, color=bearColor, size=size.tiny)
 
-var table dashboard = table.new(position.top_right, 2, 10, border_width=1,
-     bgcolor=color.new(color.black, 85))
+// Rows 1-4 are live position state, rows 6-10 are backtest quality; row 5 is a
+// divider so the two groups don't read as one undifferentiated wall.
+var table dashboard = table.new(
+     tablePosFrom(tablePosInput), 2, 12,
+     bgcolor=getPanelColor(themeInput, panelTranspInput), border_width=1,
+     border_color=getPanelColor(themeInput, 100),
+     frame_color=color.new(mutedColor, 70), frame_width=1)
+
 if showDashboardInput and barstate.islast
     float winRate    = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100 : na
     float profitFact = strategy.grossloss > 0 ? strategy.grossprofit / strategy.grossloss : na
@@ -400,35 +457,40 @@ if showDashboardInput and barstate.islast
          (isLong ? "Long " : "Short ") + str.tostring(math.abs(strategy.position_size), "#.####")
     string stopTag   = beArmed ? " (BE)" : ""
     bool   realismOk = entryCount >= 100 and not na(profitFact) and profitFact > 1
-    dashboard.cell(0, 0, "Position", text_color=color.gray, text_size=size.small)
-    dashboard.cell(1, 0, posTxt, text_size=size.small,
-         text_color=isFlat ? color.gray : isLong ? bullColor : bearColor)
-    dashboard.cell(0, 1, "Entry", text_color=color.gray, text_size=size.small)
-    dashboard.cell(1, 1, isFlat ? "--" : str.tostring(strategy.position_avg_price, format.mintick),
-         text_size=size.small)
-    dashboard.cell(0, 2, "Stop", text_color=color.gray, text_size=size.small)
-    dashboard.cell(1, 2, isFlat or na(activeStop) ? "--" :
-         str.tostring(activeStop, format.mintick) + stopTag, text_size=size.small)
-    dashboard.cell(0, 3, "TP1 / TP2", text_color=color.gray, text_size=size.small)
-    dashboard.cell(1, 3, isFlat or na(tp1Price) ? "--" :
+    table.cell(dashboard, 0, 0, "{{SHORTTITLE}}", text_color=textColor,
+         text_size=size.normal, text_halign=text.align_center)
+    table.cell(dashboard, 1, 0, "", text_color=textColor)
+    table.merge_cells(dashboard, 0, 0, 1, 0)
+    dashRow(dashboard, 1, "Position", posTxt, mutedColor,
+         isFlat ? mutedColor : isLong ? bullColor : bearColor)
+    dashRow(dashboard, 2, "Entry",
+         isFlat ? "--" : str.tostring(strategy.position_avg_price, format.mintick),
+         mutedColor, textColor)
+    dashRow(dashboard, 3, "Stop",
+         isFlat or na(activeStop) ? "--" : str.tostring(activeStop, format.mintick) + stopTag,
+         mutedColor, isFlat ? mutedColor : bearColor)
+    dashRow(dashboard, 4, "TP1 / TP2", isFlat or na(tp1Price) ? "--" :
          str.tostring(tp1Price, format.mintick) + (tp1Done ? " x" : "") + " / " +
-         (useTp2Input ? str.tostring(tp2Price, format.mintick) : "--"), text_size=size.small)
-    dashboard.cell(0, 4, "Positions taken", text_color=color.gray, text_size=size.small)
-    dashboard.cell(1, 4, str.tostring(entryCount), text_size=size.small)
-    dashboard.cell(0, 5, "Closed records", text_color=color.gray, text_size=size.small)
-    dashboard.cell(1, 5, str.tostring(strategy.closedtrades) +
-         (usePartialsInput ? " (incl. partials)" : ""), text_size=size.small)
-    dashboard.cell(0, 6, "Win rate", text_color=color.gray, text_size=size.small)
-    dashboard.cell(1, 6, na(winRate) ? "--" : str.tostring(winRate, "#.#") + "%", text_size=size.small)
-    dashboard.cell(0, 7, "Profit factor", text_color=color.gray, text_size=size.small)
-    dashboard.cell(1, 7, na(profitFact) ? "--" : str.tostring(profitFact, "#.##"), text_size=size.small,
-         text_color=na(profitFact) ? color.gray : profitFact > 1 ? bullColor : bearColor)
-    dashboard.cell(0, 8, "Net profit", text_color=color.gray, text_size=size.small)
-    dashboard.cell(1, 8, na(netPct) ? "--" : str.tostring(netPct, "#.#") + "%", text_size=size.small,
-         text_color=na(netPct) ? color.gray : netPct >= 0 ? bullColor : bearColor)
-    dashboard.cell(0, 9, "Realism", text_color=color.gray, text_size=size.small)
-    dashboard.cell(1, 9, realismOk ? "OK" : entryCount < 100 ? "Too few trades" : "PF <= 1",
-         text_size=size.small, bgcolor=color.new(realismOk ? bullColor : bearColor, 80),
+         (useTp2Input ? str.tostring(tp2Price, format.mintick) : "--"),
+         mutedColor, isFlat ? mutedColor : bullColor)
+    table.cell(dashboard, 0, 5, "", height=0.4, bgcolor=color.new(mutedColor, 60))
+    table.cell(dashboard, 1, 5, "", height=0.4, bgcolor=color.new(mutedColor, 60))
+    dashRow(dashboard, 6, "Positions taken", str.tostring(entryCount), mutedColor, textColor)
+    dashRow(dashboard, 7, "Closed records", str.tostring(strategy.closedtrades) +
+         (usePartialsInput ? " (incl. partials)" : ""), mutedColor, textColor)
+    dashRow(dashboard, 8, "Win rate",
+         na(winRate) ? "--" : str.tostring(winRate, "#.#") + "%", mutedColor, textColor)
+    dashRow(dashboard, 9, "Profit factor",
+         na(profitFact) ? "--" : str.tostring(profitFact, "#.##"), mutedColor,
+         na(profitFact) ? mutedColor : profitFact > 1 ? bullColor : bearColor)
+    dashRow(dashboard, 10, "Net profit",
+         na(netPct) ? "--" : str.tostring(netPct, "#.#") + "%", mutedColor,
+         na(netPct) ? mutedColor : netPct >= 0 ? bullColor : bearColor)
+    table.cell(dashboard, 0, 11, "Realism", text_color=mutedColor, text_size=size.small,
+         text_halign=text.align_left)
+    table.cell(dashboard, 1, 11, realismOk ? "OK" : entryCount < 100 ? "Too few trades" : "PF <= 1",
+         text_size=size.small, text_halign=text.align_right,
+         bgcolor=color.new(realismOk ? bullColor : bearColor, 85),
          text_color=realismOk ? bullColor : bearColor)
 
 // ————— Alerts
@@ -446,7 +508,7 @@ recordAssertion(bool condition, string description) =>
         passCount += 1
     else
         failCount += 1
-        label.new(bar_index, high, "FAIL: " + description, color=color.red,
+        label.new(bar_index, high, "FAIL: " + description, color=bearColor,
              textcolor=color.white, style=label.style_label_down, size=size.small)
 
 if testModeInput
@@ -475,10 +537,11 @@ if testModeInput
          na(strategy.position_size[1]) or strategy.position_size[1] != 0,
          "position held outside the date window")
 
-var table testTable = table.new(position.bottom_left, 2, 2, border_width=1)
+var table testTable = table.new(
+     position.bottom_left, 2, 2, border_width=1,
+     bgcolor=getPanelColor(themeInput, panelTranspInput),
+     frame_color=color.new(mutedColor, 70), frame_width=1)
 if testModeInput and barstate.islast
-    testTable.cell(0, 0, "Passed", text_size=size.small)
-    testTable.cell(1, 0, str.tostring(passCount), text_color=color.green, text_size=size.small)
-    testTable.cell(0, 1, "Failed", text_size=size.small)
-    testTable.cell(1, 1, str.tostring(failCount), text_size=size.small,
-         text_color=failCount > 0 ? color.red : color.green)
+    dashRow(testTable, 0, "Passed", str.tostring(passCount), mutedColor, bullColor)
+    dashRow(testTable, 1, "Failed", str.tostring(failCount), mutedColor,
+         failCount > 0 ? bearColor : bullColor)
