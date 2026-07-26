@@ -4,8 +4,7 @@
 //@version=6
 indicator(
      "Reversal Pro", shorttitle="REVPRO", overlay=true,
-     max_labels_count=500, max_lines_count=500, max_boxes_count=500,
-     max_bars_back=1000
+     max_labels_count=500, max_lines_count=500, max_boxes_count=500
      )
 
 // Pivot-based reversal detector covering the whole chart history, with a 0-5
@@ -16,61 +15,67 @@ indicator(
 //   4. Wick rejection — long rejection tail on the pivot candle
 //   5. Major swing — the pivot is the extreme of a wider lookback window
 //
-// Dashboard modules (both rebuild on every realtime tick, so they track price
-// live and to the tick):
-//   • Live table — current price with a tick-direction arrow, and the exact swing
-//     position (% of price between the last reversal low and high).
+// Modules:
+//   • Live table — current price with a true tick-direction arrow, and the exact
+//     swing position (% of price between the last reversal low and high).
 //   • Key Levels — previous day/week/month H-L-C, day open, live current-day
-//     high/low, and the most recent reversal swing high/low. Each is drawn as a
-//     fully customizable horizontal line, optionally labelled with its live
-//     distance from price, with the nearest level above/below highlighted.
-//   • Volume Analysis — the traded volume at each reversal (on the label and in
-//     its tooltip), and the highest-volume price zone BETWEEN the two most recent
-//     reversals: a volume profile is built over that swing and its Point of
-//     Control (the price bin that traded the most) is drawn as a box.
-// NOTE (volume zone): the zone is built from `volume` aggregated per bar at
-// hlc3, not from real tick-level data — TradingView doesn't expose intrabar
-// volume distribution to Pine. It is a good approximation of where trading
-// concentrated, not an exchange-accurate volume profile. On instruments with no
-// volume feed (many forex pairs) it degenerates to an equal-weight price range.
+//     high/low, and the most recent reversal swing high/low. Labels are nudged
+//     apart when levels cluster, so a busy chart stays readable.
+//   • Volume Analysis — traded volume at each reversal, plus the highest-volume
+//     price zone BETWEEN the two most recent reversals (its Point of Control).
+//
+// UPDATE MODEL (see references/performance-guide.md):
+//   Light work — price, swing position, level distances, drawing positions —
+//   recomputes on every realtime tick, so the chart stays live to the tick.
+//   Heavy work — the volume profile scan — is fingerprinted against the bars it
+//   covers and only re-runs when that window actually moves, which is at most
+//   once per bar rather than several times a second. Drawings are created once
+//   and repositioned with .set_*() rather than deleted and rebuilt, so nothing
+//   flickers and nothing churns.
+//
+// NOTE (volume zone): volume is attributed to each bar's hlc3 — Pine exposes no
+// intrabar volume distribution — so the zone shows where trading concentrated
+// rather than reproducing an exchange-accurate profile. On instruments with no
+// volume feed it degenerates to an equal-weight price range.
 //
 // NOTE (repainting): ta.pivothigh/pivotlow only confirm a pivot `Pivot
-// Sensitivity` bars AFTER the actual high/low forms. Labels therefore appear
-// with that delay and could not have been traded in real time at the pivot bar
-// itself — treat them as zone markers, not instant entry signals.
+// Sensitivity` bars AFTER the actual high/low forms. Labels appear with that
+// delay and could not have been traded in real time at the pivot bar itself.
+// A pivot forming on the current bar can also vanish before that bar closes,
+// which is why alerts are gated on bar confirmation by default.
 
 // ————— Constants
 int   MAX_SCORE         = 5
 color TRANSPARENT_COLOR = #00000000
+string THEME_DARK       = "Dark"
+string THEME_LIGHT      = "Light"
 
 // ————— Inputs: Reversal
-int   pivotLenInput    = input.int(15, "Pivot Sensitivity", minval=2, group="Reversal")
+int   pivotLenInput    = input.int(
+     15, "Pivot Sensitivity", minval=2, maxval=400, group="Reversal")
 bool  extendLinesInput = input.bool(false, "Extend Reversal Lines", group="Reversal")
 int   lineLengthInput  = input.int(20, "Fixed Line Length (if not extended)", minval=1, group="Reversal")
 
 // ————— Inputs: Strength Filters
 int   minScoreInput    = input.int(0, "Min Score To Show (0 = all)", minval=0, maxval=5, group="Strength Filters")
 int   strongScoreInput = input.int(4, "'Strong' Alert Threshold", minval=1, maxval=5, group="Strength Filters")
-int   rsiLenInput      = input.int(14, "RSI Length", minval=1, group="Strength Filters")
+int   rsiLenInput      = input.int(14, "RSI Length", minval=1, maxval=400, group="Strength Filters")
 int   rsiObInput       = input.int(60, "RSI Exhaustion for Tops", minval=50, maxval=100, group="Strength Filters")
 int   rsiOsInput       = input.int(40, "RSI Exhaustion for Bottoms", minval=0, maxval=50, group="Strength Filters")
-int   volLenInput      = input.int(20, "Volume Average Length", minval=1, group="Strength Filters")
+int   volLenInput      = input.int(20, "Volume Average Length", minval=1, maxval=400, group="Strength Filters")
 float volMultInput     = input.float(1.5, "Volume Spike Multiplier", minval=1.0, step=0.1, group="Strength Filters")
 float wickRatioInput   = input.float(0.5, "Wick Rejection", minval=0.1, maxval=1.0, step=0.1, group="Strength Filters")
-int   swingLookInput   = input.int(50, "Major Swing Lookback", minval=2, group="Strength Filters")
+int   swingLookInput   = input.int(
+     50, "Major Swing Lookback", minval=2, maxval=400, group="Strength Filters")
 
 // ————— Inputs: Table
-bool   showTableInput  = input.bool(true, "Show Live Price/Swing Table", group="Table")
-string tablePosInput   = input.string(
+bool   showTableInput   = input.bool(true, "Show Live Price/Swing Table", group="Table")
+string tablePosInput    = input.string(
      "Top Right", "Table Position",
      options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Table")
-string tableSizeInput  = input.string(
-     "Small", "Table Text Size",
-     options=["Tiny", "Small", "Normal", "Large"], group="Table")
-int    tableTranspInput = input.int(80, "Table Transparency", minval=0, maxval=100, group="Table")
-color  headerColInput  = input.color(color.new(#5b9cf6, 0), "Header Color", group="Table")
-color  upColInput      = input.color(#089981, "Up Color", group="Table")
-color  downColInput    = input.color(#f23645, "Down Color", group="Table")
+string tableSizeInput   = input.string(
+     "Small", "Table Text Size", options=["Tiny", "Small", "Normal"], group="Table")
+int    tableTranspInput = input.int(15, "Table Transparency", minval=0, maxval=90, group="Table")
 
 // ————— Inputs: Key Levels
 bool   showLevelsInput = input.bool(true, "Show Key Levels", group="Key Levels")
@@ -84,19 +89,19 @@ color  pdlColInput  = input.color(#089981, "", inline="pdl", group="Key Levels")
 bool   showPdcInput = input.bool(false, "Prev Day Close", inline="pdc", group="Key Levels")
 color  pdcColInput  = input.color(#787b86, "", inline="pdc", group="Key Levels")
 bool   showPwhInput = input.bool(true, "Prev Week High", inline="pwh", group="Key Levels")
-color  pwhColInput  = input.color(#ff9800, "", inline="pwh", group="Key Levels")
+color  pwhColInput  = input.color(#d98b1f, "", inline="pwh", group="Key Levels")
 bool   showPwlInput = input.bool(true, "Prev Week Low", inline="pwl", group="Key Levels")
-color  pwlColInput  = input.color(#9c27b0, "", inline="pwl", group="Key Levels")
+color  pwlColInput  = input.color(#3d8bd4, "", inline="pwl", group="Key Levels")
 bool   showPmhInput = input.bool(false, "Prev Month High", inline="pmh", group="Key Levels")
-color  pmhColInput  = input.color(#e91e63, "", inline="pmh", group="Key Levels")
+color  pmhColInput  = input.color(#a8622f, "", inline="pmh", group="Key Levels")
 bool   showPmlInput = input.bool(false, "Prev Month Low", inline="pml", group="Key Levels")
-color  pmlColInput  = input.color(#00bcd4, "", inline="pml", group="Key Levels")
+color  pmlColInput  = input.color(#2f7d7d, "", inline="pml", group="Key Levels")
 bool   showOpenInput = input.bool(false, "Day Open", inline="dopen", group="Key Levels")
-color  openColInput  = input.color(#5b9cf6, "", inline="dopen", group="Key Levels")
+color  openColInput  = input.color(#787b86, "", inline="dopen", group="Key Levels")
 bool   showCdhInput = input.bool(false, "Curr Day High (live)", inline="cdh", group="Key Levels")
-color  cdhColInput  = input.color(#ef9a9a, "", inline="cdh", group="Key Levels")
+color  cdhColInput  = input.color(#e08b8b, "", inline="cdh", group="Key Levels")
 bool   showCdlInput = input.bool(false, "Curr Day Low (live)", inline="cdl", group="Key Levels")
-color  cdlColInput  = input.color(#a5d6a7, "", inline="cdl", group="Key Levels")
+color  cdlColInput  = input.color(#7fb992, "", inline="cdl", group="Key Levels")
 bool   showSwingHInput = input.bool(true, "Recent Reversal High", inline="swh", group="Key Levels")
 color  swingHColInput  = input.color(#f23645, "", inline="swh", group="Key Levels")
 bool   showSwingLInput = input.bool(true, "Recent Reversal Low", inline="swl", group="Key Levels")
@@ -105,16 +110,16 @@ string distanceModeInput = input.string(
      "Percent", "Show Distance On Labels",
      options=["Percent", "Price", "Off"], group="Key Levels")
 bool   highlightNearestInput = input.bool(true, "Highlight Nearest Level", group="Key Levels")
+bool   nudgeLabelsInput = input.bool(true, "Nudge Overlapping Labels Apart", group="Key Levels")
 int    levelWidthInput = input.int(1, "Level Line Width", minval=1, maxval=4, group="Key Levels")
 string levelStyleInput = input.string(
      "Dashed", "Level Line Style",
      options=["Solid", "Dotted", "Dashed"], group="Key Levels")
 bool   levelExtendInput = input.bool(true, "Extend Levels Right", group="Key Levels")
-int    levelLeftInput   = input.int(50, "Level Start (bars back)", minval=1, group="Key Levels")
+int    levelLeftInput   = input.int(50, "Level Start (bars back)", minval=1, maxval=500, group="Key Levels")
 bool   showLevelLabelsInput = input.bool(true, "Show Level Labels", group="Key Levels")
 string levelLabelSizeInput  = input.string(
-     "Small", "Level Label Size",
-     options=["Tiny", "Small", "Normal", "Large"], group="Key Levels")
+     "Small", "Level Label Size", options=["Tiny", "Small", "Normal"], group="Key Levels")
 
 // ————— Inputs: Volume Analysis
 string VOL_GROUP = "Volume Analysis"
@@ -125,18 +130,40 @@ int    hvzRowsInput      = input.int(
      24, "Volume Profile Rows", minval=4, maxval=100, group=VOL_GROUP)
 int    hvzMaxBarsInput   = input.int(
      500, "Max Bars To Scan", minval=10, maxval=900, group=VOL_GROUP)
-color  hvzColorInput     = input.color(#ffb703, "Zone Color", group=VOL_GROUP)
-int    hvzTranspInput    = input.int(80, "Zone Transparency", minval=0, maxval=100, group=VOL_GROUP)
+color  hvzColorInput     = input.color(#d98b1f, "Zone Color", group=VOL_GROUP)
+int    hvzTranspInput    = input.int(85, "Zone Transparency", minval=0, maxval=100, group=VOL_GROUP)
 bool   hvzExtendInput    = input.bool(true, "Extend Zone Right", group=VOL_GROUP)
 bool   hvzMidLineInput   = input.bool(true, "Draw Zone Mid-Line (POC)", group=VOL_GROUP)
 bool   hvzLabelInput     = input.bool(true, "Label The Zone", group=VOL_GROUP)
 
 // ————— Inputs: Appearance
+string themeInput      = input.string(
+     THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
 color bullColorInput   = input.color(#089981, "Bullish Color", group="Appearance")
 color bearColorInput   = input.color(#f23645, "Bearish Color", group="Appearance")
+bool  confirmedOnlyInput = input.bool(
+     true, "Alerts Only On Confirmed Bars", group="Appearance")
 bool  testModeInput    = input.bool(false, "Test Mode", group="Debug/Test")
 
 // ————— Function declarations
+// @function Primary text color — the value column reads first.
+getTextColor(string theme) =>
+    switch theme
+        THEME_LIGHT => #131722
+        => #d1d4dc
+
+// @function Secondary text color — deliberately lower contrast than the value.
+getMutedColor(string theme) =>
+    switch theme
+        THEME_LIGHT => #4a4e58
+        => #b2b5be
+
+// @function Panel background. Low transparency on purpose: at 80+ the candles
+// behind the panel win and the numbers stop being readable.
+getPanelColor(string theme, int transp) =>
+    color base = theme == THEME_LIGHT ? #ffffff : #131722
+    color.new(base, transp)
+
 // @function Builds a "★★★☆☆"-style strength string for a 0..MAX_SCORE score.
 starString(int score) =>
     string stars = ""
@@ -144,9 +171,10 @@ starString(int score) =>
         stars := stars + (i <= score ? "★" : "☆")
     stars
 
-// @function Text transparency for a score — weak signals fade, strong ones pop.
+// @function Text transparency for a score. Floors at 25 rather than 50 — a
+// half-transparent label with no backing plate is unreadable over candle wicks.
 scoreTransp(int score) =>
-    math.max(0, 50 - score * 10)
+    math.max(0, 25 - score * 5)
 
 // @function Sums how many of the five confirmation flags are true (0..5).
 countConfirmations(bool a, bool b, bool c, bool d, bool e) =>
@@ -185,13 +213,12 @@ volumeSuffix(float pivotVol, float pivotVolAvg) =>
             suffix := suffix + " (" + str.tostring(pivotVol / pivotVolAvg, "#.#") + "x)"
     suffix
 
-// @function Maps a size-name string to the matching size.* constant.
+// @function Maps a size-name string to the matching size.* constant. Capped at
+// size.normal — anything larger clips or wraps at real panel widths.
 sizeFrom(string name) =>
     switch name
         "Tiny"   => size.tiny
-        "Small"  => size.small
         "Normal" => size.normal
-        "Large"  => size.large
         => size.small
 
 // @function Maps a line-style-name string to the matching line.style_* constant.
@@ -199,13 +226,11 @@ lineStyleFrom(string name) =>
     switch name
         "Solid"  => line.style_solid
         "Dotted" => line.style_dotted
-        "Dashed" => line.style_dashed
-        => line.style_solid
+        => line.style_dashed
 
 // @function Maps a position-name string to the matching position.* constant.
 tablePosFrom(string name) =>
     switch name
-        "Top Right"    => position.top_right
         "Top Left"     => position.top_left
         "Bottom Right" => position.bottom_right
         "Bottom Left"  => position.bottom_left
@@ -219,52 +244,39 @@ levelSuffix(float price) =>
         "Price"   => "  (" + str.tostring(dist, format.mintick) + ")"
         => ""
 
-// @function Deletes and empties an array of lines.
-clearLines(array<line> arr) =>
-    if array.size(arr) > 0
-        for i = 0 to array.size(arr) - 1
-            line.delete(array.get(arr, i))
-        array.clear(arr)
-
-// @function Deletes and empties an array of labels.
-clearLabels(array<label> arr) =>
-    if array.size(arr) > 0
-        for i = 0 to array.size(arr) - 1
-            label.delete(array.get(arr, i))
-        array.clear(arr)
+// @function One label/value table row. Both colors are required arguments,
+// which is what stops a cell shipping without text_color — Pine defaults cell
+// text to BLACK, invisible on a dark panel. Labels align left and values right
+// so the digits form a column and don't jitter as the price ticks.
+dashRow(table t, int row, string label, string value, color labelCol, color valueCol) =>
+    table.cell(t, 0, row, label, text_color=labelCol, text_size=sizeFrom(tableSizeInput),
+         text_halign=text.align_left)
+    table.cell(t, 1, row, value, text_color=valueCol, text_size=sizeFrom(tableSizeInput),
+         text_halign=text.align_right)
 
 // @function Collects an enabled, non-na level into the parallel price/name/color
-// arrays so the nearest-level pass can see the full set before drawing.
+// arrays so the nearest-level and collision passes see the full set before drawing.
 addLevel(bool cond, float price, string name, color col, array<float> pArr, array<string> nArr, array<color> cArr) =>
     if cond and not na(price)
         array.push(pArr, price)
         array.push(nArr, name)
         array.push(cArr, col)
 
-// @function Draws one horizontal key level (and optional live-distance label
-// floated just ABOVE the line so the line never cuts through the text),
-// tracking the created objects so they can be cleared and redrawn next bar.
-drawOneLevel(float price, string name, color col, bool isNear, array<line> lnArr, array<label> lbArr) =>
-    int x1 = math.max(0, bar_index - levelLeftInput)
-    int w  = isNear ? levelWidthInput + 1 : levelWidthInput
-    line ln = line.new(
-         x1, price, bar_index, price, xloc=xloc.bar_index, color=col,
-         width=w, style=lineStyleFrom(levelStyleInput),
-         extend=levelExtendInput ? extend.right : extend.none)
-    array.push(lnArr, ln)
-    if showLevelLabelsInput
-        string txt = name + "  " + str.tostring(price, format.mintick) + levelSuffix(price)
-        label lb = label.new(
-             bar_index, price, txt, xloc=xloc.bar_index, style=label.style_label_lower_left,
-             color=isNear ? color.new(col, 80) : TRANSPARENT_COLOR, textcolor=col,
-             size=sizeFrom(levelLabelSizeInput))
-        array.push(lbArr, lb)
-
 // ————— Calculations
+color textColor  = getTextColor(themeInput)
+color mutedColor = getMutedColor(themeInput)
+
+// Hoisted: these switch over constant inputs, so evaluating them once beats
+// re-evaluating them for every level on every tick.
+string tableSize      = sizeFrom(tableSizeInput)
+string levelLabelSize = sizeFrom(levelLabelSizeInput)
+string levelStyle     = lineStyleFrom(levelStyleInput)
+
 float rsiValue = ta.rsi(close, rsiLenInput)
 float volAvg   = ta.sma(nz(volume), volLenInput)
 float highestN = ta.highest(high, swingLookInput)
 float lowestN  = ta.lowest(low, swingLookInput)
+float atrValue = ta.atr(14)
 
 float pivotHigh = ta.pivothigh(high, pivotLenInput, pivotLenInput)
 float pivotLow  = ta.pivotlow(low, pivotLenInput, pivotLenInput)
@@ -272,6 +284,9 @@ bool  bearPivot = not na(pivotHigh)
 bool  bullPivot = not na(pivotLow)
 
 // Track the most recent confirmed pivots for the live swing-position readout.
+// These MUST stay `var`, not `varip`: a pivot can appear mid-bar and vanish
+// before the bar closes, and only `var`'s rollback to the last bar-close value
+// keeps a phantom pivot from latching permanently.
 var float lastPH = na
 var float lastPL = na
 if bearPivot
@@ -279,9 +294,8 @@ if bearPivot
 if bullPivot
     lastPL := pivotLow
 
-// Track the bar index of the two most recent pivots OF ANY KIND — that pair
-// bounds the swing the high-volume zone is measured over. Pivots are confirmed
-// pivotLenInput bars late, so the pivot itself sits at bar_index - pivotLenInput.
+// Bar index of the two most recent pivots of any kind — that pair bounds the
+// swing the high-volume zone is measured over.
 var int lastPivotBar = na
 var int prevPivotBar = na
 if bearPivot or bullPivot
@@ -294,13 +308,24 @@ float swingPos = na
 if not na(lastPH) and not na(lastPL) and lastPH > lastPL
     swingPos := math.max(0, math.min(100, (close - lastPL) / (lastPH - lastPL) * 100))
 
+// True tick direction. close[1] is the previous BAR's close, so comparing
+// against it gives bar direction, not tick direction — only varip survives
+// between intrabar ticks. This is the one place varip is correct here.
+varip float prevTickClose = na
+varip bool  tickWasUp     = true
+if barstate.isrealtime
+    if not na(prevTickClose) and close != prevTickClose
+        tickWasUp := close > prevTickClose
+    prevTickClose := close
+bool tickUp = barstate.isrealtime ? tickWasUp : close >= nz(close[1], close)
+
 // Pivot-bar candle geometry (pivotLenInput bars back).
 float pivotRange = high[pivotLenInput] - low[pivotLenInput]
 float upperWick  = high[pivotLenInput] - math.max(open[pivotLenInput], close[pivotLenInput])
 float lowerWick  = math.min(open[pivotLenInput], close[pivotLenInput]) - low[pivotLenInput]
 
-// Confirmations are evaluated at the pivot bar (pivotLenInput bars back), except
-// the candle check, which uses the current confirmation bar's close.
+// Confirmations are evaluated at the pivot bar, except the candle check, which
+// uses the current confirmation bar's close.
 bool volSpikeAtPivot = nz(volume[pivotLenInput]) > volAvg[pivotLenInput] * volMultInput
 
 bool bearRsiOk    = rsiValue[pivotLenInput] >= rsiObInput
@@ -316,14 +341,12 @@ bool bullSwingOk  = low[pivotLenInput] <= lowestN[pivotLenInput]
 int bearScore = bearPivot ? countConfirmations(bearRsiOk, volSpikeAtPivot, bearCandleOk, bearWickOk, bearSwingOk) : 0
 int bullScore = bullPivot ? countConfirmations(bullRsiOk, volSpikeAtPivot, bullCandleOk, bullWickOk, bullSwingOk) : 0
 
-string tableSize = sizeFrom(tableSizeInput)
-
-// Completed-period levels: lookahead_on + [1] is the correct NON-repainting way
-// to read a finished higher-timeframe period's high/low/close.
-[pdh, pdl, pdc] = request.security(
-     syminfo.tickerid, dayTfInput, [high[1], low[1], close[1]],
+// Completed-period levels. lookahead_on + [1] is the correct NON-repainting way
+// to read a finished higher-timeframe period. The daily open rides along in the
+// same request rather than costing a second HTF series evaluation.
+[pdh, pdl, pdc, dayOpen] = request.security(
+     syminfo.tickerid, dayTfInput, [high[1], low[1], close[1], open],
      lookahead=barmerge.lookahead_on)
-float dayOpen = request.security(syminfo.tickerid, dayTfInput, open, lookahead=barmerge.lookahead_on)
 [pwh, pwl] = request.security(
      syminfo.tickerid, weekTfInput, [high[1], low[1]], lookahead=barmerge.lookahead_on)
 [pmh, pml] = request.security(
@@ -341,136 +364,172 @@ float pivotVolAvg = nz(volAvg[pivotLenInput])
 // ————— Visuals: Reversal signals
 if bearPivot and bearScore >= minScoreInput
     label.new(
-         bar_index[pivotLenInput], pivotHigh,
+         bar_index - pivotLenInput, pivotHigh,
          "REVERSAL " + starString(bearScore) + volumeSuffix(pivotVol, pivotVolAvg),
          color=TRANSPARENT_COLOR,
          textcolor=color.new(bearColorInput, scoreTransp(bearScore)),
          style=label.style_label_down,
-         size=bearScore == MAX_SCORE ? size.large : bearScore >= strongScoreInput ? size.normal : size.small,
+         size=bearScore >= strongScoreInput ? size.normal : size.small,
          tooltip=confirmationTooltip(
              bearRsiOk, volSpikeAtPivot, bearCandleOk, bearWickOk, bearSwingOk, pivotVol, pivotVolAvg)
          )
     line.new(
-         bar_index[pivotLenInput], pivotHigh,
-         extendLinesInput ? bar_index : bar_index[pivotLenInput] + lineLengthInput, pivotHigh,
-         color=color.new(bearColorInput, bearScore >= strongScoreInput ? 45 : 70),
+         bar_index - pivotLenInput, pivotHigh,
+         extendLinesInput ? bar_index : bar_index - pivotLenInput + lineLengthInput, pivotHigh,
+         color=color.new(bearColorInput, bearScore >= strongScoreInput ? 40 : 65),
          style=line.style_dotted,
-         width=bearScore == MAX_SCORE ? 3 : bearScore >= strongScoreInput ? 2 : 1,
+         width=bearScore >= strongScoreInput ? 2 : 1,
          extend=extendLinesInput ? extend.right : extend.none
          )
 
 if bullPivot and bullScore >= minScoreInput
     label.new(
-         bar_index[pivotLenInput], pivotLow,
+         bar_index - pivotLenInput, pivotLow,
          "REVERSAL " + starString(bullScore) + volumeSuffix(pivotVol, pivotVolAvg),
          color=TRANSPARENT_COLOR,
          textcolor=color.new(bullColorInput, scoreTransp(bullScore)),
          style=label.style_label_up,
-         size=bullScore == MAX_SCORE ? size.large : bullScore >= strongScoreInput ? size.normal : size.small,
+         size=bullScore >= strongScoreInput ? size.normal : size.small,
          tooltip=confirmationTooltip(
              bullRsiOk, volSpikeAtPivot, bullCandleOk, bullWickOk, bullSwingOk, pivotVol, pivotVolAvg)
          )
     line.new(
-         bar_index[pivotLenInput], pivotLow,
-         extendLinesInput ? bar_index : bar_index[pivotLenInput] + lineLengthInput, pivotLow,
-         color=color.new(bullColorInput, bullScore >= strongScoreInput ? 45 : 70),
+         bar_index - pivotLenInput, pivotLow,
+         extendLinesInput ? bar_index : bar_index - pivotLenInput + lineLengthInput, pivotLow,
+         color=color.new(bullColorInput, bullScore >= strongScoreInput ? 40 : 65),
          style=line.style_dotted,
-         width=bullScore == MAX_SCORE ? 3 : bullScore >= strongScoreInput ? 2 : 1,
+         width=bullScore >= strongScoreInput ? 2 : 1,
          extend=extendLinesInput ? extend.right : extend.none
          )
 
-// ————— Visuals: Live table (rebuilt every tick on the last bar)
+// ————— Visuals: Live table (rebuilt every tick on the last bar — cheap)
 var table liveTable = table.new(
-     tablePosFrom(tablePosInput), 3, 2,
-     bgcolor=color.new(chart.bg_color, tableTranspInput),
-     border_color=color.new(chart.fg_color, 80), border_width=1)
+     tablePosFrom(tablePosInput), 2, 3,
+     bgcolor=getPanelColor(themeInput, tableTranspInput),
+     border_color=getPanelColor(themeInput, 100), border_width=1,
+     frame_color=color.new(mutedColor, 70), frame_width=1)
 
 if showTableInput and barstate.islast
-    bool   tickUp     = close >= nz(close[1], close)
-    string swingTxt   = na(swingPos) ? "--" : str.tostring(swingPos, "#") + "%"
-    string swingArrow = na(swingPos) ? "" : swingPos >= 50 ? "↑" : "↓"
-    color  swingCol   = na(swingPos) ? chart.fg_color : swingPos >= 50 ? upColInput : downColInput
-    table.cell(liveTable, 0, 0, "PRICE", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
-    table.cell(liveTable, 1, 0, str.tostring(close, format.mintick), text_color=chart.fg_color, text_size=tableSize)
-    table.cell(
-         liveTable, 2, 0, tickUp ? "▲" : "▼",
-         text_color=tickUp ? upColInput : downColInput, text_size=tableSize)
-    table.cell(liveTable, 0, 1, "SWING", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
-    table.cell(liveTable, 1, 1, swingTxt, text_color=chart.fg_color, text_size=tableSize)
-    table.cell(liveTable, 2, 1, swingArrow, text_color=swingCol, text_size=tableSize)
+    string swingTxt = na(swingPos) ? "--" : str.tostring(swingPos, "#") + "%"
+    color  swingCol = na(swingPos) ? mutedColor : swingPos >= 50 ? bullColorInput : bearColorInput
+    table.cell(liveTable, 0, 0, "REVERSAL PRO", text_color=textColor,
+         text_size=tableSize, text_halign=text.align_center)
+    table.cell(liveTable, 1, 0, "", text_color=textColor)
+    table.merge_cells(liveTable, 0, 0, 1, 0)
+    dashRow(liveTable, 1, "Price",
+         str.tostring(close, format.mintick) + (tickUp ? "  ▲" : "  ▼"),
+         mutedColor, tickUp ? bullColorInput : bearColorInput)
+    dashRow(liveTable, 2, "Swing", swingTxt, mutedColor, swingCol)
 
-// ————— Visuals: Key levels (collected, then drawn with nearest-level highlight)
+// ————— Visuals: Key levels
+// Objects are created once into a reusable pool and then repositioned with
+// .set_*() on each tick. Deleting and recreating a dozen lines and labels
+// several times a second is the single most expensive thing a live dashboard
+// can do, and it makes the drawings visibly flicker.
 var array<line>   levelLines  = array.new<line>()
 var array<label>  levelLabels = array.new<label>()
 var array<float>  lvlPrices   = array.new<float>()
 var array<string> lvlNames    = array.new<string>()
 var array<color>  lvlColors   = array.new<color>()
 
-if barstate.islast
-    clearLines(levelLines)
-    clearLabels(levelLabels)
+if barstate.islast and showLevelsInput
     array.clear(lvlPrices)
     array.clear(lvlNames)
     array.clear(lvlColors)
-    if showLevelsInput
-        addLevel(showPdhInput, pdh, "PDH", pdhColInput, lvlPrices, lvlNames, lvlColors)
-        addLevel(showPdlInput, pdl, "PDL", pdlColInput, lvlPrices, lvlNames, lvlColors)
-        addLevel(showPdcInput, pdc, "PDC", pdcColInput, lvlPrices, lvlNames, lvlColors)
-        addLevel(showPwhInput, pwh, "PWH", pwhColInput, lvlPrices, lvlNames, lvlColors)
-        addLevel(showPwlInput, pwl, "PWL", pwlColInput, lvlPrices, lvlNames, lvlColors)
-        addLevel(showPmhInput, pmh, "PMH", pmhColInput, lvlPrices, lvlNames, lvlColors)
-        addLevel(showPmlInput, pml, "PML", pmlColInput, lvlPrices, lvlNames, lvlColors)
-        addLevel(showOpenInput, dayOpen, "D.Open", openColInput, lvlPrices, lvlNames, lvlColors)
-        addLevel(showCdhInput, curDayHigh, "CDH", cdhColInput, lvlPrices, lvlNames, lvlColors)
-        addLevel(showCdlInput, curDayLow, "CDL", cdlColInput, lvlPrices, lvlNames, lvlColors)
-        addLevel(showSwingHInput, lastPH, "Swing H", swingHColInput, lvlPrices, lvlNames, lvlColors)
-        addLevel(showSwingLInput, lastPL, "Swing L", swingLColInput, lvlPrices, lvlNames, lvlColors)
-        float nearAbove = na
-        float nearBelow = na
-        if array.size(lvlPrices) > 0
-            for i = 0 to array.size(lvlPrices) - 1
-                float p = array.get(lvlPrices, i)
-                if p >= close and (na(nearAbove) or p < nearAbove)
-                    nearAbove := p
-                if p <= close and (na(nearBelow) or p > nearBelow)
-                    nearBelow := p
-            for i = 0 to array.size(lvlPrices) - 1
-                float p = array.get(lvlPrices, i)
-                bool near = false
-                if highlightNearestInput
-                    near := (not na(nearAbove) and p == nearAbove) or (not na(nearBelow) and p == nearBelow)
-                drawOneLevel(p, array.get(lvlNames, i), array.get(lvlColors, i), near, levelLines, levelLabels)
+    addLevel(showPdhInput, pdh, "PDH", pdhColInput, lvlPrices, lvlNames, lvlColors)
+    addLevel(showPdlInput, pdl, "PDL", pdlColInput, lvlPrices, lvlNames, lvlColors)
+    addLevel(showPdcInput, pdc, "PDC", pdcColInput, lvlPrices, lvlNames, lvlColors)
+    addLevel(showPwhInput, pwh, "PWH", pwhColInput, lvlPrices, lvlNames, lvlColors)
+    addLevel(showPwlInput, pwl, "PWL", pwlColInput, lvlPrices, lvlNames, lvlColors)
+    addLevel(showPmhInput, pmh, "PMH", pmhColInput, lvlPrices, lvlNames, lvlColors)
+    addLevel(showPmlInput, pml, "PML", pmlColInput, lvlPrices, lvlNames, lvlColors)
+    addLevel(showOpenInput, dayOpen, "D.Open", openColInput, lvlPrices, lvlNames, lvlColors)
+    addLevel(showCdhInput, curDayHigh, "CDH", cdhColInput, lvlPrices, lvlNames, lvlColors)
+    addLevel(showCdlInput, curDayLow, "CDL", cdlColInput, lvlPrices, lvlNames, lvlColors)
+    addLevel(showSwingHInput, lastPH, "Swing H", swingHColInput, lvlPrices, lvlNames, lvlColors)
+    addLevel(showSwingLInput, lastPL, "Swing L", swingLColInput, lvlPrices, lvlNames, lvlColors)
+    int levelCount = array.size(lvlPrices)
+    // Grow the pool to match; it stabilises after the first draw because the
+    // enabled-level set is fixed for the whole run.
+    while array.size(levelLines) < levelCount
+        array.push(levelLines, line.new(
+             bar_index, close, bar_index, close, xloc=xloc.bar_index,
+             color=TRANSPARENT_COLOR))
+        array.push(levelLabels, label.new(
+             bar_index, close, "", xloc=xloc.bar_index,
+             style=label.style_label_lower_left, color=TRANSPARENT_COLOR))
+    float nearAbove = na
+    float nearBelow = na
+    if levelCount > 0
+        for i = 0 to levelCount - 1
+            float p = array.get(lvlPrices, i)
+            if p >= close and (na(nearAbove) or p < nearAbove)
+                nearAbove := p
+            if p <= close and (na(nearBelow) or p > nearBelow)
+                nearBelow := p
+        // Labels sit at their true price unless two levels cluster closer than a
+        // fraction of ATR, in which case each subsequent label is pushed down.
+        // The LINE always stays at the real price — only the text moves.
+        float minGap = nz(atrValue, 0.0) * 0.35
+        array<int> order = array.sort_indices(lvlPrices, order.descending)
+        float lastLabelY = na
+        int   x1 = math.max(0, bar_index - levelLeftInput)
+        for k = 0 to levelCount - 1
+            int   idx = array.get(order, k)
+            float p   = array.get(lvlPrices, idx)
+            color col = array.get(lvlColors, idx)
+            bool  near = false
+            if highlightNearestInput
+                near := (not na(nearAbove) and p == nearAbove) or (not na(nearBelow) and p == nearBelow)
+            line ln = array.get(levelLines, k)
+            line.set_xy1(ln, x1, p)
+            line.set_xy2(ln, bar_index, p)
+            line.set_color(ln, col)
+            line.set_width(ln, near ? levelWidthInput + 1 : levelWidthInput)
+            line.set_style(ln, levelStyle)
+            line.set_extend(ln, levelExtendInput ? extend.right : extend.none)
+            label lb = array.get(levelLabels, k)
+            if showLevelLabelsInput
+                float labelY  = p
+                bool  crowded = nudgeLabelsInput and minGap > 0 and not na(lastLabelY)
+                if crowded and (lastLabelY - labelY) < minGap
+                    labelY := lastLabelY - minGap
+                lastLabelY := labelY
+                label.set_xy(lb, bar_index, labelY)
+                label.set_text(lb, array.get(lvlNames, idx) + "  " +
+                     str.tostring(p, format.mintick) + levelSuffix(p))
+                label.set_textcolor(lb, col)
+                label.set_color(lb, near ? color.new(col, 80) : TRANSPARENT_COLOR)
+                label.set_size(lb, levelLabelSize)
+            else
+                label.set_text(lb, "")
+                label.set_color(lb, TRANSPARENT_COLOR)
 
 // ————— Visuals: High-volume zone between the two most recent reversals
-// A volume profile is built over the swing bounded by the last two pivots, and
-// the bin that traded the most (the Point of Control) is drawn as a box. Volume
-// is attributed to each bar's hlc3 — Pine has no intrabar volume distribution,
-// so this locates where trading concentrated rather than reproducing an
-// exchange-accurate profile.
-var box   hvzBox     = na
-var line  hvzMid     = na
-var label hvzLabel   = na
-var float hvzTop     = na
-var float hvzBottom  = na
+// The scan is fingerprinted against the bar window it covers. That window only
+// moves when a new pivot forms (or when the max-scan cap slides it), so the
+// ~900-iteration loop runs at most once per bar instead of on every tick.
+var box   hvzBox      = na
+var line  hvzMid      = na
+var label hvzLabel    = na
+var float hvzTop      = na
+var float hvzBottom   = na
+var float hvzVol      = na
+var int   cachedLeft  = na
+var int   cachedRight = na
+var array<float> hvzBins = array.new<float>(hvzRowsInput, 0.0)
 
-if barstate.islast
-    if not na(hvzBox)
-        box.delete(hvzBox)
-        hvzBox := na
-    if not na(hvzMid)
-        line.delete(hvzMid)
-        hvzMid := na
-    if not na(hvzLabel)
-        label.delete(hvzLabel)
-        hvzLabel := na
-    hvzTop    := na
-    hvzBottom := na
-    if showHvzInput and not na(lastPivotBar) and not na(prevPivotBar)
-        int rightBar = math.max(lastPivotBar, prevPivotBar)
-        int leftBar  = math.min(lastPivotBar, prevPivotBar)
-        int rightOff = bar_index - rightBar
-        int leftOff  = math.min(bar_index - leftBar, hvzMaxBarsInput)
-        if leftOff > rightOff and rightOff >= 0
+if barstate.islast and showHvzInput and not na(lastPivotBar) and not na(prevPivotBar)
+    int rightBar = math.max(lastPivotBar, prevPivotBar)
+    int leftBar  = math.max(math.min(lastPivotBar, prevPivotBar), bar_index - hvzMaxBarsInput)
+    if rightBar > leftBar and bar_index >= rightBar
+        // Only the scan is gated on the fingerprint; the drawing below still
+        // repositions every tick so the zone tracks the right edge live.
+        if cachedLeft != leftBar or cachedRight != rightBar
+            cachedLeft  := leftBar
+            cachedRight := rightBar
+            int rightOff = bar_index - rightBar
+            int leftOff  = bar_index - leftBar
             float hi = high[rightOff]
             float lo = low[rightOff]
             for i = rightOff to leftOff
@@ -478,68 +537,110 @@ if barstate.islast
                 lo := math.min(lo, low[i])
             float rng  = math.max(hi - lo, syminfo.mintick * hvzRowsInput)
             float step = rng / hvzRowsInput
-            array<float> bins = array.new<float>(hvzRowsInput, 0.0)
+            array.fill(hvzBins, 0.0)
             for i = rightOff to leftOff
                 int idx = int(math.floor((hlc3[i] - lo) / step))
                 idx := math.max(0, math.min(hvzRowsInput - 1, idx))
-                array.set(bins, idx, array.get(bins, idx) + nz(volume[i], 1))
+                array.set(hvzBins, idx, array.get(hvzBins, idx) + nz(volume[i], 1))
             float maxVol = 0.0
             int   pocIdx = 0
             for r = 0 to hvzRowsInput - 1
-                float v = array.get(bins, r)
+                float v = array.get(hvzBins, r)
                 if v > maxVol
                     maxVol := v
                     pocIdx := r
             hvzBottom := lo + pocIdx * step
             hvzTop    := hvzBottom + step
+            hvzVol    := maxVol
+        if not na(hvzTop)
             int boxRight = hvzExtendInput ? bar_index : rightBar
-            hvzBox := box.new(
-                 leftBar, hvzTop, boxRight, hvzBottom, xloc=xloc.bar_index,
-                 bgcolor=color.new(hvzColorInput, hvzTranspInput),
-                 border_color=color.new(hvzColorInput, math.max(0, hvzTranspInput - 30)),
-                 extend=hvzExtendInput ? extend.right : extend.none)
-            if hvzMidLineInput
-                float poc = (hvzTop + hvzBottom) / 2
+            if na(hvzBox)
+                hvzBox := box.new(
+                     leftBar, hvzTop, boxRight, hvzBottom, xloc=xloc.bar_index,
+                     bgcolor=color.new(hvzColorInput, hvzTranspInput),
+                     border_color=color.new(hvzColorInput, math.max(0, hvzTranspInput - 30)),
+                     extend=hvzExtendInput ? extend.right : extend.none)
                 hvzMid := line.new(
-                     leftBar, poc, boxRight, poc, xloc=xloc.bar_index,
+                     leftBar, hvzTop, boxRight, hvzTop, xloc=xloc.bar_index,
                      color=hvzColorInput, width=2,
                      extend=hvzExtendInput ? extend.right : extend.none)
-            if hvzLabelInput
                 hvzLabel := label.new(
-                     boxRight, hvzTop, "HVZ  " + formatVolume(maxVol),
-                     xloc=xloc.bar_index, style=label.style_label_lower_left,
-                     color=TRANSPARENT_COLOR, textcolor=hvzColorInput, size=size.small,
-                     tooltip="Highest-volume price zone between the last two reversals.\n" +
-                     "Range: " + str.tostring(hvzBottom, format.mintick) + " - " +
-                     str.tostring(hvzTop, format.mintick) + "\n" +
-                     "Volume in zone: " + formatVolume(maxVol))
+                     boxRight, hvzTop, "", xloc=xloc.bar_index,
+                     style=label.style_label_lower_left, color=TRANSPARENT_COLOR,
+                     textcolor=hvzColorInput, size=size.small)
+            box.set_lefttop(hvzBox, leftBar, hvzTop)
+            box.set_rightbottom(hvzBox, boxRight, hvzBottom)
+            float poc = (hvzTop + hvzBottom) / 2
+            line.set_xy1(hvzMid, leftBar, poc)
+            line.set_xy2(hvzMid, boxRight, poc)
+            line.set_color(hvzMid, hvzMidLineInput ? hvzColorInput : TRANSPARENT_COLOR)
+            label.set_xy(hvzLabel, boxRight, hvzTop)
+            label.set_text(hvzLabel, hvzLabelInput ? "HVZ  " + formatVolume(hvzVol) : "")
+            label.set_tooltip(hvzLabel,
+                 "Highest-volume price zone between the last two reversals.\n" +
+                 "Range: " + str.tostring(hvzBottom, format.mintick) + " - " +
+                 str.tostring(hvzTop, format.mintick) + "\n" +
+                 "Volume in zone: " + formatVolume(hvzVol))
 
 // ————— Alerts
-alertcondition(bearPivot, "Bearish Reversal Pivot", "Bearish reversal pivot confirmed.")
-alertcondition(bullPivot, "Bullish Reversal Pivot", "Bullish reversal pivot confirmed.")
+// Gated on bar confirmation by default: a pivot can form mid-bar and vanish
+// before the bar closes, and an alert that says "confirmed" should not fire on
+// one that was not.
+bool alertOk    = not confirmedOnlyInput or barstate.isconfirmed
+bool bearAlert  = bearPivot and alertOk
+bool bullAlert  = bullPivot and alertOk
+alertcondition(bearAlert, "Bearish Reversal Pivot", "Bearish reversal pivot confirmed.")
+alertcondition(bullAlert, "Bullish Reversal Pivot", "Bullish reversal pivot confirmed.")
 alertcondition(
-     bearPivot and bearScore >= strongScoreInput,
+     bearAlert and bearScore >= strongScoreInput,
      "STRONG Bearish Reversal", "Strong bearish reversal — score at or above the alert threshold."
      )
 alertcondition(
-     bullPivot and bullScore >= strongScoreInput,
+     bullAlert and bullScore >= strongScoreInput,
      "STRONG Bullish Reversal", "Strong bullish reversal — score at or above the alert threshold."
      )
 
 // ————— Debug / Test block (keep testModeInput false when handing off)
+var int passCount = 0
+var int failCount = 0
+
+// @function Counts an assertion and draws a label only on failure, so a long
+// history can't spend the whole 500-label budget on passing bars.
+recordAssertion(bool condition, string description) =>
+    if condition
+        passCount += 1
+    else
+        failCount += 1
+        label.new(bar_index, high, "FAIL: " + description, color=bearColorInput,
+             textcolor=color.white, style=label.style_label_down, size=size.small)
+
 if testModeInput
-    // Assertion 1: scores must always stay inside the 0..MAX_SCORE range.
-    if bearScore < 0 or bearScore > MAX_SCORE or bullScore < 0 or bullScore > MAX_SCORE
-        label.new(bar_index, high, "FAIL: score out of 0-5 range", color=color.red, style=label.style_label_down)
-    // Assertion 2: a score without a pivot on the same bar would be a logic bug.
-    if (bearScore > 0 and not bearPivot) or (bullScore > 0 and not bullPivot)
-        label.new(bar_index, high, "FAIL: score set without a pivot", color=color.red, style=label.style_label_down)
-    // Assertion 3: RSI must stay within its mathematical 0-100 bounds past warm-up.
-    if bar_index > rsiLenInput and not na(rsiValue) and (rsiValue < 0 or rsiValue > 100)
-        label.new(bar_index, low, "FAIL: RSI out of 0-100 bounds", color=color.red, style=label.style_label_up)
-    // Assertion 4: live swing position must stay inside 0-100 when defined.
-    if not na(swingPos) and (swingPos < 0 or swingPos > 100)
-        label.new(bar_index, low, "FAIL: swing pos out of 0-100 bounds", color=color.red, style=label.style_label_up)
-    // Assertion 5: the high-volume zone must be a positive-height band.
-    if not na(hvzTop) and not na(hvzBottom) and hvzTop <= hvzBottom
-        label.new(bar_index, high, "FAIL: volume zone has no height", color=color.red, style=label.style_label_down)
+    // 1. Scores must always stay inside the 0..MAX_SCORE range.
+    recordAssertion(
+         bearScore >= 0 and bearScore <= MAX_SCORE and bullScore >= 0 and bullScore <= MAX_SCORE,
+         "score outside the 0-5 range")
+    // 2. A score without a pivot on the same bar would be a logic bug.
+    recordAssertion(
+         (bearScore == 0 or bearPivot) and (bullScore == 0 or bullPivot),
+         "score set without a pivot")
+    // 3. RSI must stay within its mathematical 0-100 bounds past warm-up.
+    recordAssertion(
+         bar_index <= rsiLenInput or na(rsiValue) or (rsiValue >= 0 and rsiValue <= 100),
+         "RSI outside 0-100")
+    // 4. Live swing position must stay inside 0-100 when defined.
+    recordAssertion(
+         na(swingPos) or (swingPos >= 0 and swingPos <= 100),
+         "swing position outside 0-100")
+    // 5. The volume zone must be a positive-height band.
+    recordAssertion(
+         na(hvzTop) or na(hvzBottom) or hvzTop > hvzBottom,
+         "volume zone has no height")
+
+var table testTable = table.new(
+     position.bottom_left, 2, 2, border_width=1,
+     bgcolor=getPanelColor(themeInput, tableTranspInput),
+     frame_color=color.new(mutedColor, 70), frame_width=1)
+if testModeInput and barstate.islast
+    dashRow(testTable, 0, "Passed", str.tostring(passCount), mutedColor, bullColorInput)
+    dashRow(testTable, 1, "Failed", str.tostring(failCount), mutedColor,
+         failCount > 0 ? bearColorInput : bullColorInput)

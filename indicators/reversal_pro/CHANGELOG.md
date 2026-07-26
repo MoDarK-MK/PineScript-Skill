@@ -3,6 +3,27 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [1.0.0] - 2026-07-27
+### Performance
+- The volume-profile scan is now fingerprinted against the bar window it covers, so the ~900-iteration loop runs at most once per bar instead of on every realtime tick
+- The profile buffer is a single `var` array cleared with `array.fill()` rather than a fresh allocation per tick
+- Level and zone drawings are created once and repositioned with `.set_*()` instead of being deleted and rebuilt every tick — no churn, no flicker
+- Merged two `request.security()` calls that shared symbol/timeframe/lookahead (the daily open now rides along with PDH/PDL/PDC), removing one higher-timeframe series evaluation
+- Hoisted `sizeFrom`/`lineStyleFrom` out of the per-level loop; they switch over constant inputs
+- Replaced `max_bars_back=1000` with a bounded scan, and gave every input used as a history offset a `maxval` so a large value can no longer produce a runtime error
+
+### Correctness
+- The tick-direction arrow now tracks actual ticks via `varip`; it previously compared against the previous BAR's close, which is bar direction, not tick direction
+- Alerts are gated on `barstate.isconfirmed` by default (new input) — a pivot can form mid-bar and vanish, and an alert saying "confirmed" should not fire on one that was not
+- The test block uses the assertion-counter pattern instead of one label per assertion per bar, so it can no longer exhaust the 500-label budget
+
+### Visual
+- Added a theme picker (Dark/Light) driving text, muted-label, and panel colors — previously only the table touched theme at all
+- Table gained a merged title row, left-aligned labels and right-aligned values so digits stop jittering as price ticks, and a default transparency of 15 instead of 80
+- Level labels are nudged apart when levels cluster, so PDH/Swing H and CDL/PDL no longer stack on top of each other; the lines stay at their true prices
+- Replaced the Material-Design rainbow level palette with a coherent set, and dropped `size.large` in favour of the `size.normal` cap
+- Live-update rework, unified visual system
+
 ## [0.9.0] - 2026-07-26
 - Removed the SETUP trade-suggestion block from the table; the table now shows the live price and swing position only
 - With nothing left consuming it, the multi-timeframe bias engine went too: reversalBias(), the five request.security() calls, and the Bias Timeframe inputs (5 fewer requests against TradingView's 40-call limit)
