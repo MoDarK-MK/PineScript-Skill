@@ -25,3 +25,24 @@ VALID_INDICATOR = '''\
 indicator("Test Indicator", "TI", overlay=true)
 plot(close, title="Close")
 '''
+
+# Minimal strategy that is clean under EVERY rule, including PINE021 and the
+# strategy rules PINE029-PINE035. Strategy-rule tests mutate this string so the
+# "clean" baseline comes for free.
+VALID_STRATEGY = '''\
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//@version=6
+strategy("Test Strategy", "TS", overlay=true,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+     initial_capital=10000, commission_type=strategy.commission.percent,
+     commission_value=0.05, slippage=1)
+float fastMa = ta.ema(close, 10)
+float slowMa = ta.ema(close, 30)
+bool goLong = ta.crossover(fastMa, slowMa)
+if goLong
+    strategy.entry("Long", strategy.long)
+if strategy.position_size > 0
+    float avgPrice = strategy.position_avg_price
+    strategy.exit("Long Exit", "Long", stop=avgPrice * 0.98, limit=avgPrice * 1.04)
+plot(fastMa, title="Fast MA")
+'''

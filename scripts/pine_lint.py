@@ -75,6 +75,13 @@ RULES = {
     "PINE026": ("warning", "File mixes tab-indented and space-indented lines in different places"),
     "PINE027": ("error", "indicator()/strategy() has no output-producing or order-placement call"),
     "PINE028": ("warning", "Real code appears before the //@version= pragma"),
+    "PINE029": ("error", "strategy.exit() with no stop/limit/trail level (places no order)"),
+    "PINE030": ("warning", "strategy.exit() mixes a relative and an absolute level of the same type"),
+    "PINE031": ("warning", "Tick-denominated exit parameter given a price-denominated expression"),
+    "PINE032": ("warning", "strategy.position_avg_price used with no flat-position guard"),
+    "PINE033": ("error", "qty=/qty_percent= literal outside its valid range"),
+    "PINE034": ("error", "strategy.exit(from_entry=) names an entry id no strategy.entry() creates"),
+    "PINE035": ("warning", "Strategy places entries but never any exit/close/risk call"),
 }
 
 STRATEGY_ORDER_FUNCS = [
@@ -232,6 +239,90 @@ def build_logical_statements(lines):
     return statements
 
 
+DECL_RE = re.compile(r'\b(indicator|strategy|library)\s*\(')
+
+
+def find_declaration_statement(statements):
+    """Returns the logical statement containing the indicator()/strategy()/
+    library() call, or None. Declaration checks use this so a parameter name
+    that merely appears in a comment elsewhere can't satisfy the check."""
+    for stmt in statements:
+        if DECL_RE.search(stmt["stripped"]):
+            return stmt
+    return None
+
+
+def call_arg_text(text, func):
+    """Returns the argument text of the first `func` call in `text` (balanced to
+    its closing paren), or None if the call isn't found/closed."""
+    idx = text.find(func)
+    if idx == -1:
+        return None
+    start = idx + len(func)
+    depth = 1
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth == 0:
+                return text[start:i]
+    return text[start:]
+
+
+def split_top_level_args(arg_text):
+    """Splits a call's argument text on commas at paren/bracket depth 0."""
+    args = []
+    depth = 0
+    current = []
+    for ch in arg_text:
+        if ch in '([':
+            depth += 1
+        elif ch in ')]':
+            depth -= 1
+        if ch == ',' and depth == 0:
+            args.append(''.join(current).strip())
+            current = []
+            continue
+        current.append(ch)
+    tail = ''.join(current).strip()
+    if tail:
+        args.append(tail)
+    return args
+
+
+def named_arg(args, name):
+    """Returns the value expression for `name=` among split args, else None."""
+    pat = re.compile(r'^' + re.escape(name) + r'\s*=\s*(?!=)(.*)$', re.DOTALL)
+    for a in args:
+        m = pat.match(a)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def positional_args(args):
+    """Returns the args that are not `name=value` form, in order."""
+    return [a for a in args if not re.match(r'^[a-zA-Z_]\w*\s*=(?!=)', a)]
+
+
+def statements_calling(statements, func):
+    """Yields (stmt, arg_text_with_strings_intact) for each logical statement
+    containing `func`."""
+    for stmt in statements:
+        if func in stmt["stripped"]:
+            arg_text = call_arg_text(strip_comments_only_multi(stmt["raw_nc"]), func)
+            if arg_text is not None:
+                yield stmt, arg_text
+
+
+def strip_comments_only_multi(text):
+    """strip_comments_only() applied per line, rejoined with spaces — turns a
+    multi-line logical statement into one line for argument parsing."""
+    return " ".join(strip_comments_only(l) for l in text.split("\n"))
+
+
 def parse_suppressions(lines):
     """Returns (file_wide_codes: set, next_line_map: {line_no: set(codes)},
     same_line_map: {line_no: set(codes)})."""
@@ -294,7 +385,7 @@ def check_version_pragma(lines, result):
     return version
 
 
-def check_declaration(text, result):
+def check_declaration(text, statements, result):
     has_indicator = bool(re.search(r'\bindicator\s*\(', text))
     has_strategy = bool(re.search(r'\bstrategy\s*\(', text))
     has_library = bool(re.search(r'\blibrary\s*\(', text))
@@ -304,14 +395,21 @@ def check_declaration(text, result):
     if (has_indicator or has_strategy) and "overlay=" not in text and "overlay =" not in text:
         result.add(0, "PINE022", "indicator()/strategy() doesn't set overlay= explicitly.")
     if has_strategy:
-        missing = [p for p in ("default_qty_type", "default_qty_value", "commission_")
-                   if p not in text]
+        # Scope the parameter search to the declaration call itself — the old
+        # whole-file substring test was satisfied by a mention in a comment.
+        decl = find_declaration_statement(statements)
+        decl_text = decl["stripped"] if decl else text
+        missing = [p for p in ("default_qty_type", "default_qty_value", "commission_",
+                               "initial_capital", "slippage")
+                   if p not in decl_text]
         if missing:
             result.add(0, "PINE021",
                         "strategy() call doesn't set " + ", ".join(missing) + " — engine defaults "
                         "will silently shape backtest results (v6 defaults margin_long/short to 100, "
                         "so at least funds/margin are realistic by default, but sizing/commission still "
-                        "need explicit values for a meaningful backtest).")
+                        "need explicit values for a meaningful backtest). initial_capital and slippage "
+                        "change every number the Strategy Tester reports, so leaving them implicit "
+                        "means the published backtest isn't reproducible.")
 
 
 OUTPUT_FUNCS = [
@@ -426,6 +524,152 @@ def check_when_removed(statements, result):
             result.add(stmt["start"], "PINE010",
                         "when= is removed in Pine v6 — wrap this call in an `if` statement instead "
                         "(e.g. `if condition` then `strategy.entry(...)` indented below).")
+
+
+# Exit-level parameters. Absolute ones are in PRICE, relative ones in TICKS.
+EXIT_LEVEL_PARAMS = ("stop", "loss", "limit", "profit", "trail_price", "trail_points")
+# (relative, absolute) pairs that address the same exit type.
+EXIT_LEVEL_PAIRS = (("profit", "limit"), ("loss", "stop"), ("trail_points", "trail_price"))
+# Parameters denominated in ticks rather than price.
+TICK_PARAMS = ("loss", "profit", "trail_points", "trail_offset")
+TICK_HINTS = ("syminfo.mintick", "mintick", "syminfo.pointvalue")
+
+
+def check_exit_has_level(statements, result):
+    """PINE029 — an exit whose level arguments are all absent places no order,
+    which silently means 'no risk management' rather than an error."""
+    for stmt, arg_text in statements_calling(statements, "strategy.exit("):
+        args = split_top_level_args(arg_text)
+        if not any(named_arg(args, p) is not None for p in EXIT_LEVEL_PARAMS):
+            result.add(stmt["start"], "PINE029",
+                        "strategy.exit() sets none of stop/loss/limit/profit/trail_price/"
+                        "trail_points — an exit command with no level places no order at all, so "
+                        "this position has no stop and no target.")
+
+
+def check_exit_level_pairs(statements, result):
+    """PINE030 — mixing a relative and an absolute level of the same type."""
+    for stmt, arg_text in statements_calling(statements, "strategy.exit("):
+        args = split_top_level_args(arg_text)
+        for rel, absolute in EXIT_LEVEL_PAIRS:
+            if named_arg(args, rel) is not None and named_arg(args, absolute) is not None:
+                result.add(stmt["start"], "PINE030",
+                            f"strategy.exit() sets both '{rel}' (relative, ticks) and "
+                            f"'{absolute}' (absolute, price) for the same exit type. In v5 the "
+                            f"absolute level always won; in v6 whichever triggers FIRST wins, so a "
+                            f"ported v5 strategy exits differently now. Set only one.")
+
+
+def check_exit_tick_params(statements, result):
+    """PINE031 — a tick-denominated parameter handed a price-shaped expression."""
+    for stmt, arg_text in statements_calling(statements, "strategy.exit("):
+        args = split_top_level_args(arg_text)
+        for param in TICK_PARAMS:
+            value = named_arg(args, param)
+            if value is None or value == "na":
+                continue
+            if any(hint in value for hint in TICK_HINTS):
+                continue
+            if re.fullmatch(r'-?\d+', value.strip()):
+                continue
+            result.add(stmt["start"], "PINE031",
+                        f"strategy.exit(...{param}=...) is denominated in TICKS, not price. "
+                        f"'{value.strip()}' looks like a price distance — convert it with "
+                        f"int(priceDistance / syminfo.mintick), or use the absolute price "
+                        f"parameter (stop/limit/trail_price) instead.")
+
+
+POSITION_GUARDS = (
+    "strategy.position_size >", "strategy.position_size<", "strategy.position_size <",
+    "strategy.position_size>", "strategy.position_size !=", "strategy.position_size!=",
+    "strategy.position_size ==", "strategy.position_size==",
+    "na(strategy.position_avg_price)", "strategy.opentrades",
+)
+
+
+def check_position_avg_price_guard(text, result):
+    """PINE032 — file-level check that a flat-position guard exists somewhere."""
+    if "strategy.position_avg_price" not in text:
+        return
+    if any(guard in text for guard in POSITION_GUARDS):
+        return
+    result.add(0, "PINE032",
+                "strategy.position_avg_price is used but nothing in this file guards on "
+                "strategy.position_size / strategy.opentrades. While flat, position_avg_price is "
+                "na, so any stop or target derived from it is na on those bars and the resulting "
+                "exit order silently does nothing.")
+
+
+def check_order_qty_range(statements, result):
+    """PINE033 — literal qty/qty_percent outside its valid range."""
+    for stmt in statements:
+        if not any(f in stmt["stripped"] for f in STRATEGY_ORDER_FUNCS):
+            continue
+        for m in re.finditer(r'\bqty(_percent)?\s*=\s*(-?\d+(?:\.\d+)?)\b', stmt["stripped"]):
+            is_percent = m.group(1) is not None
+            value = float(m.group(2))
+            if is_percent and not (0 < value <= 100):
+                result.add(stmt["start"], "PINE033",
+                            f"qty_percent={m.group(2)} is outside the valid 0-100 range — "
+                            f"the partial-exit order will be rejected or close nothing.")
+            elif not is_percent and value <= 0:
+                result.add(stmt["start"], "PINE033",
+                            f"qty={m.group(2)} is not a positive size — the order places nothing.")
+
+
+def check_exit_from_entry(statements, result):
+    """PINE034 — an exit whose from_entry names an id no entry creates. Skipped
+    entirely if any entry id is a non-literal expression, since ids can be
+    computed at runtime and this rule is error-severity."""
+    entry_ids = set()
+    for func in ("strategy.entry(", "strategy.order("):
+        for stmt, arg_text in statements_calling(statements, func):
+            args = split_top_level_args(arg_text)
+            value = named_arg(args, "id")
+            if value is None:
+                pos = positional_args(args)
+                value = pos[0] if pos else None
+            if value is None:
+                return
+            m = re.fullmatch(r'"([^"]*)"|\'([^\']*)\'', value.strip())
+            if not m:
+                return          # dynamic id — can't reason about it, bail out
+            entry_ids.add(m.group(1) if m.group(1) is not None else m.group(2))
+    if not entry_ids:
+        return
+    for stmt, arg_text in statements_calling(statements, "strategy.exit("):
+        args = split_top_level_args(arg_text)
+        value = named_arg(args, "from_entry")
+        if value is None:
+            pos = positional_args(args)
+            value = pos[1] if len(pos) > 1 else None
+        if value is None:
+            continue
+        m = re.fullmatch(r'"([^"]*)"|\'([^\']*)\'', value.strip())
+        if not m:
+            continue
+        name = m.group(1) if m.group(1) is not None else m.group(2)
+        if name not in entry_ids:
+            result.add(stmt["start"], "PINE034",
+                        f"strategy.exit(from_entry=\"{name}\") names an entry id that no "
+                        f"strategy.entry()/strategy.order() in this file creates "
+                        f"(found: {', '.join(sorted(entry_ids))}). The exit attaches to nothing "
+                        f"and never fires.")
+
+
+EXIT_MECHANISMS = ("strategy.exit(", "strategy.close(", "strategy.close_all(", "strategy.risk.")
+
+
+def check_entries_have_exits(text, result):
+    """PINE035 — entries with no exit mechanism anywhere in the file."""
+    if not ("strategy.entry(" in text or "strategy.order(" in text):
+        return
+    if any(mech in text for mech in EXIT_MECHANISMS):
+        return
+    result.add(0, "PINE035",
+                "This strategy places entries but never calls strategy.exit(), strategy.close(), "
+                "strategy.close_all(), or a strategy.risk.* rule — positions are only ever closed "
+                "by an opposite entry, so no trade has a defined risk.")
 
 
 def check_transp_removed(statements, result):
@@ -719,7 +963,7 @@ def lint_file(path, cfg):
     statements = build_logical_statements(lines)
 
     check_version_pragma(lines, result)
-    check_declaration(text, result)
+    check_declaration(text, statements, result)
     check_has_output(text, result)
     check_balanced_delimiters(lines, result)
     check_deprecated_syntax(lines, result)
@@ -728,6 +972,13 @@ def lint_file(path, cfg):
     check_line_length(lines, result, cfg)
     check_inputs_have_titles(statements, result)
     check_when_removed(statements, result)
+    check_exit_has_level(statements, result)
+    check_exit_level_pairs(statements, result)
+    check_exit_tick_params(statements, result)
+    check_position_avg_price_guard(text, result)
+    check_order_qty_range(statements, result)
+    check_exit_from_entry(statements, result)
+    check_entries_have_exits(text, result)
     check_transp_removed(statements, result)
     check_linewidth_minimum(statements, result)
     check_switch_default(lines, result)

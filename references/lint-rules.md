@@ -15,9 +15,14 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 27 rules spanning codes PINE001–PINE028. The code
+Note on numbering: there are 34 rules spanning codes PINE001–PINE035. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
+
+PINE029–PINE035 only ever fire on strategies — they inspect `strategy.entry`/
+`strategy.exit`/`strategy.order` calls, so an indicator can never trip them.
+Design-level guidance for the patterns they enforce is in
+`references/strategy-guide.md`.
 
 ---
 
@@ -184,8 +189,14 @@ for any of these, so a header must always be followed by a more-indented line.
 
 ### PINE021 — warning — `strategy()` missing recommended sizing/commission params
 Flags a `strategy()` declaration that doesn't set `default_qty_type`,
-`default_qty_value`, or `commission_*` — leaving these at engine defaults
-produces a backtest that doesn't reflect realistic trading costs.
+`default_qty_value`, `commission_*`, `initial_capital`, or `slippage` — leaving
+these at engine defaults produces a backtest that doesn't reflect realistic
+trading costs, and `initial_capital`/`slippage` change every number the Strategy
+Tester reports, so an implicit value means the published backtest isn't
+reproducible.
+
+The check inspects the `strategy()` **call itself**, not the whole file, so a
+parameter merely mentioned in a comment no longer satisfies it.
 
 ### PINE022 — warning — `indicator()`/`strategy()` missing explicit `overlay=`
 Cheap to set, avoids relying on the (version-dependent) engine default.
@@ -225,3 +236,73 @@ Indicators need at least one of `plot`/`plotshape`/`barcolor`/`line.new`/
 Syntactically legal (TradingView's own docs confirm the annotation can go
 anywhere), but their style guide recommends it at the top, right after any
 license comment, for readability.
+
+---
+
+## Strategy rules (PINE029–PINE035)
+
+These only fire on scripts that call `strategy.entry`/`strategy.exit`/
+`strategy.order`. See `references/strategy-guide.md` for the design reasoning
+behind each one.
+
+### PINE029 — error — `strategy.exit()` with no level
+```pinescript
+// bad — places no order at all: the position has no stop and no target
+strategy.exit("Long Exit", "Long")
+```
+```pinescript
+// good
+strategy.exit("Long Exit", "Long", stop=stopPrice, limit=targetPrice)
+```
+An exit command whose `stop`/`loss`/`limit`/`profit`/`trail_price`/`trail_points`
+arguments are all absent does nothing. This is the most common way a strategy
+silently ends up with no risk management at all.
+
+### PINE030 — warning — Relative and absolute level for the same exit type
+```pinescript
+// bad — v5 used the absolute level; v6 uses whichever triggers FIRST
+strategy.exit("X", "Long", stop=stopPrice, loss=20)
+```
+The pairs are `(profit, limit)`, `(loss, stop)`, and `(trail_points, trail_price)`.
+Set exactly one of each pair. This is the mechanical check for the v6 semantic
+change documented in `pine-v6-guide.md` §2 row 8 — a ported v5 strategy exits
+differently now.
+
+### PINE031 — warning — Tick parameter given a price expression
+```pinescript
+// bad — trail_offset is in TICKS, so this is off by 1/syminfo.mintick
+strategy.exit("X", "Long", trail_price=p, trail_offset=atrValue * 2)
+```
+```pinescript
+// good
+strategy.exit("X", "Long", trail_price=p, trail_offset=int(atrValue * 2 / syminfo.mintick))
+```
+`loss`, `profit`, `trail_points`, and `trail_offset` are denominated in ticks;
+`stop`, `limit`, and `trail_price` are in price. A bare integer literal or an
+expression mentioning `syminfo.mintick`/`syminfo.pointvalue` is accepted. This is
+a heuristic, so it's a suppressible warning.
+
+### PINE032 — warning — Unguarded `strategy.position_avg_price`
+While the strategy is flat, `strategy.position_avg_price` is `na`, so a stop or
+target derived from it is `na` on those bars and the resulting exit places
+nothing. Guard the block with `strategy.position_size > 0` / `< 0` /
+`strategy.opentrades`, or `na()`-check the value. File-level check: one guard
+anywhere in the file satisfies it.
+
+### PINE033 — error — `qty=`/`qty_percent=` literal out of range
+`qty` must be positive; `qty_percent` must be within `0 < x <= 100`. Only
+literal values are checked, so a computed `qty=positionQty(...)` is never
+flagged.
+
+### PINE034 — error — `from_entry` names a nonexistent entry id
+```pinescript
+strategy.entry("Long", strategy.long)
+strategy.exit("X", "Lonng", stop=s)     // typo — attaches to nothing, never fires
+```
+The check is skipped entirely when any entry id is a computed expression rather
+than a string literal, since ids can legitimately be built at runtime.
+
+### PINE035 — warning — Entries with no exit mechanism
+A strategy that calls `strategy.entry`/`strategy.order` but never
+`strategy.exit`, `strategy.close`, `strategy.close_all`, or a `strategy.risk.*`
+rule only closes positions via an opposite entry — no trade has a defined risk.
