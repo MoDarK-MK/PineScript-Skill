@@ -480,18 +480,32 @@ def check_security_lookahead(statements, result, cfg):
                         "isn't introducing repainting (usually want lookahead=barmerge.lookahead_off).")
 
 
+LOCAL_DECL_RE = re.compile(
+    r'^\s*(?:int|float|bool|string|color|array(?:<[^>]*>)?|matrix(?:<[^>]*>)?|'
+    r'map(?:<[^>]*>)?)?\s*([a-zA-Z_]\w*)\s*=(?![=>])'
+)
+
+
 def check_var_accumulator(lines, result):
+    """PINE005 only makes sense at GLOBAL scope: `total = 0` then `total := total + x`
+    resets every bar. A name declared inside a local scope (function body, if/for
+    block — i.e. at indent > 0) is an ordinary local builder, where `var` would be
+    wrong, so those are exempt."""
     var_declared = set()
+    local_declared = set()
     for i, raw_line in enumerate(lines):
         line = strip_strings_and_comments(raw_line)
         m_decl = re.match(r'\s*var(?:ip)?\s+\w*\s*(\w+)\s*=', line)
         if m_decl:
             var_declared.add(m_decl.group(1))
             continue
+        m_local = LOCAL_DECL_RE.match(line)
+        if m_local and indent_width(raw_line) > 0:
+            local_declared.add(m_local.group(1))
         m_self = re.match(r'\s*(\w+)\s*:?=\s*\1\s*[\+\-\*/]', line)
         if m_self:
             name = m_self.group(1)
-            if name not in var_declared:
+            if name not in var_declared and name not in local_declared:
                 result.add(i + 1, "PINE005",
                             f"'{name}' looks like a running accumulator ('{name} = {name} + ...') but "
                             f"wasn't declared with 'var' — it will reset every bar. If intentional, ignore.")
@@ -851,8 +865,16 @@ HEADER_KEYWORD_RE = re.compile(r'\b(if|for|while|else|switch)\b')
 ARROW_END_RE = re.compile(r'=>\s*$')
 
 
-def check_block_headers_have_bodies(lines, result):
+def check_block_headers_have_bodies(lines, statements, result):
     stripped_lines = [strip_strings_and_comments(l) for l in lines]
+    # A wrapped statement's continuation lines are indented for readability (the
+    # style guide's parenthesised style). The block a `=>` opens is measured from
+    # the FIRST line of its logical statement, not from the continuation the
+    # arrow happens to land on.
+    stmt_start = {}
+    for stmt in statements:
+        for ln in range(stmt["start"], stmt["end"] + 1):
+            stmt_start[ln] = stmt["start"]
     n = len(lines)
     for i in range(n):
         trimmed = stripped_lines[i].strip()
@@ -861,7 +883,7 @@ def check_block_headers_have_bodies(lines, result):
         is_header = bool(HEADER_KEYWORD_RE.search(trimmed)) or bool(ARROW_END_RE.search(trimmed))
         if not is_header:
             continue
-        header_indent = indent_width(lines[i])
+        header_indent = indent_width(lines[stmt_start.get(i + 1, i + 1) - 1])
         j = i + 1
         next_real = None
         while j < n:
@@ -988,7 +1010,7 @@ def lint_file(path, cfg):
     check_lazy_eval_trap(statements, result)
     check_naming_convention(statements, lines, result)
     check_indentation(lines, result)
-    check_block_headers_have_bodies(lines, result)
+    check_block_headers_have_bodies(lines, statements, result)
     check_int_division_literals(lines, result)
     check_plot_and_drawing_limits(text, lines, result, cfg)
 

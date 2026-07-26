@@ -89,6 +89,40 @@ class TestCoreRules(unittest.TestCase):
         )
         self.assertNotIn("PINE020", codes(lint_text(text)))
 
+    def test_wrapped_function_signature_not_flagged_as_empty_block(self):
+        # Regression: a signature wrapped across lines ends the `=>` on a
+        # continuation indented deeper than the body, which used to trip PINE020.
+        text = VALID_INDICATOR + (
+            'buildText(bool aFlag, bool bFlag,\n'
+            '     bool cFlag, bool dFlag) =>\n'
+            '    string out = aFlag ? "a" : "b"\n'
+            '    out\n'
+            'plotchar(close, "S", "", location.top)\n'
+        )
+        self.assertNotIn("PINE020", codes(lint_text(text)))
+
+    def test_local_string_builder_not_flagged_as_accumulator(self):
+        # A builder declared inside a function body is local; `var` would be wrong.
+        text = VALID_INDICATOR + (
+            'starString(int score) =>\n'
+            '    string stars = ""\n'
+            '    for i = 1 to 5\n'
+            '        stars := stars + (i <= score ? "*" : "-")\n'
+            '    stars\n'
+            'plotchar(close, "S", "", location.top)\n'
+        )
+        self.assertNotIn("PINE005", codes(lint_text(text)))
+
+    def test_global_accumulator_still_flagged(self):
+        # The real bug PINE005 exists for: a global that resets every bar.
+        text = VALID_INDICATOR + (
+            'total = 0.0\n'
+            'if close > open\n'
+            '    total := total + volume\n'
+            'plot(total, title="Total")\n'
+        )
+        self.assertIn("PINE005", codes(lint_text(text)))
+
     def test_no_output_call(self):
         result = lint_text('//@version=6\nindicator("X", overlay=true)\nx = close\n')
         self.assertIn("PINE027", codes(result))

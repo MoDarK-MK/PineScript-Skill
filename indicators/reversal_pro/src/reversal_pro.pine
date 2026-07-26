@@ -4,7 +4,8 @@
 //@version=6
 indicator(
      "Reversal Pro", shorttitle="REVPRO", overlay=true,
-     max_labels_count=500, max_lines_count=500
+     max_labels_count=500, max_lines_count=500, max_boxes_count=500,
+     max_bars_back=1000
      )
 
 // Pivot-based reversal detector covering the whole chart history, with a 0-5
@@ -26,6 +27,16 @@ indicator(
 //     high/low, and the most recent reversal swing high/low. Each is drawn as a
 //     fully customizable horizontal line, optionally labelled with its live
 //     distance from price, with the nearest level above/below highlighted.
+//   • Volume Analysis — the traded volume at each reversal (on the label and in
+//     its tooltip), and the highest-volume price zone BETWEEN the two most recent
+//     reversals: a volume profile is built over that swing and its Point of
+//     Control (the price bin that traded the most) is drawn as a box.
+//
+// NOTE (volume zone): the zone is built from `volume` aggregated per bar at
+// hlc3, not from real tick-level data — TradingView doesn't expose intrabar
+// volume distribution to Pine. It is a good approximation of where trading
+// concentrated, not an exchange-accurate volume profile. On instruments with no
+// volume feed (many forex pairs) it degenerates to an equal-weight price range.
 //
 // NOTE (repainting): ta.pivothigh/pivotlow only confirm a pivot `Pivot
 // Sensitivity` bars AFTER the actual high/low forms. Labels therefore appear
@@ -115,6 +126,21 @@ string levelLabelSizeInput  = input.string(
      "Small", "Level Label Size",
      options=["Tiny", "Small", "Normal", "Large"], group="Key Levels")
 
+// ————— Inputs: Volume Analysis
+string VOL_GROUP = "Volume Analysis"
+bool   showPivotVolInput = input.bool(true, "Show Volume At Reversals", group=VOL_GROUP)
+bool   showVolMultInput  = input.bool(true, "Show Volume As x Average", group=VOL_GROUP)
+bool   showHvzInput      = input.bool(true, "Show High-Volume Zone Between Reversals", group=VOL_GROUP)
+int    hvzRowsInput      = input.int(
+     24, "Volume Profile Rows", minval=4, maxval=100, group=VOL_GROUP)
+int    hvzMaxBarsInput   = input.int(
+     500, "Max Bars To Scan", minval=10, maxval=900, group=VOL_GROUP)
+color  hvzColorInput     = input.color(#ffb703, "Zone Color", group=VOL_GROUP)
+int    hvzTranspInput    = input.int(80, "Zone Transparency", minval=0, maxval=100, group=VOL_GROUP)
+bool   hvzExtendInput    = input.bool(true, "Extend Zone Right", group=VOL_GROUP)
+bool   hvzMidLineInput   = input.bool(true, "Draw Zone Mid-Line (POC)", group=VOL_GROUP)
+bool   hvzLabelInput     = input.bool(true, "Label The Zone", group=VOL_GROUP)
+
 // ————— Inputs: Appearance
 color bullColorInput   = input.color(#089981, "Bullish Color", group="Appearance")
 color bearColorInput   = input.color(#f23645, "Bearish Color", group="Appearance")
@@ -125,7 +151,6 @@ bool  testModeInput    = input.bool(false, "Test Mode", group="Debug/Test")
 starString(int score) =>
     string stars = ""
     for i = 1 to MAX_SCORE
-        // pine-lint-disable-next-line PINE005
         stars := stars + (i <= score ? "★" : "☆")
     stars
 
@@ -137,14 +162,38 @@ scoreTransp(int score) =>
 countConfirmations(bool a, bool b, bool c, bool d, bool e) =>
     (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0) + (d ? 1 : 0) + (e ? 1 : 0)
 
-// @function Multi-line tooltip describing which confirmations passed.
-confirmationTooltip(bool rsiOk, bool volOk, bool candleOk, bool wickOk, bool swingOk) =>
+// @function Compact human-readable volume ("1.24M", "345.6K").
+formatVolume(float v) =>
+    float av = math.abs(nz(v))
+    switch
+        av >= 1000000000 => str.tostring(v / 1000000000, "#.##") + "B"
+        av >= 1000000    => str.tostring(v / 1000000, "#.##") + "M"
+        av >= 1000       => str.tostring(v / 1000, "#.#") + "K"
+        => str.tostring(nz(v), "#.##")
+
+// @function Multi-line tooltip describing which confirmations passed, plus the
+// volume actually traded on the pivot bar and how it compares to average.
+confirmationTooltip(bool rsiOk, bool volOk, bool candleOk, bool wickOk, bool swingOk,
+     float pivotVol, float pivotVolAvg) =>
     string rsiTxt    = (rsiOk ? "✔" : "✘") + " RSI exhaustion at pivot"
     string volTxt    = (volOk ? "✔" : "✘") + " Volume spike at pivot"
     string candleTxt = (candleOk ? "✔" : "✘") + " Price broke past pivot candle"
     string wickTxt   = (wickOk ? "✔" : "✘") + " Rejection wick on pivot candle"
     string swingTxt  = (swingOk ? "✔" : "✘") + " Major swing extreme"
-    rsiTxt + "\n" + volTxt + "\n" + candleTxt + "\n" + wickTxt + "\n" + swingTxt
+    string volLine   = "Volume at reversal: " + formatVolume(pivotVol)
+    if pivotVolAvg > 0
+        volLine := volLine + "  (" + str.tostring(pivotVol / pivotVolAvg, "#.##") + "x avg)"
+    rsiTxt + "\n" + volTxt + "\n" + candleTxt + "\n" + wickTxt + "\n" + swingTxt +
+     "\n———\n" + volLine
+
+// @function Volume suffix appended to a reversal label, per the display inputs.
+volumeSuffix(float pivotVol, float pivotVolAvg) =>
+    string suffix = ""
+    if showPivotVolInput
+        suffix := "  " + formatVolume(pivotVol)
+        if showVolMultInput and pivotVolAvg > 0
+            suffix := suffix + " (" + str.tostring(pivotVol / pivotVolAvg, "#.#") + "x)"
+    suffix
 
 // @function Maps a size-name string to the matching size.* constant.
 sizeFrom(string name) =>
@@ -309,6 +358,15 @@ if bearPivot
 if bullPivot
     lastPL := pivotLow
 
+// Track the bar index of the two most recent pivots OF ANY KIND — that pair
+// bounds the swing the high-volume zone is measured over. Pivots are confirmed
+// pivotLenInput bars late, so the pivot itself sits at bar_index - pivotLenInput.
+var int lastPivotBar = na
+var int prevPivotBar = na
+if bearPivot or bullPivot
+    prevPivotBar := lastPivotBar
+    lastPivotBar := bar_index - pivotLenInput
+
 // Live swing position: where the current (tick) price sits between the last
 // reversal low (0%) and the last reversal high (100%). Recomputed every tick.
 float swingPos = na
@@ -362,15 +420,21 @@ float dayOpen = request.security(syminfo.tickerid, dayTfInput, open, lookahead=b
 [curDayHigh, curDayLow] = request.security(
      syminfo.tickerid, dayTfInput, [high, low], lookahead=barmerge.lookahead_off)
 
+// Volume actually traded on the pivot bar, and the average it is measured against.
+float pivotVol    = nz(volume[pivotLenInput])
+float pivotVolAvg = nz(volAvg[pivotLenInput])
+
 // ————— Visuals: Reversal signals
 if bearPivot and bearScore >= minScoreInput
     label.new(
-         bar_index[pivotLenInput], pivotHigh, "REVERSAL " + starString(bearScore),
+         bar_index[pivotLenInput], pivotHigh,
+         "REVERSAL " + starString(bearScore) + volumeSuffix(pivotVol, pivotVolAvg),
          color=TRANSPARENT_COLOR,
          textcolor=color.new(bearColorInput, scoreTransp(bearScore)),
          style=label.style_label_down,
          size=bearScore == MAX_SCORE ? size.large : bearScore >= strongScoreInput ? size.normal : size.small,
-         tooltip=confirmationTooltip(bearRsiOk, volSpikeAtPivot, bearCandleOk, bearWickOk, bearSwingOk)
+         tooltip=confirmationTooltip(
+             bearRsiOk, volSpikeAtPivot, bearCandleOk, bearWickOk, bearSwingOk, pivotVol, pivotVolAvg)
          )
     line.new(
          bar_index[pivotLenInput], pivotHigh,
@@ -383,12 +447,14 @@ if bearPivot and bearScore >= minScoreInput
 
 if bullPivot and bullScore >= minScoreInput
     label.new(
-         bar_index[pivotLenInput], pivotLow, "REVERSAL " + starString(bullScore),
+         bar_index[pivotLenInput], pivotLow,
+         "REVERSAL " + starString(bullScore) + volumeSuffix(pivotVol, pivotVolAvg),
          color=TRANSPARENT_COLOR,
          textcolor=color.new(bullColorInput, scoreTransp(bullScore)),
          style=label.style_label_up,
          size=bullScore == MAX_SCORE ? size.large : bullScore >= strongScoreInput ? size.normal : size.small,
-         tooltip=confirmationTooltip(bullRsiOk, volSpikeAtPivot, bullCandleOk, bullWickOk, bullSwingOk)
+         tooltip=confirmationTooltip(
+             bullRsiOk, volSpikeAtPivot, bullCandleOk, bullWickOk, bullSwingOk, pivotVol, pivotVolAvg)
          )
     line.new(
          bar_index[pivotLenInput], pivotLow,
@@ -471,6 +537,82 @@ if barstate.islast
                 if highlightNearestInput
                     near := (not na(nearAbove) and p == nearAbove) or (not na(nearBelow) and p == nearBelow)
                 drawOneLevel(p, array.get(lvlNames, i), array.get(lvlColors, i), near, levelLines, levelLabels)
+
+// ————— Visuals: High-volume zone between the two most recent reversals
+// A volume profile is built over the swing bounded by the last two pivots, and
+// the bin that traded the most (the Point of Control) is drawn as a box. Volume
+// is attributed to each bar's hlc3 — Pine has no intrabar volume distribution,
+// so this locates where trading concentrated rather than reproducing an
+// exchange-accurate profile.
+var box   hvzBox     = na
+var line  hvzMid     = na
+var label hvzLabel   = na
+var float hvzTop     = na
+var float hvzBottom  = na
+var float hvzVolume  = na
+
+if barstate.islast
+    if not na(hvzBox)
+        box.delete(hvzBox)
+        hvzBox := na
+    if not na(hvzMid)
+        line.delete(hvzMid)
+        hvzMid := na
+    if not na(hvzLabel)
+        label.delete(hvzLabel)
+        hvzLabel := na
+    hvzTop    := na
+    hvzBottom := na
+    hvzVolume := na
+    if showHvzInput and not na(lastPivotBar) and not na(prevPivotBar)
+        int rightBar = math.max(lastPivotBar, prevPivotBar)
+        int leftBar  = math.min(lastPivotBar, prevPivotBar)
+        int rightOff = bar_index - rightBar
+        int leftOff  = math.min(bar_index - leftBar, hvzMaxBarsInput)
+        if leftOff > rightOff and rightOff >= 0
+            float hi = high[rightOff]
+            float lo = low[rightOff]
+            for i = rightOff to leftOff
+                hi := math.max(hi, high[i])
+                lo := math.min(lo, low[i])
+            float rng  = math.max(hi - lo, syminfo.mintick * hvzRowsInput)
+            float step = rng / hvzRowsInput
+            array<float> bins = array.new<float>(hvzRowsInput, 0.0)
+            for i = rightOff to leftOff
+                int idx = int(math.floor((hlc3[i] - lo) / step))
+                idx := math.max(0, math.min(hvzRowsInput - 1, idx))
+                array.set(bins, idx, array.get(bins, idx) + nz(volume[i], 1))
+            float maxVol = 0.0
+            int   pocIdx = 0
+            for r = 0 to hvzRowsInput - 1
+                float v = array.get(bins, r)
+                if v > maxVol
+                    maxVol := v
+                    pocIdx := r
+            hvzBottom := lo + pocIdx * step
+            hvzTop    := hvzBottom + step
+            hvzVolume := maxVol
+            int boxRight = hvzExtendInput ? bar_index : rightBar
+            hvzBox := box.new(
+                 leftBar, hvzTop, boxRight, hvzBottom, xloc=xloc.bar_index,
+                 bgcolor=color.new(hvzColorInput, hvzTranspInput),
+                 border_color=color.new(hvzColorInput, math.max(0, hvzTranspInput - 30)),
+                 extend=hvzExtendInput ? extend.right : extend.none)
+            if hvzMidLineInput
+                float poc = (hvzTop + hvzBottom) / 2
+                hvzMid := line.new(
+                     leftBar, poc, boxRight, poc, xloc=xloc.bar_index,
+                     color=hvzColorInput, width=2,
+                     extend=hvzExtendInput ? extend.right : extend.none)
+            if hvzLabelInput
+                hvzLabel := label.new(
+                     boxRight, hvzTop, "HVZ  " + formatVolume(maxVol),
+                     xloc=xloc.bar_index, style=label.style_label_lower_left,
+                     color=TRANSPARENT_COLOR, textcolor=hvzColorInput, size=size.small,
+                     tooltip="Highest-volume price zone between the last two reversals.\n" +
+                     "Range: " + str.tostring(hvzBottom, format.mintick) + " - " +
+                     str.tostring(hvzTop, format.mintick) + "\n" +
+                     "Volume in zone: " + formatVolume(maxVol))
 
 // ————— Alerts
 alertcondition(bearPivot, "Bearish Reversal Pivot", "Bearish reversal pivot confirmed.")

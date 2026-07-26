@@ -3,6 +3,13 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.6.0] - 2026-07-26
+- Reversal labels now show the volume traded on the pivot bar, optionally as a multiple of the volume average
+- Label tooltips gained a volume line (absolute and x-average)
+- New High-Volume Zone module: builds a volume profile over the swing between the two most recent reversals and draws its Point of Control as a box, with an optional mid-line and label
+- Documented that the zone approximates volume at each bar's hlc3 — Pine has no intrabar volume distribution
+- Volume at reversals and high-volume zone between reversals
+
 ## [0.5.2] - 2026-07-25
 - Default bias-table timeframes changed to 1m / 5m / 15m / 1H / 4H
 - Default bias-table timeframes: 1m/5m/15m/1H/4H

@@ -162,7 +162,6 @@ countConfirmations(bool a, bool b, bool c, bool d, bool e) =>
 starString(int score) =>
     string stars = ""
     for i = 1 to MAX_SCORE
-        // pine-lint-disable-next-line PINE005
         stars := stars + (i <= score ? "★" : "☆")
     stars
 
