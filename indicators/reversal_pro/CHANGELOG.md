@@ -3,6 +3,13 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.7.0] - 2026-07-26
+- Added a Trade Suggestion block to the table: BUY/SELL/WAIT with a confidence %, plus entry, stop, target, position size and risk amount
+- Direction comes from a transparent weighted vote of the three signals the indicator already computes (pivot 45%, timeframe bias 35%, swing position 20%); the tooltip shows each vote
+- Size is computed from your own Account Size and Risk % inputs, in units or forex lots (100k/10k/1k)
+- Documented clearly that the suggestion is a mechanical readout, not advice, and that the size math ignores spread, commission, slippage and leverage
+- Trade suggestion block with entry, stop, target and position size
+
 ## [0.6.0] - 2026-07-26
 - Reversal labels now show the volume traded on the pivot bar, optionally as a multiple of the volume average
 - Label tooltips gained a volume line (absolute and x-average)
