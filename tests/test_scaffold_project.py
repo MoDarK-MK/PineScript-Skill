@@ -33,6 +33,34 @@ class TestScaffold(unittest.TestCase):
             text = (Path(td) / "my_strat" / "src" / "my_strat.pine").read_text(encoding="utf-8")
             self.assertIn("strategy(", text)
 
+    def test_strategy_scaffold_fills_only_skill_placeholders(self):
+        """NOTE: deliberately does NOT assert `"{{" not in text` like the indicator
+        test does — TradingView's own alert placeholders ({{ticker}}, {{close}},
+        {{time}}) are part of the template's alert_message payloads and must
+        survive scaffolding untouched."""
+        with tempfile.TemporaryDirectory() as td:
+            self.scaffold(td, kind="strategy", name="my_strat")
+            text = (Path(td) / "my_strat" / "src" / "my_strat.pine").read_text(encoding="utf-8")
+            for placeholder in ("{{TITLE}}", "{{SHORTTITLE}}", "{{OVERLAY}}"):
+                self.assertNotIn(placeholder, text)
+            for tv_placeholder in ("{{ticker}}", "{{close}}", "{{time}}"):
+                self.assertIn(tv_placeholder, text)
+
+    def test_strategy_template_has_all_four_risk_modules(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.scaffold(td, kind="strategy", name="my_strat")
+            text = (Path(td) / "my_strat" / "src" / "my_strat.pine").read_text(encoding="utf-8")
+            for group in ("Position Sizing", "Stops & Targets",
+                          "Breakeven & Trailing", "Session & Date Window"):
+                self.assertIn(group, text, msg=f"missing risk module group: {group}")
+
+    def test_scaffolded_strategy_lints_clean_in_strict_mode(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.scaffold(td, kind="strategy", name="my_strat")
+            pine = Path(td) / "my_strat" / "src" / "my_strat.pine"
+            proc = run_script("pine_lint.py", pine, "--strict")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
     def test_refuses_to_overwrite(self):
         with tempfile.TemporaryDirectory() as td:
             self.assertEqual(self.scaffold(td).returncode, 0)

@@ -7,25 +7,132 @@ strategy("{{TITLE}}", shorttitle="{{SHORTTITLE}}", overlay={{OVERLAY}},
      initial_capital=10000, currency=currency.USD,
      commission_type=strategy.commission.percent, commission_value=0.05,
      slippage=1, margin_long=100, margin_short=100,
-     process_orders_on_close=true, max_labels_count=500)
+     pyramiding=1, process_orders_on_close=true, max_labels_count=500)
+
+// Strategy skeleton with four risk modules wired together. The SIGNAL is a
+// placeholder EMA cross — replace the longSignal/shortSignal block with your own
+// idea and leave the rest of the machinery in place.
+//
+//   1. Position sizing  — risk-% of equity per trade, sized off the stop distance
+//   2. Stops & targets  — ATR or percent stop, TP1/TP2 at R multiples
+//   3. Breakeven+trail  — resolved into ONE ratcheting stop price
+//   4. Filters          — direction, HTF trend, volatility, session, date window
+//
+// NOTE (backtest honesty): none of this makes a backtest predictive.
+//   - process_orders_on_close=true fills at the signal bar's close. Realistic for
+//     close-based signals, optimistic if your idea needs an intrabar fill.
+//   - The trailing stop is computed in Pine, so it only moves on bar CLOSE, not
+//     intrabar. A broker-side trailing stop would move sooner and exit elsewhere.
+//   - Partial exits each record their own closed trade, so strategy.closedtrades
+//     roughly doubles with partials on. The dashboard reports positions taken
+//     separately — that is the number to check against the 100-trade rule.
+//
+// pyramiding is a const int, so pyramiding=input.int(...) is a compile error. To
+// actually pyramid you must edit the literal above AND raise maxEntriesInput.
+// See references/strategy-guide.md before changing any of the risk math.
 
 // ————— Constants
 string THEME_DARK  = "Dark"
 string THEME_LIGHT = "Light"
-color  BULL_DARK    = #26A69A
-color  BEAR_DARK    = #EF5350
-color  BULL_LIGHT   = #00796B
-color  BEAR_LIGHT   = #C62828
+color  BULL_DARK   = #26A69A
+color  BEAR_DARK   = #EF5350
+color  BULL_LIGHT  = #00796B
+color  BEAR_LIGHT  = #C62828
 
-// ————— Inputs
-int    fastLengthInput        = input.int(9, "Fast EMA Length", minval=1, group="Strategy")
-int    slowLengthInput        = input.int(21, "Slow EMA Length", minval=1, group="Strategy")
-float  stopLossPercentInput   = input.float(2.0, "Stop Loss %", minval=0.1, step=0.1, group="Risk Management")
-float  takeProfitPercentInput = input.float(4.0, "Take Profit %", minval=0.1, step=0.1, group="Risk Management")
-string themeInput = input.string(
-     THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
+string DIR_BOTH  = "Long & Short"
+string DIR_LONG  = "Long Only"
+string DIR_SHORT = "Short Only"
+string STOP_ATR  = "ATR"
+string STOP_PCT  = "Percent"
+string SIZE_RISK = "Risk %"
+string SIZE_EQ   = "Equity %"
+string SIZE_FIX  = "Fixed Qty"
+string OPP_HOLD  = "Ignore"
+string OPP_CLOSE = "Close"
+string OPP_FLIP  = "Reverse"
+
+string ID_LONG  = "Long"
+string ID_SHORT = "Short"
+string ID_L_TP1 = "L TP1"
+string ID_L_RUN = "L Runner"
+string ID_S_TP1 = "S TP1"
+string ID_S_RUN = "S Runner"
+
+// ————— Inputs: Signal
+int  fastLengthInput    = input.int(12, "Fast EMA Length", minval=1, group="Signal")
+int  slowLengthInput    = input.int(26, "Slow EMA Length", minval=1, group="Signal")
+bool confirmedOnlyInput = input.bool(true, "Act Only On Confirmed Bars", group="Signal")
+
+// ————— Inputs: Direction & Regime
+string tradeDirectionInput = input.string(
+     DIR_BOTH, "Trade Direction",
+     options=[DIR_BOTH, DIR_LONG, DIR_SHORT], group="Direction & Regime")
+bool   useTrendFilterInput = input.bool(true, "Use HTF Trend Filter", group="Direction & Regime")
+string trendTfInput        = input.timeframe("240", "Trend Timeframe", group="Direction & Regime")
+int    trendMaLenInput     = input.int(200, "Trend MA Length", minval=1, group="Direction & Regime")
+bool   useVolFilterInput   = input.bool(false, "Skip Low-Volatility Regimes", group="Direction & Regime")
+float  minAtrPercentInput  = input.float(0.15, "Min ATR % Of Price", minval=0.0, step=0.05, group="Direction & Regime")
+
+// ————— Inputs: Session & Date Window
+bool   useSessionInput       = input.bool(false, "Restrict To Session", group="Session & Date Window")
+string sessionInput          = input.session("0930-1600", "Session", group="Session & Date Window")
+string sessionTzInput        = input.string(
+     "America/New_York", "Session Timezone",
+     options=["America/New_York", "Europe/London", "Asia/Tokyo", "UTC"], group="Session & Date Window")
+bool   closeOutsideSessInput = input.bool(true, "Flatten At Session End", group="Session & Date Window")
+bool   useDateWindowInput    = input.bool(false, "Restrict To Date Window", group="Session & Date Window")
+int    startDateInput        = input.time(timestamp("01 Jan 2020 00:00"), "Start", group="Session & Date Window")
+int    endDateInput          = input.time(timestamp("01 Jan 2030 00:00"), "End", group="Session & Date Window")
+
+// ————— Inputs: Position Sizing
+string sizingModeInput     = input.string(
+     SIZE_RISK, "Sizing Mode",
+     options=[SIZE_RISK, SIZE_EQ, SIZE_FIX], group="Position Sizing")
+float  riskPercentInput    = input.float(
+     1.0, "Risk % Of Equity Per Trade", minval=0.1, maxval=10.0, step=0.1, group="Position Sizing")
+float  equityPercentInput  = input.float(
+     10.0, "Equity % Per Trade", minval=0.1, maxval=100.0, step=1.0, group="Position Sizing")
+float  fixedQtyInput       = input.float(1.0, "Fixed Quantity", minval=0.000001, group="Position Sizing")
+float  maxNotionalPctInput = input.float(
+     100.0, "Max Notional % Of Equity", minval=1.0, maxval=500.0, step=10.0, group="Position Sizing")
+float  qtyStepInput        = input.float(
+     0.0, "Quantity Step (0 = fractional ok)", minval=0.0, step=0.1, group="Position Sizing")
+
+// ————— Inputs: Stops & Targets
+string stopModeInput     = input.string(STOP_ATR, "Stop Model", options=[STOP_ATR, STOP_PCT], group="Stops & Targets")
+int    atrLenInput       = input.int(14, "ATR Length", minval=1, group="Stops & Targets")
+float  atrStopMultInput  = input.float(2.0, "ATR Stop Multiple", minval=0.1, step=0.1, group="Stops & Targets")
+float  stopPercentInput  = input.float(2.0, "Percent Stop", minval=0.1, step=0.1, group="Stops & Targets")
+int    minStopTicksInput = input.int(4, "Minimum Stop (ticks)", minval=1, group="Stops & Targets")
+float  tp1RmultInput     = input.float(1.0, "TP1 (R multiple)", minval=0.1, step=0.1, group="Stops & Targets")
+float  tp2RmultInput     = input.float(2.0, "TP2 (R multiple)", minval=0.1, step=0.1, group="Stops & Targets")
+bool   usePartialsInput  = input.bool(true, "Take Partial At TP1", group="Stops & Targets")
+int    tp1PercentInput   = input.int(
+     50, "TP1 Size (% of position)", minval=1, maxval=99, group="Stops & Targets")
+bool   useTp2Input       = input.bool(true, "Use TP2 On The Runner", group="Stops & Targets")
+
+// ————— Inputs: Breakeven & Trailing
+string BE_GROUP = "Breakeven & Trailing"
+bool  useBreakevenInput    = input.bool(true, "Move Stop To Breakeven", group=BE_GROUP)
+float beTriggerRmultInput  = input.float(1.0, "Breakeven Trigger (R)", minval=0.1, step=0.1, group=BE_GROUP)
+float beOffsetRmultInput   = input.float(0.1, "Breakeven Offset (R)", minval=0.0, step=0.05, group=BE_GROUP)
+bool  useTrailInput        = input.bool(true, "Use Trailing Stop", group=BE_GROUP)
+float trailStartRmultInput = input.float(1.5, "Trail Starts At (R)", minval=0.1, step=0.1, group=BE_GROUP)
+float trailAtrMultInput    = input.float(2.0, "Trail Distance (ATR)", minval=0.1, step=0.1, group=BE_GROUP)
+
+// ————— Inputs: Trade Management
+string oppositeModeInput = input.string(
+     OPP_FLIP, "On Opposite Signal",
+     options=[OPP_HOLD, OPP_CLOSE, OPP_FLIP], group="Trade Management")
+int    cooldownBarsInput = input.int(0, "Cooldown After Exit (bars)", minval=0, group="Trade Management")
+int    maxEntriesInput   = input.int(1, "Max Concurrent Entries", minval=1, group="Trade Management")
+bool   reanchorInput     = input.bool(true, "Re-anchor Plan To Fill Price", group="Trade Management")
+
+// ————— Inputs: Appearance
+string themeInput         = input.string(THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
 bool   showDashboardInput = input.bool(true, "Show Dashboard", group="Appearance")
-bool   testModeInput       = input.bool(false, "Test Mode", group="Debug/Test")
+bool   showLevelsInput    = input.bool(true, "Plot Stop / Target Levels", group="Appearance")
+bool   testModeInput      = input.bool(false, "Test Mode", group="Debug/Test")
 
 // ————— Function declarations
 // @function Returns the bullish accent color for the selected theme.
@@ -42,58 +149,336 @@ getBearColor(string theme) =>
         THEME_LIGHT => BEAR_LIGHT
         => BEAR_DARK
 
+// @function Stop distance in PRICE units, floored at a minimum tick count so a
+// tight-range bar can't produce a zero-width stop — that would divide by zero in
+// the sizing math and request an unbounded position.
+stopDistance(string mode, float atrValue, float px) =>
+    float raw = switch mode
+        STOP_ATR => atrValue * atrStopMultInput
+        STOP_PCT => px * stopPercentInput / 100
+        => atrValue * atrStopMultInput
+    math.max(raw, syminfo.mintick * minStopTicksInput)
+
+// @function Contracts/shares sized so a full stop-out costs about riskPercentInput
+// of equity. syminfo.pointvalue converts a 1.0 price move on 1 contract into
+// account currency — it is 1 for stocks/crypto but 50 for ES, so omitting it
+// would size futures positions 50x too large.
+// Caveat: when syminfo.currency differs from the account currency, riskCapital and
+// perUnitRisk are denominated differently — convert with request.currency_rate().
+positionQty(float stopDist, float px) =>
+    float equityBasis = strategy.equity      // includes open P&L; use
+                                             // strategy.initial_capital +
+                                             // strategy.netprofit to size off
+                                             // closed equity instead
+    float riskCapital = equityBasis * riskPercentInput / 100
+    float perUnitRisk = stopDist * syminfo.pointvalue
+    float riskQty     = perUnitRisk > 0 ? riskCapital / perUnitRisk : 0.0
+    float notional    = px * syminfo.pointvalue
+    // Separate from the risk cap: a very tight stop implies leverage the engine
+    // would reject outright (margin_long=100), losing the trade with no error.
+    float leverageQty = notional > 0 ? equityBasis * maxNotionalPctInput / 100 / notional : 0.0
+    float equityQty   = notional > 0 ? equityBasis * equityPercentInput / 100 / notional : 0.0
+    float raw = switch sizingModeInput
+        SIZE_RISK => math.min(riskQty, leverageQty)
+        SIZE_EQ   => math.min(equityQty, leverageQty)
+        SIZE_FIX  => fixedQtyInput
+        => math.min(riskQty, leverageQty)
+    // Rounding down CAN produce 0 — the caller must gate on qty > 0, otherwise
+    // trades silently vanish and the backtest is biased toward whichever regime
+    // happened to size above one lot.
+    qtyStepInput > 0 ? math.floor(raw / qtyStepInput) * qtyStepInput : raw
+
 // ————— Calculations
 color bullColor = getBullColor(themeInput)
 color bearColor = getBearColor(themeInput)
-float fastMA = ta.ema(close, fastLengthInput)
-float slowMA = ta.ema(close, slowLengthInput)
-bool  longCondition  = ta.crossover(fastMA, slowMA)
-bool  shortCondition = ta.crossunder(fastMA, slowMA)
 
-float longStopPrice   = strategy.position_avg_price * (1 - stopLossPercentInput / 100)
-float longTakePrice   = strategy.position_avg_price * (1 + takeProfitPercentInput / 100)
-float shortStopPrice  = strategy.position_avg_price * (1 + stopLossPercentInput / 100)
-float shortTakePrice  = strategy.position_avg_price * (1 - takeProfitPercentInput / 100)
+// Every ta.*/request.* result is computed into a named variable BEFORE any
+// condition uses it — v6 evaluates and/or lazily, so a call placed after an
+// `and` may not run on every bar, which corrupts its internal state.
+float fastMa   = ta.ema(close, fastLengthInput)
+float slowMa   = ta.ema(close, slowLengthInput)
+float atrValue = ta.atr(atrLenInput)
+float trendMa  = request.security(
+     syminfo.tickerid, trendTfInput, ta.ema(close, trendMaLenInput)[1],
+     lookahead=barmerge.lookahead_off)
 
-// ————— Strategy calls
-if longCondition
-    strategy.entry("Long", strategy.long,
-         alert_message='{"action":"buy","ticker":"{{ticker}}","price":{{close}},"time":"{{time}}"}')
+float atrPercent  = close > 0 ? atrValue / close * 100 : 0.0
+bool  barOk       = not confirmedOnlyInput or barstate.isconfirmed
+bool  longAllowed  = tradeDirectionInput != DIR_SHORT
+bool  shortAllowed = tradeDirectionInput != DIR_LONG
+bool  trendUp     = not useTrendFilterInput or na(trendMa) or close > trendMa
+bool  trendDown   = not useTrendFilterInput or na(trendMa) or close < trendMa
+bool  volOk       = not useVolFilterInput or atrPercent >= minAtrPercentInput
+// time(...) returns na OUTSIDE the session, so this must be an na test, not != 0.
+bool  inSession   = not useSessionInput or not na(time(timeframe.period, sessionInput, sessionTzInput))
+// `time` is the bar's OPEN time, so the end bound compares against the bar that
+// starts before the cut-off.
+bool  inWindow    = not useDateWindowInput or (time >= startDateInput and time <= endDateInput)
 
-if shortCondition
-    strategy.entry("Short", strategy.short,
-         alert_message='{"action":"sell","ticker":"{{ticker}}","price":{{close}},"time":"{{time}}"}')
+var int lastExitBar = na
+bool cooldownOk = cooldownBarsInput == 0 or na(lastExitBar) or (bar_index - lastExitBar) >= cooldownBarsInput
 
-if strategy.position_size > 0
-    strategy.exit("Long Exit", "Long", stop=longStopPrice, limit=longTakePrice,
+// >>> Replace this block with your own idea. Everything below it is generic. <<<
+bool longSignal  = ta.crossover(fastMa, slowMa)
+bool shortSignal = ta.crossunder(fastMa, slowMa)
+
+bool baseOk     = barOk and volOk and inSession and inWindow and cooldownOk
+bool roomLeft   = strategy.opentrades < maxEntriesInput
+bool longEntry  = longSignal and longAllowed and trendUp and baseOk and roomLeft
+bool shortEntry = shortSignal and shortAllowed and trendDown and baseOk and roomLeft
+
+// ————— Calculations: risk state
+var float entryRef   = na    // price the plan was built from
+var float initStop   = na
+var float tp1Price   = na
+var float tp2Price   = na
+var float activeStop = na
+var float runExtreme = na    // running high (long) / low (short) since entry
+var bool  beArmed    = false
+var bool  tp1Done    = false
+var int   entryCount = 0
+
+// Reset only on the bar we JUST went flat. Writing `if strategy.position_size == 0`
+// would also fire on the signal bar (the entry order hasn't filled yet), wiping
+// the plan armed a few lines below.
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    entryRef    := na
+    initStop    := na
+    tp1Price    := na
+    tp2Price    := na
+    activeStop  := na
+    runExtreme  := na
+    beArmed     := false
+    tp1Done     := false
+    lastExitBar := bar_index
+
+float stopDist   = stopDistance(stopModeInput, atrValue, close)
+float plannedQty = positionQty(stopDist, close)
+
+// ————— Strategy calls: entries
+if longEntry and plannedQty > 0
+    if strategy.position_size < 0 and oppositeModeInput == OPP_CLOSE
+        strategy.close(ID_SHORT, comment="Opposite signal")
+    if strategy.position_size <= 0 or oppositeModeInput != OPP_HOLD
+        entryRef    := close
+        initStop    := math.round_to_mintick(entryRef - stopDist)
+        float rDist  = entryRef - initStop
+        tp1Price    := math.round_to_mintick(entryRef + rDist * tp1RmultInput)
+        tp2Price    := math.round_to_mintick(entryRef + rDist * tp2RmultInput)
+        activeStop  := initStop
+        runExtreme  := high
+        beArmed     := false
+        tp1Done     := false
+        strategy.entry(ID_LONG, strategy.long, qty=plannedQty,
+             alert_message='{"action":"buy","ticker":"{{ticker}}","price":{{close}},"time":"{{time}}"}')
+
+if shortEntry and plannedQty > 0
+    if strategy.position_size > 0 and oppositeModeInput == OPP_CLOSE
+        strategy.close(ID_LONG, comment="Opposite signal")
+    if strategy.position_size >= 0 or oppositeModeInput != OPP_HOLD
+        entryRef    := close
+        initStop    := math.round_to_mintick(entryRef + stopDist)
+        float rDist  = initStop - entryRef
+        tp1Price    := math.round_to_mintick(entryRef - rDist * tp1RmultInput)
+        tp2Price    := math.round_to_mintick(entryRef - rDist * tp2RmultInput)
+        activeStop  := initStop
+        runExtreme  := low
+        beArmed     := false
+        tp1Done     := false
+        strategy.entry(ID_SHORT, strategy.short, qty=plannedQty,
+             alert_message='{"action":"sell","ticker":"{{ticker}}","price":{{close}},"time":"{{time}}"}')
+
+// Re-anchor the plan to the REAL fill price once it exists — this is what makes
+// gaps and slippage honest instead of assuming a fill at the signal close.
+bool justFilled = strategy.position_size != 0 and strategy.position_size[1] == 0
+if justFilled
+    entryCount += 1
+    if reanchorInput
+        float avgFill = strategy.position_avg_price
+        bool  isLong  = strategy.position_size > 0
+        initStop    := math.round_to_mintick(isLong ? avgFill - stopDist : avgFill + stopDist)
+        float rDist  = math.abs(avgFill - initStop)
+        tp1Price    := math.round_to_mintick(isLong ? avgFill + rDist * tp1RmultInput : avgFill - rDist * tp1RmultInput)
+        tp2Price    := math.round_to_mintick(isLong ? avgFill + rDist * tp2RmultInput : avgFill - rDist * tp2RmultInput)
+        activeStop  := initStop
+
+// ————— Strategy calls: breakeven + trailing resolved into ONE stop
+// Deliberately NOT handing breakeven to stop= and trailing to trail_price= in the
+// same exit: in v6 whichever level triggers first wins, so two independent
+// mechanisms interact unpredictably and never ratchet against each other. One
+// number, ratcheted with math.max/min, is predictable and plottable. The cost is
+// that it only moves on bar close.
+if strategy.position_size > 0 and not na(initStop)
+    float avgPrice = strategy.position_avg_price
+    float rDist    = avgPrice - initStop
+    runExtreme := math.max(nz(runExtreme, high), high)
+    if useBreakevenInput and not beArmed and rDist > 0 and high >= avgPrice + rDist * beTriggerRmultInput
+        beArmed := true
+    // The offset defaults above 0 because position_avg_price excludes commission —
+    // a literal-breakeven stop still books a round-trip-cost loss.
+    float beStop = beArmed and rDist > 0 ? math.round_to_mintick(avgPrice + rDist * beOffsetRmultInput) : na
+    float trStop = na
+    if useTrailInput and rDist > 0 and runExtreme >= avgPrice + rDist * trailStartRmultInput
+        trStop := math.round_to_mintick(runExtreme - atrValue * trailAtrMultInput)
+    float best = math.max(nz(beStop, initStop), nz(trStop, initStop))
+    activeStop := math.max(nz(activeStop, initStop), best)
+
+if strategy.position_size < 0 and not na(initStop)
+    float avgPrice = strategy.position_avg_price
+    float rDist    = initStop - avgPrice
+    runExtreme := math.min(nz(runExtreme, low), low)
+    if useBreakevenInput and not beArmed and rDist > 0 and low <= avgPrice - rDist * beTriggerRmultInput
+        beArmed := true
+    float beStop = beArmed and rDist > 0 ? math.round_to_mintick(avgPrice - rDist * beOffsetRmultInput) : na
+    float trStop = na
+    if useTrailInput and rDist > 0 and runExtreme <= avgPrice - rDist * trailStartRmultInput
+        trStop := math.round_to_mintick(runExtreme + atrValue * trailAtrMultInput)
+    float best = math.min(nz(beStop, initStop), nz(trStop, initStop))
+    activeStop := math.min(nz(activeStop, initStop), best)
+
+// ————— Strategy calls: exits
+// Calling strategy.exit() with the SAME id every bar UPDATES the live order — that
+// is the mechanism that makes the computed trailing stop actually move. A
+// bar-varying id would stack duplicate orders instead.
+if strategy.position_size > 0 and not na(activeStop)
+    // qty_percent of a 1-contract position is 0.5; on whole-lot instruments the
+    // partial would round away or close everything, so require room to split.
+    bool canSplit = usePartialsInput and (qtyStepInput <= 0 or strategy.position_size >= qtyStepInput * 2)
+    if canSplit and not tp1Done
+        strategy.exit(ID_L_TP1, from_entry=ID_LONG, qty_percent=tp1PercentInput,
+             limit=tp1Price, stop=activeStop,
+             alert_message='{"action":"tp1","ticker":"{{ticker}}","time":"{{time}}"}')
+    strategy.exit(ID_L_RUN, from_entry=ID_LONG,
+         limit=useTp2Input ? tp2Price : na, stop=activeStop,
          alert_message='{"action":"close_buy","ticker":"{{ticker}}","time":"{{time}}"}')
 
-if strategy.position_size < 0
-    strategy.exit("Short Exit", "Short", stop=shortStopPrice, limit=shortTakePrice,
+if strategy.position_size < 0 and not na(activeStop)
+    bool canSplit = usePartialsInput and (qtyStepInput <= 0 or math.abs(strategy.position_size) >= qtyStepInput * 2)
+    if canSplit and not tp1Done
+        strategy.exit(ID_S_TP1, from_entry=ID_SHORT, qty_percent=tp1PercentInput,
+             limit=tp1Price, stop=activeStop,
+             alert_message='{"action":"tp1","ticker":"{{ticker}}","time":"{{time}}"}')
+    strategy.exit(ID_S_RUN, from_entry=ID_SHORT,
+         limit=useTp2Input ? tp2Price : na, stop=activeStop,
          alert_message='{"action":"close_sell","ticker":"{{ticker}}","time":"{{time}}"}')
 
+// A partial filled when the position shrank without going flat. position_avg_price
+// does NOT change on a partial close, so the breakeven/trail math above stays
+// valid; position_size DOES change, so nothing derived from it may be cached.
+if strategy.position_size != 0 and math.abs(strategy.position_size) < math.abs(nz(strategy.position_size[1]))
+    tp1Done := true
+
+// Filters gate ENTRIES only. These flushes run unconditionally, or a position
+// opened inside the window would be stranded there forever.
+if useDateWindowInput and not inWindow and strategy.position_size != 0
+    strategy.close_all(comment="Window end")
+if useSessionInput and closeOutsideSessInput and not inSession and strategy.position_size != 0
+    strategy.close_all(comment="Session end")
+
 // ————— Visuals
-plot(fastMA, "Fast EMA", color=bullColor, linewidth=2)
-plot(slowMA, "Slow EMA", color=bearColor, linewidth=2)
+plot(showLevelsInput and strategy.position_size != 0 ? activeStop : na, "Stop",
+     color=color.new(bearColor, 20), style=plot.style_linebr, linewidth=2)
+plot(showLevelsInput and strategy.position_size != 0 and not tp1Done ? tp1Price : na, "TP1",
+     color=color.new(bullColor, 40), style=plot.style_linebr)
+plot(showLevelsInput and strategy.position_size != 0 and useTp2Input ? tp2Price : na, "TP2",
+     color=color.new(bullColor, 20), style=plot.style_linebr)
 
-float winRatePct = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100 : na
-string positionText = strategy.position_size > 0 ? "Long" : strategy.position_size < 0 ? "Short" : "Flat"
-color  positionColor = strategy.position_size > 0 ? bullColor : strategy.position_size < 0 ? bearColor : color.gray
+plotshape(longEntry and plannedQty > 0, "Long Entry", shape.triangleup,
+     location.belowbar, color=bullColor, size=size.tiny)
+plotshape(shortEntry and plannedQty > 0, "Short Entry", shape.triangledown,
+     location.abovebar, color=bearColor, size=size.tiny)
 
-var table dashboard = table.new(position.top_right, 2, 3, border_width=1)
+var table dashboard = table.new(position.top_right, 2, 10, border_width=1,
+     bgcolor=color.new(color.black, 85))
 if showDashboardInput and barstate.islast
-    dashboard.cell(0, 0, "Position", text_size=size.small)
-    dashboard.cell(1, 0, positionText, bgcolor=color.new(positionColor, 80), text_size=size.small)
-    dashboard.cell(0, 1, "Net Profit", text_size=size.small)
-    dashboard.cell(1, 1, str.tostring(strategy.netprofit, "#.##"), text_size=size.small)
-    dashboard.cell(0, 2, "Win Rate", text_size=size.small)
-    dashboard.cell(1, 2, na(winRatePct) ? "n/a" : str.tostring(winRatePct, "#.#") + "%", text_size=size.small)
+    float winRate    = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100 : na
+    float profitFact = strategy.grossloss > 0 ? strategy.grossprofit / strategy.grossloss : na
+    float netPct     = strategy.initial_capital > 0 ? strategy.netprofit / strategy.initial_capital * 100 : na
+    bool  isLong     = strategy.position_size > 0
+    bool  isFlat     = strategy.position_size == 0
+    string posTxt    = isFlat ? "Flat" :
+         (isLong ? "Long " : "Short ") + str.tostring(math.abs(strategy.position_size), "#.####")
+    string stopTag   = beArmed ? " (BE)" : ""
+    bool   realismOk = entryCount >= 100 and not na(profitFact) and profitFact > 1
+    dashboard.cell(0, 0, "Position", text_color=color.gray, text_size=size.small)
+    dashboard.cell(1, 0, posTxt, text_size=size.small,
+         text_color=isFlat ? color.gray : isLong ? bullColor : bearColor)
+    dashboard.cell(0, 1, "Entry", text_color=color.gray, text_size=size.small)
+    dashboard.cell(1, 1, isFlat ? "--" : str.tostring(strategy.position_avg_price, format.mintick),
+         text_size=size.small)
+    dashboard.cell(0, 2, "Stop", text_color=color.gray, text_size=size.small)
+    dashboard.cell(1, 2, isFlat or na(activeStop) ? "--" :
+         str.tostring(activeStop, format.mintick) + stopTag, text_size=size.small)
+    dashboard.cell(0, 3, "TP1 / TP2", text_color=color.gray, text_size=size.small)
+    dashboard.cell(1, 3, isFlat or na(tp1Price) ? "--" :
+         str.tostring(tp1Price, format.mintick) + (tp1Done ? " x" : "") + " / " +
+         (useTp2Input ? str.tostring(tp2Price, format.mintick) : "--"), text_size=size.small)
+    dashboard.cell(0, 4, "Positions taken", text_color=color.gray, text_size=size.small)
+    dashboard.cell(1, 4, str.tostring(entryCount), text_size=size.small)
+    dashboard.cell(0, 5, "Closed records", text_color=color.gray, text_size=size.small)
+    dashboard.cell(1, 5, str.tostring(strategy.closedtrades) +
+         (usePartialsInput ? " (incl. partials)" : ""), text_size=size.small)
+    dashboard.cell(0, 6, "Win rate", text_color=color.gray, text_size=size.small)
+    dashboard.cell(1, 6, na(winRate) ? "--" : str.tostring(winRate, "#.#") + "%", text_size=size.small)
+    dashboard.cell(0, 7, "Profit factor", text_color=color.gray, text_size=size.small)
+    dashboard.cell(1, 7, na(profitFact) ? "--" : str.tostring(profitFact, "#.##"), text_size=size.small,
+         text_color=na(profitFact) ? color.gray : profitFact > 1 ? bullColor : bearColor)
+    dashboard.cell(0, 8, "Net profit", text_color=color.gray, text_size=size.small)
+    dashboard.cell(1, 8, na(netPct) ? "--" : str.tostring(netPct, "#.#") + "%", text_size=size.small,
+         text_color=na(netPct) ? color.gray : netPct >= 0 ? bullColor : bearColor)
+    dashboard.cell(0, 9, "Realism", text_color=color.gray, text_size=size.small)
+    dashboard.cell(1, 9, realismOk ? "OK" : entryCount < 100 ? "Too few trades" : "PF <= 1",
+         text_size=size.small, bgcolor=color.new(realismOk ? bullColor : bearColor, 80),
+         text_color=realismOk ? bullColor : bearColor)
 
-// ————— Debug / Test block (see references/pine-v6-guide.md — keep testModeInput false when handing off)
+// ————— Alerts
+alertcondition(longEntry, "Long Entry Signal", "Long entry signal fired.")
+alertcondition(shortEntry, "Short Entry Signal", "Short entry signal fired.")
+
+// ————— Debug / Test block (keep testModeInput false when handing off)
+var int passCount = 0
+var int failCount = 0
+
+// @function Counts an assertion and draws a label only when it fails, so a long
+// backtest can't exhaust the 500-label budget on passing bars.
+recordAssertion(bool condition, string description) =>
+    if condition
+        passCount += 1
+    else
+        failCount += 1
+        label.new(bar_index, high, "FAIL: " + description, color=color.red,
+             textcolor=color.white, style=label.style_label_down, size=size.small)
+
 if testModeInput
-    // Assertion 1: fast/slow MAs should never be na once past the warm-up period.
-    if bar_index > slowLengthInput and (na(fastMA) or na(slowMA))
-        label.new(bar_index, high, "FAIL: MA is na past warmup", color=color.red, style=label.style_label_down)
-    // Assertion 2: stop-loss % should never exceed take-profit % by convention here (sanity check on inputs).
-    if stopLossPercentInput <= 0 or takeProfitPercentInput <= 0
-        label.new(bar_index, low, "FAIL: risk % inputs must be positive", color=color.red, style=label.style_label_up)
+    // 1. Sizing must never request a negative quantity.
+    recordAssertion(plannedQty >= 0, "planned qty is negative")
+    // 2. A zero stop distance would divide by zero in the sizing math.
+    recordAssertion(stopDist > 0, "stop distance collapsed to zero")
+    // 3. The stop may only ever ratchet in favour of an open long.
+    recordAssertion(
+         strategy.position_size <= 0 or na(activeStop) or na(activeStop[1]) or activeStop >= activeStop[1],
+         "long stop moved against the position")
+    // 4. Realised risk on the arming bar must respect the configured risk cap.
+    recordAssertion(
+         sizingModeInput != SIZE_RISK or not justFilled or na(entryRef) or na(initStop) or
+         math.abs(plannedQty * (entryRef - initStop) * syminfo.pointvalue) <=
+         strategy.equity * riskPercentInput / 100 * 1.05,
+         "position risk exceeds the configured risk %")
+    // 5. Targets must sit on the profitable side of the entry.
+    recordAssertion(
+         na(tp1Price) or na(entryRef) or strategy.position_size == 0 or
+         (strategy.position_size > 0 ? tp1Price > entryRef : tp1Price < entryRef),
+         "TP1 is on the wrong side of entry")
+    // 6. No position may survive outside the backtest window.
+    recordAssertion(
+         not useDateWindowInput or inWindow or strategy.position_size == 0 or
+         na(strategy.position_size[1]) or strategy.position_size[1] != 0,
+         "position held outside the date window")
+
+var table testTable = table.new(position.bottom_left, 2, 2, border_width=1)
+if testModeInput and barstate.islast
+    testTable.cell(0, 0, "Passed", text_size=size.small)
+    testTable.cell(1, 0, str.tostring(passCount), text_color=color.green, text_size=size.small)
+    testTable.cell(0, 1, "Failed", text_size=size.small)
+    testTable.cell(1, 1, str.tostring(failCount), text_size=size.small,
+         text_color=failCount > 0 ? color.red : color.green)
