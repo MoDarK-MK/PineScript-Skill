@@ -3,6 +3,18 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.2.0] - 2026-07-27
+### Visual
+- Fixed 9 dashboard cells that rendered black text on a black panel — Pine defaults cell text to black and those cells set no `text_color`, so most of the numbers were invisible on a dark chart
+- Dashboard gained a theme picker, a merged title row, a divider between live position state and backtest quality, left/right column alignment, and a default transparency of 15 instead of 85
+- Dashboard position is now an input defaulting to top-left, so it no longer sits on top of the Reversal Pro indicator's own table when both are loaded
+- Entry markers use `plotshape` instead of `label.new`, which stops them competing with the test-block labels for the finite 500-label pool on a long backtest
+- Fixed inverted level emphasis: TP1 was drawn fainter than TP2 despite being the nearer, more actionable target; all three levels now carry an explicit `linewidth` and `display=`
+
+### Correctness
+- Every input used as a history offset gained a `maxval`, so a large value can no longer reach past the history buffer and error at runtime
+- Fix invisible dashboard text and level emphasis
+
 ## [0.1.0] - 2026-07-26
 ### Added
 - Initial version of Reversal Pro Strategy
