@@ -66,6 +66,11 @@ violation, not just bad practice:
   Point & Figure, Range) for a script that trades, alerts, or shows signals — those
   charts show synthetic prices, not real ones, and can badly mislead users.
 
+For how to implement each of these in code — sizing math, filters, and the
+realism dashboard — see `references/strategy-guide.md` §4 and §6. Note especially
+that with partial exits on, `strategy.closedtrades` counts exit records rather
+than positions, so it is the wrong number to check the 100-trade rule against.
+
 ## Title rules
 
 - English text, standard 7-bit ASCII only — no emoji/special characters.

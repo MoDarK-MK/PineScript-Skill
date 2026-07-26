@@ -174,6 +174,19 @@ These are real, enforced numbers — not estimates:
 - If the user plans to publish the strategy or use it with an alert-driven bot,
   wire up `alert_message=` on `strategy.entry()`/`strategy.exit()` with a JSON
   payload — see `assets/templates/strategy_template.pine`.
+- An exit whose level arguments are all absent or `na` places **no order at all**
+  (PINE029). The usual cause is deriving the level from
+  `strategy.position_avg_price`, which is `na` while flat (PINE032).
+- Units differ within the same call: `loss`, `profit`, `trail_points`, and
+  `trail_offset` are in **ticks**; `stop`, `limit`, and `trail_price` are in
+  **price**. Convert with `int(priceDistance / syminfo.mintick)` (PINE031).
+- `pyramiding` is a `const int`, so `pyramiding=input.int(...)` in the declaration
+  is a compile error. Use a literal and gate entries on
+  `strategy.opentrades < maxEntriesInput` instead.
+
+Design-level guidance — sizing, stop placement, filters, overfitting, walk-forward
+— is in `references/strategy-guide.md`; this section covers only v6 language
+semantics.
 
 ## 8. Things v6 relaxed (used to error, now doesn't)
 
