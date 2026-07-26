@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 34 rules spanning codes PINE001–PINE035. The code
+Note on numbering: there are 40 rules spanning codes PINE001–PINE041. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -23,6 +23,9 @@ PINE029–PINE035 only ever fire on strategies — they inspect `strategy.entry`
 `strategy.exit`/`strategy.order` calls, so an indicator can never trip them.
 Design-level guidance for the patterns they enforce is in
 `references/strategy-guide.md`.
+
+PINE036–PINE041 cover visual quality and runtime cost. The reasoning behind them
+is in `references/design-system.md` and `references/performance-guide.md`.
 
 ---
 
@@ -199,7 +202,9 @@ The check inspects the `strategy()` **call itself**, not the whole file, so a
 parameter merely mentioned in a comment no longer satisfies it.
 
 ### PINE022 — warning — `indicator()`/`strategy()` missing explicit `overlay=`
-Cheap to set, avoids relying on the (version-dependent) engine default.
+Cheap to set, avoids relying on the (version-dependent) engine default. Like
+PINE021, the check inspects the declaration **call** rather than the whole file,
+so a mention of `overlay=` in a comment no longer satisfies it.
 
 ### PINE023 — info — `int`/`int` division of literals
 ```pinescript
@@ -306,3 +311,80 @@ than a string literal, since ids can legitimately be built at runtime.
 A strategy that calls `strategy.entry`/`strategy.order` but never
 `strategy.exit`, `strategy.close`, `strategy.close_all`, or a `strategy.risk.*`
 rule only closes positions via an opposite entry — no trade has a defined risk.
+
+---
+
+## Visual & performance rules (PINE036–PINE041)
+
+See `references/design-system.md` and `references/performance-guide.md`.
+
+### PINE036 — error — Table cell without `text_color=`
+```pinescript
+// bad — Pine defaults cell text to BLACK, invisible on a dark panel
+t.cell(1, 1, str.tostring(maValue, "#.##"), text_size=size.small)
+```
+```pinescript
+// good
+t.cell(1, 1, str.tostring(maValue, format.mintick), text_color=textColor, text_size=size.small)
+```
+Both call forms are checked: `table.cell(id, col, row, text, …)` and the method
+form `myTable.cell(col, row, text, …)`. A cell whose text is an empty string
+literal is treated as a deliberate spacer and skipped.
+
+This is error severity because it is silent, extremely common, and looks fine to
+whoever wrote it on a light chart. The reliable fix is a row builder that takes
+the colors as required arguments — see `references/snippets/table_helpers.pine`.
+
+### PINE037 — warning — `array.new` in a per-bar block without `var`
+```pinescript
+// bad — reallocated on every realtime tick
+if barstate.islast
+    array<float> bins = array.new<float>(24, 0.0)
+```
+```pinescript
+// good — one buffer, cleared in place
+var array<float> bins = array.new<float>(24, 0.0)
+if barstate.islast
+    array.fill(bins, 0.0)
+```
+A temporary inside a user function body is exempt — that is an ordinary local,
+not per-bar churn.
+
+### PINE038 — warning — Drawing churn inside a `barstate` guard
+Deleting and recreating drawings on every tick costs N destructions plus N
+allocations and makes them visibly flicker.
+```pinescript
+// bad
+if barstate.islast
+    line.delete(myLine)
+    myLine := line.new(x1, y, x2, y)
+```
+```pinescript
+// good — create once, then move
+if barstate.islast
+    line.set_xy1(myLine, x1, y)
+    line.set_xy2(myLine, x2, y)
+```
+
+### PINE039 — warning — Duplicate `request.security()`
+Two calls sharing symbol, timeframe and lookahead each instantiate a separate
+higher-timeframe series. Return a tuple from one call instead.
+```pinescript
+// bad — two HTF evaluations
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+float dayOpen = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
+```
+```pinescript
+// good — one
+[pdh, pdl, dayOpen] = request.security(
+     syminfo.tickerid, "D", [high[1], low[1], open], lookahead=barmerge.lookahead_on)
+```
+
+### PINE040 — warning — `plot()` without a title
+The mirror of PINE007 for inputs. An untitled plot appears unnamed in the
+settings panel, data window and status line. A positional second-argument string
+or `title=` both satisfy it.
+
+### PINE041 — warning — `size.large` / `size.huge`
+`references/design-system.md` §2 caps chart text at `size.normal`; larger sizes
+clip or wrap at real panel widths.

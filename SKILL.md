@@ -7,7 +7,7 @@ description: Use this skill whenever the user wants to write, edit, review, vers
 
 A skill for writing production-quality TradingView Pine Script (v6) indicators and
 strategies, and wrapping them in a lightweight "CI/CD"-style workflow: git repo
-structure, a 34-rule offline linter, professional visual design, in-script logical
+structure, a 40-rule offline linter, professional visual design, in-script logical
 tests, semantic versioning, and an automated release-bundle step.
 
 **Important framing to give the user up front (once, briefly):** TradingView has no
@@ -23,12 +23,12 @@ TradingView's servers.
 |---|---|
 | `references/pine-v6-guide.md` | v5→v6 breaking changes, dynamic requests, repainting traps, `var`/`varip`, verified hard platform limits |
 | `references/style-guide.md` | Official naming/structure/spacing conventions (camelCase, SNAKE_CASE, section order, line-wrapping) |
-| `references/lint-rules.md` | Full catalog of all 34 lint rules (codes PINE001–PINE035; PINE024 unassigned) with bad/good examples |
+| `references/lint-rules.md` | Full catalog of all 40 lint rules (codes PINE001–PINE041; PINE024 unassigned) with bad/good examples |
 | `references/design-system.md` | Making indicators look professional: theming, dashboards, gradients, palettes |
 | `references/strategy-guide.md` | Building strategies: signal design, position sizing math, the four risk modules, filters, overfitting, walk-forward, v6 strategy pitfalls |
 | `references/publishing-guide.md` | TradingView House Rules condensed: privacy/visibility, strategy realism, description format |
 | `references/repo-structure.md` | Folder layout, `version.json`, `CHANGELOG.md` format, optional pre-commit hook |
-| `references/snippets/` | Copy-paste Pine fragments (e.g. `color_helpers.pine` — theme color constants/helpers). Pine has no local imports; paste, or publish as a TradingView library for real reuse |
+| `references/snippets/` | Copy-paste Pine fragments: `palette.pine` (unified colors + theme helpers), `table_helpers.pine`, `glyphs.pine`, `live_update.pine`. Pine has no local imports; paste, or publish as a TradingView library for real reuse |
 
 Several of these apply to any single request — e.g. "write me an indicator" still
 benefits from `pine-v6-guide.md` (correctness) and `design-system.md` (it not looking
@@ -87,9 +87,41 @@ system, a corner stats dashboard, and a debug/test toggle:
   reference snippets for the dashboard pattern and the assertion-counter test
   pattern, meant to be copy-pasted from rather than scaffolded whole
 
-For visual polish beyond the templates' defaults (multi-color gradients, watermark
-cells, transparency conventions), read `references/design-system.md` — a
-correct-but-default-styled script reads as an unfinished first draft.
+For visual polish beyond the templates' defaults, read
+`references/design-system.md` — a correct-but-default-styled script reads as an
+unfinished first draft. The one defect worth knowing before you write a single
+table: **`table.cell()` with no `text_color=` renders BLACK**, which is invisible
+on a dark chart. It looks fine to whoever wrote it on a light theme and it is
+silent. Use a row builder that takes the colors as required arguments
+(`references/snippets/table_helpers.pine`); PINE036 enforces it.
+
+## Keeping scripts fast and live
+
+Users expect a dashboard to track price tick-by-tick. The trap is that
+`if barstate.islast` runs on **every realtime tick, not once per bar** — so a
+long scan placed there can run several times a second against a 500 ms-per-loop
+cap. Read `references/performance-guide.md` before writing anything with a loop.
+
+The rule that resolves it: **display updates every tick, computation does not.**
+Fingerprint whatever a heavy result depends on and rebuild only when that moves,
+while the drawings keep repositioning live:
+
+```pinescript
+if barstate.islast
+    if cachedLeft != leftBar or cachedRight != rightBar   // the scan is gated
+        cachedLeft := leftBar, cachedRight := rightBar
+        cachedPoc  := expensiveScan(leftBar, rightBar)
+    box.set_rightbottom(zoneBox, bar_index, cachedPoc)    // the drawing is not
+```
+
+Three more habits worth having, each with a lint rule behind it: reuse one `var`
+array with `array.fill()` instead of allocating per tick (PINE037), move drawings
+with `.set_*()` instead of delete-and-recreate (PINE038), and merge
+`request.security()` calls that share symbol + timeframe + lookahead (PINE039).
+Give every input used as a history offset a `maxval`, or a large value produces a
+runtime error that reads like a script bug.
+
+`indicators/reversal_pro/` is the worked example of all of this.
 
 ## Building strategies
 
@@ -137,7 +169,7 @@ zero-cost backtests block the release outright.
 ## Linting (the "CI" part)
 
 `scripts/pine_lint.py` is a rule-based, OFFLINE linter — it does NOT compile the
-script (no such public tool exists). All 34 rules are fact-checked against
+script (no such public tool exists). All 40 rules are fact-checked against
 TradingView's official docs (migration guide, limitations page, style guide) as of
 mid-2026; full catalog with examples in `references/lint-rules.md`. Highlights:
 
