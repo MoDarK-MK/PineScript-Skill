@@ -3,6 +3,13 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.9.0] - 2026-07-26
+- Removed the SETUP trade-suggestion block from the table; the table now shows the live price and swing position only
+- With nothing left consuming it, the multi-timeframe bias engine went too: reversalBias(), the five request.security() calls, and the Bias Timeframe inputs (5 fewer requests against TradingView's 40-call limit)
+- Removed the Trade Suggestion input group (account size, risk %, size unit, ATR stop, target R, min confidence)
+- Merged the two redundant table toggles into one, and dropped the write-only hvzVolume variable
+- Remove the trade-suggestion block and the multi-timeframe bias engine
+
 ## [0.8.0] - 2026-07-26
 - Removed the per-timeframe UP/DOWN rows from the table; it now shows the live price/swing header and the trade suggestion only
 - The Bias Timeframe inputs are kept and still drive the 35% timeframe-consensus component of the suggestion's vote

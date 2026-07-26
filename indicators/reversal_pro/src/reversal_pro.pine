@@ -18,11 +18,8 @@ indicator(
 //
 // Dashboard modules (both rebuild on every realtime tick, so they track price
 // live and to the tick):
-//   • Table — a LIVE price/swing-position header plus the trade suggestion below.
-//     The per-timeframe bias is still computed from the Bias Timeframe inputs (a
-//     HEURISTIC blend of pivot direction, how the pivot held, a lite strength
-//     score, and RSI momentum — NOT a back-tested probability); it no longer has
-//     its own rows and now feeds the suggestion's vote instead.
+//   • Live table — current price with a tick-direction arrow, and the exact swing
+//     position (% of price between the last reversal low and high).
 //   • Key Levels — previous day/week/month H-L-C, day open, live current-day
 //     high/low, and the most recent reversal swing high/low. Each is drawn as a
 //     fully customizable horizontal line, optionally labelled with its live
@@ -31,18 +28,6 @@ indicator(
 //     its tooltip), and the highest-volume price zone BETWEEN the two most recent
 //     reversals: a volume profile is built over that swing and its Point of
 //     Control (the price bin that traded the most) is drawn as a box.
-//   • Trade Suggestion — a BUY/SELL/WAIT readout with entry, stop, target and a
-//     position size computed from your own account size and risk %.
-//
-// NOTE (the suggestion is not advice): it is a mechanical readout of the three
-// signals this indicator already computes — last pivot direction weighted by its
-// star score (45%), the multi-timeframe bias average (35%), and where price sits
-// in the current swing (20%). The weights are blunt and visible on purpose; a
-// tuned blend would just be fitted to past data. The script knows nothing about
-// your broker, spread, margin, open positions, or anything off this chart, and
-// the size arithmetic assumes the stop fills exactly at the printed price with
-// no slippage or commission. Treat it as a calculator, not a recommendation.
-//
 // NOTE (volume zone): the zone is built from `volume` aggregated per bar at
 // hlc3, not from real tick-level data — TradingView doesn't expose intrabar
 // volume distribution to Pine. It is a good approximation of where trading
@@ -74,26 +59,18 @@ float volMultInput     = input.float(1.5, "Volume Spike Multiplier", minval=1.0,
 float wickRatioInput   = input.float(0.5, "Wick Rejection", minval=0.1, maxval=1.0, step=0.1, group="Strength Filters")
 int   swingLookInput   = input.int(50, "Major Swing Lookback", minval=2, group="Strength Filters")
 
-// ————— Inputs: Bias Table
-// The five Bias Timeframe inputs below no longer have their own table rows —
-// they feed the 35% timeframe-consensus component of the trade suggestion.
-bool   showTableInput  = input.bool(true, "Show Table", group="Bias Table")
-bool   showLiveInput   = input.bool(true, "Show Live Price/Swing rows", group="Bias Table")
+// ————— Inputs: Table
+bool   showTableInput  = input.bool(true, "Show Live Price/Swing Table", group="Table")
 string tablePosInput   = input.string(
      "Top Right", "Table Position",
-     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Bias Table")
+     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Table")
 string tableSizeInput  = input.string(
      "Small", "Table Text Size",
-     options=["Tiny", "Small", "Normal", "Large"], group="Bias Table")
-int    tableTranspInput = input.int(80, "Table Transparency", minval=0, maxval=100, group="Bias Table")
-color  headerColInput  = input.color(color.new(#5b9cf6, 0), "Header Color", group="Bias Table")
-color  upColInput      = input.color(#089981, "Up Color", group="Bias Table")
-color  downColInput    = input.color(#f23645, "Down Color", group="Bias Table")
-string tf1Input        = input.timeframe("1", "Bias Timeframe 1", group="Bias Table")
-string tf2Input        = input.timeframe("5", "Bias Timeframe 2", group="Bias Table")
-string tf3Input        = input.timeframe("15", "Bias Timeframe 3", group="Bias Table")
-string tf4Input        = input.timeframe("60", "Bias Timeframe 4", group="Bias Table")
-string tf5Input        = input.timeframe("240", "Bias Timeframe 5", group="Bias Table")
+     options=["Tiny", "Small", "Normal", "Large"], group="Table")
+int    tableTranspInput = input.int(80, "Table Transparency", minval=0, maxval=100, group="Table")
+color  headerColInput  = input.color(color.new(#5b9cf6, 0), "Header Color", group="Table")
+color  upColInput      = input.color(#089981, "Up Color", group="Table")
+color  downColInput    = input.color(#f23645, "Down Color", group="Table")
 
 // ————— Inputs: Key Levels
 bool   showLevelsInput = input.bool(true, "Show Key Levels", group="Key Levels")
@@ -153,24 +130,6 @@ int    hvzTranspInput    = input.int(80, "Zone Transparency", minval=0, maxval=1
 bool   hvzExtendInput    = input.bool(true, "Extend Zone Right", group=VOL_GROUP)
 bool   hvzMidLineInput   = input.bool(true, "Draw Zone Mid-Line (POC)", group=VOL_GROUP)
 bool   hvzLabelInput     = input.bool(true, "Label The Zone", group=VOL_GROUP)
-
-// ————— Inputs: Trade Suggestion
-string SUG_GROUP = "Trade Suggestion"
-bool   showSugInput      = input.bool(true, "Show Trade Suggestion", group=SUG_GROUP)
-float  accountSizeInput  = input.float(
-     10000, "Account Size", minval=1, step=100, group=SUG_GROUP)
-float  riskPercentInput  = input.float(
-     1.0, "Risk % Per Trade", minval=0.1, maxval=10.0, step=0.1, group=SUG_GROUP)
-string sizeUnitInput     = input.string(
-     "Units", "Size Unit",
-     options=["Units", "Lots (100k)", "Mini Lots (10k)", "Micro Lots (1k)"], group=SUG_GROUP)
-int    sugAtrLenInput    = input.int(14, "ATR Length (for stop)", minval=1, group=SUG_GROUP)
-float  sugAtrMultInput   = input.float(
-     1.5, "Stop Distance (ATR x)", minval=0.1, step=0.1, group=SUG_GROUP)
-float  sugTargetRInput   = input.float(
-     2.0, "Target (R multiple)", minval=0.1, step=0.1, group=SUG_GROUP)
-int    minConfidenceInput = input.int(
-     60, "Min Confidence To Suggest", minval=0, maxval=100, group=SUG_GROUP)
 
 // ————— Inputs: Appearance
 color bullColorInput   = input.color(#089981, "Bullish Color", group="Appearance")
@@ -251,41 +210,6 @@ tablePosFrom(string name) =>
         "Bottom Right" => position.bottom_right
         "Bottom Left"  => position.bottom_left
         => position.top_right
-
-// @function Heuristic UP-probability (0..100) relative to this context's nearest
-// pivot. NOT a statistical probability — a transparent confidence blend of pivot
-// direction, whether price held the pivot, a lite 0-3 strength score, and RSI.
-reversalBias() =>
-    float ph   = ta.pivothigh(high, pivotLenInput, pivotLenInput)
-    float pl   = ta.pivotlow(low, pivotLenInput, pivotLenInput)
-    float r    = ta.rsi(close, rsiLenInput)
-    float vAvg = ta.sma(nz(volume), volLenInput)
-    var int   pivotDir   = 0            // +1 = last pivot was a low (bullish), -1 = high (bearish)
-    var float pivotPrice = na
-    var int   pivotScore = 0            // 0..3 lite strength of that last pivot
-    if not na(pl)
-        pivotDir   := 1
-        pivotPrice := pl
-        bool rOk = r[pivotLenInput] <= rsiOsInput
-        bool vOk = nz(volume[pivotLenInput]) > vAvg[pivotLenInput] * volMultInput
-        bool cOk = close > high[pivotLenInput]
-        pivotScore := (rOk ? 1 : 0) + (vOk ? 1 : 0) + (cOk ? 1 : 0)
-    if not na(ph)
-        pivotDir   := -1
-        pivotPrice := ph
-        bool rOk = r[pivotLenInput] >= rsiObInput
-        bool vOk = nz(volume[pivotLenInput]) > vAvg[pivotLenInput] * volMultInput
-        bool cOk = close < low[pivotLenInput]
-        pivotScore := (rOk ? 1 : 0) + (vOk ? 1 : 0) + (cOk ? 1 : 0)
-    float conf = 8 + pivotScore * 6
-    float base = pivotDir == 1 ? 50 + conf : pivotDir == -1 ? 50 - conf : 50
-    float hold = 0.0
-    if pivotDir == 1 and not na(pivotPrice)
-        hold := close >= pivotPrice ? 6 : -6
-    else if pivotDir == -1 and not na(pivotPrice)
-        hold := close <= pivotPrice ? -6 : 6
-    float rsiTilt = (r - 50) * 0.2
-    math.round(math.max(2, math.min(98, base + hold + rsiTilt)))
 
 // @function Live distance suffix for a level label (percent, price, or nothing).
 levelSuffix(float price) =>
@@ -394,13 +318,6 @@ int bullScore = bullPivot ? countConfirmations(bullRsiOk, volSpikeAtPivot, bullC
 
 string tableSize = sizeFrom(tableSizeInput)
 
-// Per-timeframe reversal bias (heuristic UP-probability), one request per row.
-float up1 = request.security(syminfo.tickerid, tf1Input, reversalBias(), lookahead=barmerge.lookahead_off)
-float up2 = request.security(syminfo.tickerid, tf2Input, reversalBias(), lookahead=barmerge.lookahead_off)
-float up3 = request.security(syminfo.tickerid, tf3Input, reversalBias(), lookahead=barmerge.lookahead_off)
-float up4 = request.security(syminfo.tickerid, tf4Input, reversalBias(), lookahead=barmerge.lookahead_off)
-float up5 = request.security(syminfo.tickerid, tf5Input, reversalBias(), lookahead=barmerge.lookahead_off)
-
 // Completed-period levels: lookahead_on + [1] is the correct NON-repainting way
 // to read a finished higher-timeframe period's high/low/close.
 [pdh, pdl, pdc] = request.security(
@@ -420,70 +337,6 @@ float dayOpen = request.security(syminfo.tickerid, dayTfInput, open, lookahead=b
 // Volume actually traded on the pivot bar, and the average it is measured against.
 float pivotVol    = nz(volume[pivotLenInput])
 float pivotVolAvg = nz(volAvg[pivotLenInput])
-
-// ————— Calculations: trade suggestion
-// A MECHANICAL READOUT of this indicator's own rules — three components vote,
-// the majority sets the direction, and the margin of the vote is the confidence.
-// It is not advice, it knows nothing about your broker, spread, open positions,
-// or anything outside this chart. The size is arithmetic from YOUR inputs.
-var int lastPivotDir   = 0    // +1 = last pivot was a LOW (turning up), -1 = a HIGH
-var int lastPivotScore = 0
-if bullPivot
-    lastPivotDir   := 1
-    lastPivotScore := bullScore
-if bearPivot
-    lastPivotDir   := -1
-    lastPivotScore := bearScore
-
-// Average the per-timeframe bias over whichever rows returned data.
-float upSum   = 0.0
-int   upCount = 0
-if not na(up1)
-    upSum += up1
-    upCount += 1
-if not na(up2)
-    upSum += up2
-    upCount += 1
-if not na(up3)
-    upSum += up3
-    upCount += 1
-if not na(up4)
-    upSum += up4
-    upCount += 1
-if not na(up5)
-    upSum += up5
-    upCount += 1
-float avgUp = upCount > 0 ? upSum / upCount : na
-
-// Each vote is signed and bounded to -100..+100. Weights are deliberately blunt
-// and visible rather than tuned — a tuned blend would just be overfitting.
-float pivotVote = lastPivotDir * (lastPivotScore / MAX_SCORE) * 100
-float tfVote    = na(avgUp) ? 0.0 : (avgUp - 50) * 2
-float swingVote = na(swingPos) ? 0.0 : (50 - swingPos) * 2
-float rawVote   = pivotVote * 0.45 + tfVote * 0.35 + swingVote * 0.20
-
-int   sugDir        = rawVote > 0 ? 1 : rawVote < 0 ? -1 : 0
-int   sugConfidence = int(math.round(math.min(100, math.abs(rawVote))))
-bool  sugActive     = sugDir != 0 and sugConfidence >= minConfidenceInput
-string sugAction    = not sugActive ? "WAIT" : sugDir > 0 ? "BUY" : "SELL"
-
-float sugAtr     = ta.atr(sugAtrLenInput)
-float sugStopDist = math.max(sugAtr * sugAtrMultInput, syminfo.mintick * 4)
-float sugEntry   = close
-float sugStop    = sugDir > 0 ? sugEntry - sugStopDist : sugEntry + sugStopDist
-float sugTarget  = sugDir > 0 ? sugEntry + sugStopDist * sugTargetRInput
-     : sugEntry - sugStopDist * sugTargetRInput
-
-// Size so a full stop-out costs riskPercentInput of the stated account size.
-// syminfo.pointvalue converts a 1.0 price move on one unit into account currency.
-float riskCapital = accountSizeInput * riskPercentInput / 100
-float perUnitRisk = sugStopDist * syminfo.pointvalue
-float sugUnits    = perUnitRisk > 0 ? riskCapital / perUnitRisk : 0.0
-float sugSize = switch sizeUnitInput
-    "Lots (100k)"     => sugUnits / 100000
-    "Mini Lots (10k)" => sugUnits / 10000
-    "Micro Lots (1k)" => sugUnits / 1000
-    => sugUnits
 
 // ————— Visuals: Reversal signals
 if bearPivot and bearScore >= minScoreInput
@@ -526,71 +379,25 @@ if bullPivot and bullScore >= minScoreInput
          extend=extendLinesInput ? extend.right : extend.none
          )
 
-// ————— Visuals: Live + Bias table (rebuilt every tick on the last bar)
-int sugBase    = showLiveInput ? 2 : 0
-int tableRows  = sugBase + (showSugInput ? 6 : 0)
-var table biasTable = table.new(
-     tablePosFrom(tablePosInput), 3, tableRows,
+// ————— Visuals: Live table (rebuilt every tick on the last bar)
+var table liveTable = table.new(
+     tablePosFrom(tablePosInput), 3, 2,
      bgcolor=color.new(chart.bg_color, tableTranspInput),
      border_color=color.new(chart.fg_color, 80), border_width=1)
 
 if showTableInput and barstate.islast
-    if showLiveInput
-        bool   tickUp     = close >= nz(close[1], close)
-        string swingTxt   = na(swingPos) ? "--" : str.tostring(swingPos, "#") + "%"
-        string swingArrow = na(swingPos) ? "" : swingPos >= 50 ? "↑" : "↓"
-        color  swingCol   = na(swingPos) ? chart.fg_color : swingPos >= 50 ? upColInput : downColInput
-        table.cell(biasTable, 0, 0, "PRICE", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
-        table.cell(biasTable, 1, 0, str.tostring(close, format.mintick), text_color=chart.fg_color, text_size=tableSize)
-        table.cell(
-             biasTable, 2, 0, tickUp ? "▲" : "▼",
-             text_color=tickUp ? upColInput : downColInput, text_size=tableSize)
-        table.cell(biasTable, 0, 1, "SWING", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
-        table.cell(biasTable, 1, 1, swingTxt, text_color=chart.fg_color, text_size=tableSize)
-        table.cell(biasTable, 2, 1, swingArrow, text_color=swingCol, text_size=tableSize)
-    if showSugInput
-        color  sugColor = not sugActive ? chart.fg_color : sugDir > 0 ? upColInput : downColInput
-        string sizeTxt  = sugActive ? str.tostring(sugSize, sugSize >= 100 ? "#" : "#.####") : "--"
-        string riskTxt  = sugActive ? str.tostring(riskCapital, "#.##") : ""
-        string tip =
-             "Mechanical readout of this indicator's own rules — NOT advice.\n" +
-             "Votes: pivot " + str.tostring(pivotVote, "#") +
-             " | timeframes " + str.tostring(tfVote, "#") +
-             " | swing " + str.tostring(swingVote, "#") + "\n" +
-             "Weighted 45/35/20 into " + str.tostring(rawVote, "#") + ".\n" +
-             "Size assumes the stop below is filled exactly, and ignores spread, " +
-             "commission, slippage, leverage, and any position you already hold."
-        table.cell(biasTable, 0, sugBase, "SETUP", text_color=chart.fg_color,
-             text_size=tableSize, bgcolor=headerColInput, tooltip=tip)
-        table.cell(biasTable, 1, sugBase, sugAction, text_size=tableSize, text_color=chart.fg_color,
-             bgcolor=color.new(sugColor, sugActive ? 55 : 90), tooltip=tip)
-        table.cell(biasTable, 2, sugBase, str.tostring(sugConfidence) + "%",
-             text_color=sugColor, text_size=tableSize, tooltip=tip)
-        table.cell(biasTable, 0, sugBase + 1, "Entry", text_color=color.new(chart.fg_color, 15), text_size=tableSize)
-        table.cell(biasTable, 1, sugBase + 1, sugActive ? str.tostring(sugEntry, format.mintick) : "--",
-             text_color=chart.fg_color, text_size=tableSize)
-        table.cell(biasTable, 2, sugBase + 1, "", text_size=tableSize)
-        table.cell(biasTable, 0, sugBase + 2, "Stop", text_color=color.new(chart.fg_color, 15), text_size=tableSize)
-        table.cell(biasTable, 1, sugBase + 2, sugActive ? str.tostring(sugStop, format.mintick) : "--",
-             text_color=downColInput, text_size=tableSize)
-        table.cell(biasTable, 2, sugBase + 2,
-             sugActive and sugEntry > 0 ? str.tostring(sugStopDist / sugEntry * 100, "#.##") + "%" : "",
-             text_color=color.new(chart.fg_color, 40), text_size=tableSize)
-        table.cell(biasTable, 0, sugBase + 3, "Target", text_color=color.new(chart.fg_color, 15), text_size=tableSize)
-        table.cell(biasTable, 1, sugBase + 3, sugActive ? str.tostring(sugTarget, format.mintick) : "--",
-             text_color=upColInput, text_size=tableSize)
-        table.cell(biasTable, 2, sugBase + 3, sugActive ? str.tostring(sugTargetRInput, "#.#") + "R" : "",
-             text_color=color.new(chart.fg_color, 40), text_size=tableSize)
-        table.cell(biasTable, 0, sugBase + 4, "Size", text_color=color.new(chart.fg_color, 15), text_size=tableSize)
-        table.cell(biasTable, 1, sugBase + 4, sizeTxt, text_color=chart.fg_color, text_size=tableSize, tooltip=tip)
-        table.cell(biasTable, 2, sugBase + 4, sizeUnitInput == "Units" ? "units" : "lots",
-             text_color=color.new(chart.fg_color, 40), text_size=tableSize)
-        table.cell(biasTable, 0, sugBase + 5, "Risk", text_color=color.new(chart.fg_color, 15), text_size=tableSize)
-        table.cell(biasTable, 1, sugBase + 5, riskTxt == "" ? "--" : riskTxt,
-             text_color=chart.fg_color, text_size=tableSize)
-        table.cell(biasTable, 2, sugBase + 5,
-             str.tostring(riskPercentInput, "#.#") + "%", text_color=color.new(chart.fg_color, 40),
-             text_size=tableSize)
+    bool   tickUp     = close >= nz(close[1], close)
+    string swingTxt   = na(swingPos) ? "--" : str.tostring(swingPos, "#") + "%"
+    string swingArrow = na(swingPos) ? "" : swingPos >= 50 ? "↑" : "↓"
+    color  swingCol   = na(swingPos) ? chart.fg_color : swingPos >= 50 ? upColInput : downColInput
+    table.cell(liveTable, 0, 0, "PRICE", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
+    table.cell(liveTable, 1, 0, str.tostring(close, format.mintick), text_color=chart.fg_color, text_size=tableSize)
+    table.cell(
+         liveTable, 2, 0, tickUp ? "▲" : "▼",
+         text_color=tickUp ? upColInput : downColInput, text_size=tableSize)
+    table.cell(liveTable, 0, 1, "SWING", text_color=chart.fg_color, text_size=tableSize, bgcolor=headerColInput)
+    table.cell(liveTable, 1, 1, swingTxt, text_color=chart.fg_color, text_size=tableSize)
+    table.cell(liveTable, 2, 1, swingArrow, text_color=swingCol, text_size=tableSize)
 
 // ————— Visuals: Key levels (collected, then drawn with nearest-level highlight)
 var array<line>   levelLines  = array.new<line>()
@@ -645,7 +452,6 @@ var line  hvzMid     = na
 var label hvzLabel   = na
 var float hvzTop     = na
 var float hvzBottom  = na
-var float hvzVolume  = na
 
 if barstate.islast
     if not na(hvzBox)
@@ -659,7 +465,6 @@ if barstate.islast
         hvzLabel := na
     hvzTop    := na
     hvzBottom := na
-    hvzVolume := na
     if showHvzInput and not na(lastPivotBar) and not na(prevPivotBar)
         int rightBar = math.max(lastPivotBar, prevPivotBar)
         int leftBar  = math.min(lastPivotBar, prevPivotBar)
@@ -687,7 +492,6 @@ if barstate.islast
                     pocIdx := r
             hvzBottom := lo + pocIdx * step
             hvzTop    := hvzBottom + step
-            hvzVolume := maxVol
             int boxRight = hvzExtendInput ? bar_index : rightBar
             hvzBox := box.new(
                  leftBar, hvzTop, boxRight, hvzBottom, xloc=xloc.bar_index,
@@ -733,9 +537,9 @@ if testModeInput
     // Assertion 3: RSI must stay within its mathematical 0-100 bounds past warm-up.
     if bar_index > rsiLenInput and not na(rsiValue) and (rsiValue < 0 or rsiValue > 100)
         label.new(bar_index, low, "FAIL: RSI out of 0-100 bounds", color=color.red, style=label.style_label_up)
-    // Assertion 4: the heuristic bias must always land inside 0-100.
-    if not na(up1) and (up1 < 0 or up1 > 100)
-        label.new(bar_index, high, "FAIL: bias out of 0-100 bounds", color=color.red, style=label.style_label_down)
-    // Assertion 5: live swing position must stay inside 0-100 when defined.
+    // Assertion 4: live swing position must stay inside 0-100 when defined.
     if not na(swingPos) and (swingPos < 0 or swingPos > 100)
         label.new(bar_index, low, "FAIL: swing pos out of 0-100 bounds", color=color.red, style=label.style_label_up)
+    // Assertion 5: the high-volume zone must be a positive-height band.
+    if not na(hvzTop) and not na(hvzBottom) and hvzTop <= hvzBottom
+        label.new(bar_index, high, "FAIL: volume zone has no height", color=color.red, style=label.style_label_down)
