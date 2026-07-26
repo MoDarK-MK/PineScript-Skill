@@ -1,13 +1,13 @@
 ---
 name: pine-script-cicd
-description: Use this skill whenever the user wants to write, edit, review, version, or ship TradingView Pine Script indicators or strategies — including any mention of "Pine Script", "TradingView indicator", "TradingView strategy", ".pine files", or requests to set up git/CI/CD, linting, versioning, changelogs, or a release pipeline for indicators. Also trigger when the user asks to "turn this into a real project", wants automated validation before publishing to TradingView, wants a professional/polished-looking indicator (dashboards, theming), or wants a repeatable workflow for maintaining multiple indicators/strategies over time. Make sure to use this even if the user just says "write me an indicator" or "fix my Pine script" — it covers both one-off script writing AND the full repo/lint/version/release workflow.
+description: Use this skill whenever the user wants to write, edit, review, version, or ship TradingView Pine Script indicators or strategies — including any mention of "Pine Script", "TradingView indicator", "TradingView strategy", ".pine files", backtesting, position sizing, risk management, stop losses, or requests to set up git/CI/CD, linting, versioning, changelogs, or a release pipeline for indicators. Also trigger when the user asks to "turn this into a real project", wants automated validation before publishing to TradingView, wants a professional/polished-looking indicator (dashboards, theming), wants to turn an indicator into a strategy, or wants a repeatable workflow for maintaining multiple indicators/strategies over time. Make sure to use this even if the user just says "write me an indicator" or "fix my Pine script" — it covers both one-off script writing AND the full repo/lint/version/release workflow.
 ---
 
 # Pine Script CI/CD
 
 A skill for writing production-quality TradingView Pine Script (v6) indicators and
 strategies, and wrapping them in a lightweight "CI/CD"-style workflow: git repo
-structure, a 27-rule offline linter, professional visual design, in-script logical
+structure, a 34-rule offline linter, professional visual design, in-script logical
 tests, semantic versioning, and an automated release-bundle step.
 
 **Important framing to give the user up front (once, briefly):** TradingView has no
@@ -23,8 +23,9 @@ TradingView's servers.
 |---|---|
 | `references/pine-v6-guide.md` | v5→v6 breaking changes, dynamic requests, repainting traps, `var`/`varip`, verified hard platform limits |
 | `references/style-guide.md` | Official naming/structure/spacing conventions (camelCase, SNAKE_CASE, section order, line-wrapping) |
-| `references/lint-rules.md` | Full catalog of all 27 lint rules (codes PINE001–PINE028; PINE024 unassigned) with bad/good examples |
+| `references/lint-rules.md` | Full catalog of all 34 lint rules (codes PINE001–PINE035; PINE024 unassigned) with bad/good examples |
 | `references/design-system.md` | Making indicators look professional: theming, dashboards, gradients, palettes |
+| `references/strategy-guide.md` | Building strategies: signal design, position sizing math, the four risk modules, filters, overfitting, walk-forward, v6 strategy pitfalls |
 | `references/publishing-guide.md` | TradingView House Rules condensed: privacy/visibility, strategy realism, description format |
 | `references/repo-structure.md` | Folder layout, `version.json`, `CHANGELOG.md` format, optional pre-commit hook |
 | `references/snippets/` | Copy-paste Pine fragments (e.g. `color_helpers.pine` — theme color constants/helpers). Pine has no local imports; paste, or publish as a TradingView library for real reuse |
@@ -54,6 +55,10 @@ project-root/
 └── .pine-lint.json   (optional shared lint config overrides)
 ```
 
+Worked examples live in the repo: `indicators/reversal_pro/` and
+`strategies/reversal_pro_strategy/` are the same pivot-scoring engine used both
+ways — read them side by side when you need a concrete reference.
+
 Scaffold a new one (pre-fills the professional template, `version.json` at `0.1.0`,
 and an initial `CHANGELOG.md`):
 
@@ -76,9 +81,8 @@ inputs → functions → calculations → visuals → alerts), uses a theme-awar
 system, a corner stats dashboard, and a debug/test toggle:
 
 - `indicator_template.pine` — theme picker, dashboard, alertcondition, test block
-- `strategy_template.pine` — same, plus realistic risk-management inputs
-  (stop/take-profit %), `alert_message=` JSON wired to TradingView's own alert
-  placeholders (`{{ticker}}`, `{{close}}`, `{{time}}`), and a position/P&L dashboard
+- `strategy_template.pine` — a full risk-management skeleton with a placeholder
+  signal; see **Building strategies** below
 - `dashboard_block_template.pine` / `test_block_template.pine` — standalone, runnable
   reference snippets for the dashboard pattern and the assertion-counter test
   pattern, meant to be copy-pasted from rather than scaffolded whole
@@ -87,10 +91,53 @@ For visual polish beyond the templates' defaults (multi-color gradients, waterma
 cells, transparency conventions), read `references/design-system.md` — a
 correct-but-default-styled script reads as an unfinished first draft.
 
+## Building strategies
+
+Reach for a strategy when the user wants **backtested results** — P&L, win rate,
+drawdown. If they only want to be told when something happens, an indicator with
+`alertcondition()` is simpler, has no sizing assumptions to get wrong, and is far
+easier to publish. Turning an indicator into a strategy adds a claim ("I took this
+much risk and this is what happened") that has to be defensible.
+
+Read `references/strategy-guide.md` before writing anything nontrivial. The one
+idea that matters most: a complete trade is **entry + invalidation + objective**,
+not just an entry. "Buy the cross up, sell the cross down" has no invalidation, so
+risk is unbounded and position sizing is meaningless.
+
+`assets/templates/strategy_template.pine` ships the machinery with a placeholder
+EMA-cross signal — replace the signal block, keep the rest. Its four risk modules,
+one input group each:
+
+- **Position Sizing** — risk-% of equity per trade, sized off the stop distance,
+  with `syminfo.pointvalue` (mandatory for futures) and a separate leverage cap
+- **Stops & Targets** — ATR or percent stop with a minimum-tick floor, TP1/TP2 at
+  R multiples, optional partial exit at TP1
+- **Breakeven & Trailing** — resolved into **one** ratcheting stop price, not two
+  competing `strategy.exit` levels (in v6 whichever triggers first wins, so two
+  mechanisms in one exit interact unpredictably)
+- **Session & Date Window** — session and timezone filtering, plus a date window
+  that doubles as the in-sample/out-of-sample control for walk-forward testing
+
+```bash
+python3 scripts/scaffold_project.py --kind strategy --name trend_break --out ./strategies --title "Trend Break"
+```
+
+**A strategy that looks good in the Strategy Tester is the default outcome, not
+evidence.** Before showing a user an equity curve, check the trade count (100+, and
+count *positions* — partial exits roughly double `strategy.closedtrades`), whether
+the date window was tuned after the fact, and whether the result survives moving
+the stop multiple ±25%. Say so plainly when it doesn't.
+
+PINE029–PINE035 fire only on strategies (level-less exits, mixed relative/absolute
+levels, tick-vs-price units, unguarded `position_avg_price`, bad `qty`, orphan
+`from_entry`, entries with no exit). `generate_release_bundle.py` adds a realism
+gate for `"kind": "strategy"` projects — lookahead bias, synthetic chart types, and
+zero-cost backtests block the release outright.
+
 ## Linting (the "CI" part)
 
 `scripts/pine_lint.py` is a rule-based, OFFLINE linter — it does NOT compile the
-script (no such public tool exists). All 27 rules are fact-checked against
+script (no such public tool exists). All 34 rules are fact-checked against
 TradingView's official docs (migration guide, limitations page, style guide) as of
 mid-2026; full catalog with examples in `references/lint-rules.md`. Highlights:
 

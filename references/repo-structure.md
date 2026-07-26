@@ -16,9 +16,30 @@ project-root/
 │       ├── src/trend_break.pine
 │       ├── version.json
 │       └── CHANGELOG.md
+├── release/   (generated per project by generate_release_bundle.py; gitignored)
 └── .pine-lint.json   (optional — overrides for scripts/pine_lint.py, e.g. custom
                         max line length or disabling a specific rule)
 ```
+
+This repo ships two worked examples in that shape: `indicators/reversal_pro/` and
+`strategies/reversal_pro_strategy/`.
+
+## Sharing code between projects
+
+Pine Script has **no local file imports** — you cannot `import` a `.pine` file
+from disk. There are only two real options:
+
+1. **Copy the block and maintain both sides.** This is what
+   `strategies/reversal_pro_strategy/` does with the `reversal_pro` scoring
+   engine. The rule: a change to the shared logic must be applied to both files
+   **in the same commit**, and both projects get a version bump. Mark the region
+   with a comment so the boundary is obvious to the next reader.
+2. **Publish it as a TradingView library** (`library("Name")` + `import
+   user/Name/1`). This is real reuse, but the library has to live on
+   TradingView's servers, so it can't be validated or released by this toolchain
+   the way a normal project can.
+
+`references/snippets/` holds fragments meant for option 1.
 
 Keep one indicator/strategy per folder even in a single-user repo — it keeps
 versioning and changelogs independent, which matters once the user has more than

@@ -11,12 +11,13 @@ Transform your TradingView Pine Script ideas into **production-ready indicators 
 
 Most Pine Script traders treat each indicator as a one-off script. Pine Script Skill treats them like **real projects**:
 
-- 🔍 **27-Rule Linter** — Catches v6 compile errors, performance traps, and style issues *before* you paste into TradingView
+- 🔍 **34-Rule Linter** — Catches v6 compile errors, performance traps, strategy risk bugs, and style issues *before* you paste into TradingView
 - 📋 **Professional Templates** — Scaffold new indicators/strategies with theme-aware dashboards, test blocks, and best-practice structure
+- 🛡️ **Strategy Risk Modules** — Risk-% position sizing, ATR stops, breakeven + trailing, TP1/TP2 partials, session and date-window filters — wired together and ready to use
 - ✅ **In-Script Testing** — Write assertions directly in your code; results show in a test-mode table
 - 📦 **Automated Releases** — Generate lint reports, version bumps, changelogs, and publish descriptions with one command
 - 🎨 **Design System** — Gradients, multi-color palettes, watermarks, and professional styling guidelines
-- 📚 **Complete Reference Docs** — v6 migration guide, style guide, publish best practices, lint rule catalog
+- 📚 **Complete Reference Docs** — v6 migration guide, style guide, strategy-building guide, publish best practices, lint rule catalog
 
 Perfect for traders who want **repeatable workflows** across multiple indicators, not just quick one-offs.
 
@@ -71,13 +72,13 @@ Paste the `.pine` file into the Pine Editor, use the generated description, publ
 ```
 PineScript-Skill/
 ├── indicators/
-│   └── <name>/
+│   └── reversal_pro/                # Worked example: pivot reversal indicator
 │       ├── src/<name>.pine          # Your indicator code
 │       ├── version.json             # Semantic versioning
 │       └── CHANGELOG.md             # Changelog (Keep a Changelog format)
 ├── strategies/
-│   └── <name>/
-│       ├── src/<name>.pine          # Strategy with risk management
+│   └── reversal_pro_strategy/       # Worked example: same engine, traded
+│       ├── src/<name>.pine          # Strategy with full risk management
 │       ├── version.json
 │       └── CHANGELOG.md
 ├── assets/templates/
@@ -86,15 +87,16 @@ PineScript-Skill/
 │   ├── dashboard_block_template.pine # Dashboard component patterns
 │   └── test_block_template.pine     # Testing patterns
 ├── scripts/
-│   ├── pine_lint.py                 # 27-rule offline linter
+│   ├── pine_lint.py                 # 34-rule offline linter
 │   ├── scaffold_project.py          # Bootstrap new indicators/strategies
 │   ├── bump_version.py              # Semantic versioning + changelog
 │   └── generate_release_bundle.py   # Auto-generate release files
 ├── references/
 │   ├── pine-v6-guide.md             # v5→v6 breaking changes & platform limits
 │   ├── style-guide.md               # Naming, spacing, section order
-│   ├── lint-rules.md                # Full catalog of 27 lint rules (PINE001–028, PINE024 unassigned)
+│   ├── lint-rules.md                # Full catalog of 34 lint rules (PINE001–035, PINE024 unassigned)
 │   ├── design-system.md             # Theming, gradients, dashboards
+│   ├── strategy-guide.md            # Sizing math, risk modules, overfitting, walk-forward
 │   ├── publishing-guide.md          # TradingView House Rules condensed
 │   ├── repo-structure.md            # Folder layout, versioning, changelog format
 │   └── snippets/                    # Copy-paste Pine fragments (e.g. color_helpers.pine)
@@ -103,7 +105,7 @@ PineScript-Skill/
 └── SKILL.md                         # Full documentation
 ```
 
-> `indicators/` and `strategies/` don't exist in a fresh clone — `scaffold_project.py` creates them on demand.
+> `reversal_pro` and `reversal_pro_strategy` are the same pivot-scoring engine used as an indicator and as a strategy — read them side by side. `scaffold_project.py` creates your own projects alongside them.
 
 ---
 
@@ -122,7 +124,7 @@ python3 scripts/pine_lint.py indicators/my_rsi_bands/src/my_rsi_bands.pine --jso
 # Strict mode: warnings also fail
 python3 scripts/pine_lint.py indicators/my_rsi_bands/src/my_rsi_bands.pine --strict
 
-# List all 27 rules
+# List all 34 rules
 python3 scripts/pine_lint.py --list-rules
 ```
 
@@ -173,7 +175,8 @@ Every script benefits from these docs; required reading before shipping:
 |-------|---------|
 | **[pine-v6-guide.md](references/pine-v6-guide.md)** | v5→v6 breaking changes, platform limits, dynamic requests, repainting traps, `var`/`varip` semantics |
 | **[style-guide.md](references/style-guide.md)** | Official naming conventions (camelCase/SNAKE_CASE), section order, spacing, line wrapping |
-| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 27 lint rules (codes PINE001–PINE028; PINE024 unassigned) with examples and rationale |
+| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 34 lint rules (codes PINE001–PINE035; PINE024 unassigned) with examples and rationale |
+| **[strategy-guide.md](references/strategy-guide.md)** | Building strategies: signal design, position sizing math, the four risk modules, filters, overfitting, walk-forward |
 | **[design-system.md](references/design-system.md)** | Theming, gradients, multi-color palettes, watermarks, dashboard patterns |
 | **[publishing-guide.md](references/publishing-guide.md)** | TradingView House Rules, description format, backtest realism, 15-min public edit window |
 | **[repo-structure.md](references/repo-structure.md)** | Folder layout, `version.json`, CHANGELOG format, optional pre-commit hook |
@@ -211,16 +214,51 @@ python3 scripts/generate_release_bundle.py indicators/rsi_custom
 
 ---
 
+## 🛡️ Example: Build a Strategy with Real Risk Management
+
+```bash
+# 1. Scaffold — the template arrives with all four risk modules already wired
+python3 scripts/scaffold_project.py --kind strategy --name breakout_atr --out ./strategies --title "ATR Breakout"
+
+# 2. Replace ONLY the signal block in src/breakout_atr.pine:
+#      bool longSignal  = ta.crossover(fastMa, slowMa)
+#      bool shortSignal = ta.crossunder(fastMa, slowMa)
+#    Everything else — sizing, stops, breakeven, trailing, partials, filters —
+#    is generic and stays as-is.
+
+# 3. Lint in strict mode (warnings fail too)
+python3 scripts/pine_lint.py strategies/breakout_atr/src/breakout_atr.pine --strict
+
+# 4. Backtest on TradingView, then check the dashboard's Realism row:
+#    100+ POSITIONS taken (not closed records — partials double that number)
+#    and profit factor above 1.
+
+# 5. Release — the bundle blocks on lookahead bias, synthetic chart types,
+#    and zero-cost backtests, and pre-fills the disclosure section
+python3 scripts/generate_release_bundle.py strategies/breakout_atr
+```
+
+Before trusting any equity curve, read
+**[strategy-guide.md](references/strategy-guide.md)** §7 — a good-looking backtest
+is the default outcome, not evidence. The fastest sanity check: move your stop
+multiple ±25% and see whether the result degrades gracefully or collapses.
+
+`strategies/reversal_pro_strategy/` is the full worked example.
+
+---
+
 ## 🎯 Key Features
 
-✅ **27-Rule Linter** — Fact-checked against TradingView docs (v6 as of mid-2026)  
+✅ **34-Rule Linter** — Fact-checked against TradingView docs (v6 as of mid-2026)  
+✅ **Strategy Risk Modules** — Risk-% sizing, ATR stops, breakeven, trailing, partials, filters  
+✅ **Backtest Realism Gate** — Blocks lookahead bias, synthetic chart types, zero-cost backtests  
 ✅ **In-Script Testing** — Assertion counter; no external test runner  
 ✅ **Theme System** — Dark/light mode aware; professional gradients & dashboards  
 ✅ **Semantic Versioning** — MAJOR/MINOR/PATCH with automatic changelog  
 ✅ **Release Bundles** — Lint → version → changelog → publish description → ready to go  
 ✅ **No Compile API Dependency** — Everything runs offline on your machine  
 ✅ **Professional Templates** — Indicators, strategies, dashboards, test patterns  
-✅ **Comprehensive Docs** — v6 guide, style guide, design system, publish rules  
+✅ **Comprehensive Docs** — v6 guide, style guide, strategy guide, design system, publish rules  
 ✅ **Git-Ready** — Structure supports multi-indicator repos and version control  
 
 ---
