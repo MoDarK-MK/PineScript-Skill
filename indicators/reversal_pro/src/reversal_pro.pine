@@ -4,8 +4,14 @@
 //@version=6
 indicator(
      "Reversal Pro", shorttitle="REVPRO", overlay=true,
-     max_labels_count=500, max_lines_count=500, max_boxes_count=500
+     max_labels_count=500, max_lines_count=500, max_boxes_count=500,
+     max_bars_back=1000
      )
+
+// max_bars_back is REQUIRED here, not optional: the volume-profile scan and the
+// order-block origin scan both index history with a loop variable (high[i]),
+// and Pine cannot infer the needed depth from a dynamic index. Every such scan
+// is capped below 1000 by its input's maxval so the buffer is always enough.
 
 // Pivot-based reversal detector covering the whole chart history, with a 0-5
 // confirmation strength score per signal:
@@ -23,6 +29,17 @@ indicator(
 //     apart when levels cluster, so a busy chart stays readable.
 //   • Volume Analysis — traded volume at each reversal, plus the highest-volume
 //     price zone BETWEEN the two most recent reversals (its Point of Control).
+//   • Order Blocks — the origin candle of each displacement move that breaks
+//     structure, drawn as a zone. Each block carries a volume bar whose WIDTH is
+//     that candle's volume relative to the heaviest live block, so the set reads
+//     like a volume histogram and the significant blocks are obvious. Blocks fade
+//     (or hide) once price trades back into them.
+//
+// NOTE (order blocks): "order block" has no single agreed definition. This one
+// is mechanical and stated so you can judge it: a break of the last confirmed
+// swing, with a displacement candle of at least N×ATR, marks the most recent
+// candle closing against that move as the block. It is a location where orders
+// plausibly rested — not a guarantee price will react there.
 //
 // UPDATE MODEL (see references/performance-guide.md):
 //   Light work — price, swing position, level distances, drawing positions —
@@ -136,6 +153,27 @@ bool   hvzExtendInput    = input.bool(true, "Extend Zone Right", group=VOL_GROUP
 bool   hvzMidLineInput   = input.bool(true, "Draw Zone Mid-Line (POC)", group=VOL_GROUP)
 bool   hvzLabelInput     = input.bool(true, "Label The Zone", group=VOL_GROUP)
 
+// ————— Inputs: Order Blocks
+string OB_GROUP = "Order Blocks"
+bool   showObInput      = input.bool(true, "Show Order Blocks", group=OB_GROUP)
+int    obMaxInput       = input.int(
+     6, "Max Live Blocks Per Side", minval=1, maxval=20, group=OB_GROUP)
+int    obScanInput      = input.int(
+     20, "Origin Candle Scan (bars)", minval=1, maxval=100, group=OB_GROUP)
+float  obImpulseAtrInput = input.float(
+     1.0, "Min Displacement (ATR)", minval=0.1, step=0.1, group=OB_GROUP)
+bool   obUseBodyInput   = input.bool(true, "Zone From Candle Body (off = full wick)", group=OB_GROUP)
+string obMitigationInput = input.string(
+     "Wick Touch", "Mitigated When",
+     options=["Wick Touch", "Body Close Through"], group=OB_GROUP)
+string obOnMitigateInput = input.string(
+     "Fade", "On Mitigation", options=["Fade", "Hide"], group=OB_GROUP)
+bool   obVolBarInput    = input.bool(true, "Show Volume Bar Inside Block", group=OB_GROUP)
+bool   obLabelInput     = input.bool(true, "Label Blocks", group=OB_GROUP)
+int    obTranspInput    = input.int(88, "Block Transparency", minval=50, maxval=99, group=OB_GROUP)
+color  obBullColorInput = input.color(#089981, "Bullish Block", inline="obc", group=OB_GROUP)
+color  obBearColorInput = input.color(#f23645, "Bearish Block", inline="obc", group=OB_GROUP)
+
 // ————— Inputs: Appearance
 string themeInput      = input.string(
      THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
@@ -144,6 +182,21 @@ color bearColorInput   = input.color(#f23645, "Bearish Color", group="Appearance
 bool  confirmedOnlyInput = input.bool(
      true, "Alerts Only On Confirmed Bars", group="Appearance")
 bool  testModeInput    = input.bool(false, "Test Mode", group="Debug/Test")
+
+// ————— Types
+// One order block. Keeping the drawing handles on the object means a block is
+// created once and then only moved — never deleted and rebuilt — which is what
+// keeps the module cheap when it redraws on every realtime tick.
+type OrderBlock
+    float top
+    float bottom
+    int   leftBar
+    float vol
+    int   dir            // +1 bullish (demand), -1 bearish (supply)
+    bool  mitigated
+    box   zone
+    box   volBar
+    label tag
 
 // ————— Function declarations
 // @function Primary text color — the value column reads first.
@@ -262,6 +315,37 @@ addLevel(bool cond, float price, string name, color col, array<float> pArr, arra
         array.push(nArr, name)
         array.push(cArr, col)
 
+// @function Finds the origin candle of a displacement move: the most recent
+// candle closing AGAINST the impulse, scanning back from the break bar. That
+// candle is where the resting orders that caused the move were filled, which is
+// what an order block is. Returns its bar offset, or na if the scan finds none.
+// @param wantDown true when looking for the down-close candle before an up move.
+findOriginOffset(bool wantDown) =>
+    int found = na
+    for i = 1 to obScanInput
+        if na(found)
+            bool isDown = close[i] < open[i]
+            if wantDown == isDown
+                found := i
+    found
+
+// @function Has price traded back into this block? "Wick Touch" is the strict
+// reading (any tap counts); "Body Close Through" only counts a close beyond the
+// far edge, which keeps a block alive through a shallow poke.
+isMitigated(float top, float bottom, int dir) =>
+    switch obMitigationInput
+        "Body Close Through" => dir > 0 ? close < bottom : close > top
+        => dir > 0 ? low <= top : high >= bottom
+
+// @function Trims an order-block array to its cap, deleting the drawings of the
+// oldest entries so they never accumulate against the 500-object budget.
+trimBlocks(array<OrderBlock> blocks, int cap) =>
+    while array.size(blocks) > cap
+        OrderBlock old = array.shift(blocks)
+        box.delete(old.zone)
+        box.delete(old.volBar)
+        label.delete(old.tag)
+
 // ————— Calculations
 color textColor  = getTextColor(themeInput)
 color mutedColor = getMutedColor(themeInput)
@@ -318,6 +402,61 @@ if barstate.isrealtime
         tickWasUp := close > prevTickClose
     prevTickClose := close
 bool tickUp = barstate.isrealtime ? tickWasUp : close >= nz(close[1], close)
+
+// ————— Calculations: order blocks
+// A block is registered when price BREAKS STRUCTURE — closes beyond the last
+// confirmed swing — with enough displacement to matter. The block itself is the
+// last candle that closed against that move: the origin of the orders that
+// caused it. Reusing the pivots the script already tracks means structure is
+// defined the same way for reversals and for blocks.
+var array<OrderBlock> bullBlocks = array.new<OrderBlock>()
+var array<OrderBlock> bearBlocks = array.new<OrderBlock>()
+var float lastBullObTop = na
+var float lastBearObBottom = na
+
+bool displaced = math.abs(close - open) >= atrValue * obImpulseAtrInput
+bool bullBreak = showObInput and displaced and not na(lastPH) and close > lastPH and nz(close[1]) <= lastPH
+bool bearBreak = showObInput and displaced and not na(lastPL) and close < lastPL and nz(close[1]) >= lastPL
+
+bool newBullOb = false
+bool newBearOb = false
+
+if bullBreak
+    int off = findOriginOffset(true)
+    if not na(off)
+        OrderBlock ob = OrderBlock.new(
+             top = obUseBodyInput ? math.max(open[off], close[off]) : high[off],
+             bottom = obUseBodyInput ? math.min(open[off], close[off]) : low[off],
+             leftBar = bar_index - off, vol = nz(volume[off]), dir = 1, mitigated = false)
+        array.push(bullBlocks, ob)
+        trimBlocks(bullBlocks, obMaxInput)
+        lastBullObTop := ob.top
+        newBullOb := true
+
+if bearBreak
+    int off = findOriginOffset(false)
+    if not na(off)
+        OrderBlock ob = OrderBlock.new(
+             top = obUseBodyInput ? math.max(open[off], close[off]) : high[off],
+             bottom = obUseBodyInput ? math.min(open[off], close[off]) : low[off],
+             leftBar = bar_index - off, vol = nz(volume[off]), dir = -1, mitigated = false)
+        array.push(bearBlocks, ob)
+        trimBlocks(bearBlocks, obMaxInput)
+        lastBearObBottom := ob.bottom
+        newBearOb := true
+
+// Mitigation is evaluated every bar, not only on the last one, so a block's
+// state is correct across history rather than only at the right edge.
+if array.size(bullBlocks) > 0
+    for i = 0 to array.size(bullBlocks) - 1
+        OrderBlock ob = array.get(bullBlocks, i)
+        if not ob.mitigated and isMitigated(ob.top, ob.bottom, ob.dir)
+            ob.mitigated := true
+if array.size(bearBlocks) > 0
+    for i = 0 to array.size(bearBlocks) - 1
+        OrderBlock ob = array.get(bearBlocks, i)
+        if not ob.mitigated and isMitigated(ob.top, ob.bottom, ob.dir)
+            ob.mitigated := true
 
 // Pivot-bar candle geometry (pivotLenInput bars back).
 float pivotRange = high[pivotLenInput] - low[pivotLenInput]
@@ -582,6 +721,76 @@ if barstate.islast and showHvzInput and not na(lastPivotBar) and not na(prevPivo
                  str.tostring(hvzTop, format.mintick) + "\n" +
                  "Volume in zone: " + formatVolume(hvzVol))
 
+// ————— Visuals: Order blocks
+// Drawn once and then only moved. The volume bar is the modern part: each block
+// carries a second box whose WIDTH is that candle's volume as a fraction of the
+// largest volume among the live blocks — so the set reads like a volume
+// histogram lying on its side, and the heaviest block is obvious at a glance.
+// @function Draws or repositions one block, and returns nothing.
+drawBlock(OrderBlock ob, float maxVol, color baseCol, int rightBar) =>
+    bool hide = ob.mitigated and obOnMitigateInput == "Hide"
+    int  fill = hide ? 100 : ob.mitigated ? math.min(99, obTranspInput + 7) : obTranspInput
+    int  edge = hide ? 100 : math.max(0, fill - 35)
+    if na(ob.zone)
+        ob.zone := box.new(
+             ob.leftBar, ob.top, rightBar, ob.bottom, xloc=xloc.bar_index,
+             bgcolor=color.new(baseCol, fill), border_color=color.new(baseCol, edge),
+             border_width=1)
+        ob.volBar := box.new(
+             ob.leftBar, ob.top, ob.leftBar, ob.bottom, xloc=xloc.bar_index,
+             bgcolor=color.new(baseCol, math.max(0, fill - 25)),
+             border_color=TRANSPARENT_COLOR)
+        ob.tag := label.new(
+             ob.leftBar, ob.top, "", xloc=xloc.bar_index,
+             style=label.style_label_lower_left, color=TRANSPARENT_COLOR,
+             textcolor=baseCol, size=size.small)
+    box.set_lefttop(ob.zone, ob.leftBar, ob.top)
+    box.set_rightbottom(ob.zone, rightBar, ob.bottom)
+    box.set_bgcolor(ob.zone, color.new(baseCol, fill))
+    box.set_border_color(ob.zone, color.new(baseCol, edge))
+    // Volume bar: width is proportional to this block's volume vs the heaviest
+    // live block, so the bars are comparable to each other the way histogram
+    // bars are. A one-bar minimum keeps the lightest block still visible.
+    int span     = math.max(1, rightBar - ob.leftBar)
+    float ratio  = maxVol > 0 ? ob.vol / maxVol : 0.0
+    int   volEnd = ob.leftBar + math.max(1, int(span * ratio))
+    box.set_lefttop(ob.volBar, ob.leftBar, ob.top)
+    box.set_rightbottom(ob.volBar, obVolBarInput and not hide ? volEnd : ob.leftBar, ob.bottom)
+    box.set_bgcolor(ob.volBar, color.new(baseCol, obVolBarInput and not hide ? math.max(0, fill - 25) : 100))
+    string tagTxt = ""
+    if obLabelInput and not hide
+        tagTxt := (ob.dir > 0 ? "OB ▲  " : "OB ▼  ") + formatVolume(ob.vol) +
+             (ob.mitigated ? "  ·  mitigated" : "")
+    label.set_xy(ob.tag, ob.leftBar, ob.top)
+    label.set_text(ob.tag, tagTxt)
+    label.set_textcolor(ob.tag, color.new(baseCol, ob.mitigated ? 40 : 0))
+    label.set_tooltip(ob.tag,
+         (ob.dir > 0 ? "Bullish order block (demand)" : "Bearish order block (supply)") + "\n" +
+         "Zone: " + str.tostring(ob.bottom, format.mintick) + " - " +
+         str.tostring(ob.top, format.mintick) + "\n" +
+         "Origin-candle volume: " + formatVolume(ob.vol) + "\n" +
+         (ob.mitigated ? "Mitigated — price has traded back into it." :
+          "Unmitigated — price has not returned yet."))
+
+if barstate.islast and showObInput
+    // One shared scale across both sides, so a bullish and a bearish bar of the
+    // same length really do mean the same volume.
+    float maxVol = 0.0
+    if array.size(bullBlocks) > 0
+        for i = 0 to array.size(bullBlocks) - 1
+            OrderBlock ob = array.get(bullBlocks, i)
+            maxVol := math.max(maxVol, ob.vol)
+    if array.size(bearBlocks) > 0
+        for i = 0 to array.size(bearBlocks) - 1
+            OrderBlock ob = array.get(bearBlocks, i)
+            maxVol := math.max(maxVol, ob.vol)
+    if array.size(bullBlocks) > 0
+        for i = 0 to array.size(bullBlocks) - 1
+            drawBlock(array.get(bullBlocks, i), maxVol, obBullColorInput, bar_index)
+    if array.size(bearBlocks) > 0
+        for i = 0 to array.size(bearBlocks) - 1
+            drawBlock(array.get(bearBlocks, i), maxVol, obBearColorInput, bar_index)
+
 // ————— Alerts
 // Gated on bar confirmation by default: a pivot can form mid-bar and vanish
 // before the bar closes, and an alert that says "confirmed" should not fire on
@@ -599,6 +808,8 @@ alertcondition(
      bullAlert and bullScore >= strongScoreInput,
      "STRONG Bullish Reversal", "Strong bullish reversal — score at or above the alert threshold."
      )
+alertcondition(newBullOb and alertOk, "New Bullish Order Block", "New bullish order block formed.")
+alertcondition(newBearOb and alertOk, "New Bearish Order Block", "New bearish order block formed.")
 
 // ————— Debug / Test block (keep testModeInput false when handing off)
 var int passCount = 0
@@ -635,6 +846,14 @@ if testModeInput
     recordAssertion(
          na(hvzTop) or na(hvzBottom) or hvzTop > hvzBottom,
          "volume zone has no height")
+    // 6. Neither order-block list may exceed its configured cap.
+    recordAssertion(
+         array.size(bullBlocks) <= obMaxInput and array.size(bearBlocks) <= obMaxInput,
+         "order-block list exceeded its cap")
+    // 7. A block registered this bar must be a positive-height zone.
+    recordAssertion(
+         not newBullOb or na(lastBullObTop) or lastBullObTop >= low,
+         "bullish order block sits below the break bar")
 
 var table testTable = table.new(
      position.bottom_left, 2, 2, border_width=1,

@@ -3,6 +3,18 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [1.1.0] - 2026-07-27
+### Added
+- Order Blocks module: registers the origin candle of each displacement move that breaks the last confirmed swing, drawn as a zone that fades (or hides) once price trades back into it
+- Each block carries a volume bar whose WIDTH encodes that candle's volume relative to the heaviest live block, so the set reads like a volume histogram lying on its side
+- Block labels show the volume compactly (1.24M) with a tooltip giving the zone range, origin-candle volume, and mitigation state
+- Two alerts: new bullish / new bearish order block, sharing the existing bar-confirmation gate
+- Fully customizable: max blocks per side, origin scan depth, minimum displacement in ATR, body vs full-wick zone, mitigation rule (wick touch vs body close through), fade vs hide, transparency, and both colors
+
+### Fixed
+- Restored `max_bars_back=1000`. Removing it in 1.0.0 was wrong: the volume-profile scan indexes history with a loop variable, and Pine cannot infer the buffer depth from a dynamic index regardless of how tightly the loop is bounded. The order-block origin scan has the same requirement.
+- Order blocks with volume bars
+
 ## [1.0.0] - 2026-07-27
 ### Performance
 - The volume-profile scan is now fingerprinted against the bar window it covers, so the ~900-iteration loop runs at most once per bar instead of on every realtime tick
