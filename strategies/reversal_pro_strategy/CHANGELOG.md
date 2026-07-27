@@ -3,6 +3,9 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.2.1] - 2026-07-27
+- Fix CE10088/CE10235 in the test block
+
 ## [0.2.0] - 2026-07-27
 ### Visual
 - Fixed 9 dashboard cells that rendered black text on a black panel — Pine defaults cell text to black and those cells set no `text_color`, so most of the numbers were invisible on a dark chart

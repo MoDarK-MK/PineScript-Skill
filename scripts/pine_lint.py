@@ -88,6 +88,8 @@ RULES = {
     "PINE039": ("warning", "Duplicate request.security() — same symbol, timeframe and lookahead"),
     "PINE040": ("warning", "plot()/plotshape()/plotchar() without a title"),
     "PINE041": ("warning", "size.large/size.huge used (design guide caps chart text at size.normal)"),
+    "PINE042": ("error", "Function assigns to a global variable (compile error CE10088)"),
+    "PINE043": ("error", "Function's trailing if/else branches return different types (CE10235)"),
 }
 
 STRATEGY_ORDER_FUNCS = [
@@ -866,6 +868,104 @@ def check_oversized_text(lines, result):
                         f"a headline value and size.small elsewhere.")
 
 
+def iter_function_bodies(lines):
+    """Yields (decl_line_index, [(line_index, text), ...]) for each user function
+    declared at global scope, with its indented body."""
+    stripped = [strip_strings_and_comments(l) for l in lines]
+    n = len(lines)
+    for i in range(n):
+        text = stripped[i]
+        if not text.strip() or indent_width(lines[i]) != 0:
+            continue
+        if not FUNC_DECL_RE.match(text.strip()):
+            continue
+        body = []
+        j = i + 1
+        while j < n:
+            if not stripped[j].strip():
+                j += 1
+                continue
+            if indent_width(lines[j]) == 0:
+                break
+            body.append((j, stripped[j]))
+            j += 1
+        if body:
+            yield i, body
+
+
+GLOBAL_DECL_RE = re.compile(
+    r'^\s*(?:var(?:ip)?\s+)?(?:int|float|bool|string|color|label|line|box|table|'
+    r'array(?:<[^>]*>)?|matrix(?:<[^>]*>)?|map(?:<[^>]*>)?)?\s*([a-zA-Z_]\w*)\s*(?::=|=)(?![=>])'
+)
+ASSIGN_RE = re.compile(r'^\s*([a-zA-Z_]\w*)\s*(?::=|\+=|-=|\*=|/=|%=)')
+
+
+def check_global_mutation_in_function(lines, result):
+    """PINE042 — Pine forbids a function from modifying a variable declared at
+    global scope. It is a hard compile error (CE10088) that no other rule here
+    catches, and the assertion-counter idiom walks straight into it."""
+    globals_declared = set()
+    for i, raw in enumerate(lines):
+        if indent_width(raw) != 0:
+            continue
+        m = GLOBAL_DECL_RE.match(strip_strings_and_comments(raw))
+        if m:
+            globals_declared.add(m.group(1))
+    if not globals_declared:
+        return
+    for decl_idx, body in iter_function_bodies(lines):
+        params = set(re.findall(r'([a-zA-Z_]\w*)\s*(?:,|\))', body and lines[decl_idx] or ""))
+        locals_here = set()
+        for line_idx, text in body:
+            m_local = LOCAL_DECL_RE.match(text)
+            if m_local:
+                locals_here.add(m_local.group(1))
+            m_assign = ASSIGN_RE.match(text)
+            if not m_assign:
+                continue
+            name = m_assign.group(1)
+            if name in locals_here or name in params:
+                continue
+            if name not in globals_declared:
+                continue
+            result.add(line_idx + 1, "PINE042",
+                        f"'{name}' is declared at global scope, and Pine does not allow a function "
+                        f"to modify it (compile error CE10088). Return the value and let the caller "
+                        f"apply it instead.")
+
+
+CONSTRUCTOR_RE = re.compile(r'\b\w+\.new\s*\(')
+
+
+def check_function_branch_types(lines, result):
+    """PINE043 — when an if/else is a function's LAST statement it becomes the
+    return value, so both branches must yield the same type (CE10235). The
+    classic break is one branch ending in an assignment and the other in a
+    drawing constructor, which yields `series int` vs `series label`."""
+    for _decl_idx, body in iter_function_bodies(lines):
+        last_idx = body[-1][0]
+        else_pos = None
+        for pos, (line_idx, text) in enumerate(body):
+            if re.match(r'^\s*else\s*$', text):
+                else_pos = pos
+        if else_pos is None or else_pos == len(body) - 1:
+            continue
+        if_last = body[else_pos - 1][1] if else_pos > 0 else ""
+        else_last = body[-1][1]
+        if body[-1][0] != last_idx:
+            continue
+        if_is_assign = bool(ASSIGN_RE.match(if_last))
+        else_is_ctor = bool(CONSTRUCTOR_RE.search(else_last))
+        else_is_assign = bool(ASSIGN_RE.match(else_last))
+        if_is_ctor = bool(CONSTRUCTOR_RE.search(if_last))
+        if (if_is_assign and else_is_ctor) or (else_is_assign and if_is_ctor):
+            result.add(body[else_pos][0] + 1, "PINE043",
+                        "this if/else is the function's last statement, so it is the return value "
+                        "and both branches must have the same type — but one ends in an assignment "
+                        "and the other in a .new() constructor (CE10235). End the function with a "
+                        "single plain expression instead.")
+
+
 def check_transp_removed(statements, result):
     for stmt in statements:
         if any(f in stmt["stripped"] for f in TRANSP_FUNCS) and re.search(r'\btransp\s*=', stmt["stripped"]):
@@ -1187,6 +1287,8 @@ def lint_file(path, cfg):
     check_duplicate_security(statements, result)
     check_plot_has_title(statements, result)
     check_oversized_text(lines, result)
+    check_global_mutation_in_function(lines, result)
+    check_function_branch_types(lines, result)
     check_transp_removed(statements, result)
     check_linewidth_minimum(statements, result)
     check_switch_default(lines, result)

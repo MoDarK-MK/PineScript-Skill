@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 40 rules spanning codes PINE001–PINE041. The code
+Note on numbering: there are 42 rules spanning codes PINE001–PINE043. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -388,3 +388,60 @@ or `title=` both satisfy it.
 ### PINE041 — warning — `size.large` / `size.huge`
 `references/design-system.md` §2 caps chart text at `size.normal`; larger sizes
 clip or wrap at real panel widths.
+
+---
+
+## Function-scope compile errors (PINE042–PINE043)
+
+Two hard TradingView compile errors that nothing else here catches, and that
+both hide inside the same idiom — a helper that tallies assertions.
+
+### PINE042 — error — Function assigns to a global variable
+Pine forbids a function from modifying a variable declared at global scope.
+TradingView rejects it as **CE10088**.
+```pinescript
+// bad — "Cannot modify global variable 'passCount' in function"
+var int passCount = 0
+recordAssertion(bool condition) =>
+    if condition
+        passCount += 1
+```
+```pinescript
+// good — return the value, let the caller apply it
+var int passCount = 0
+assertFailed(bool condition) =>
+    condition ? 0 : 1
+
+if testModeInput
+    int fails = 0
+    fails += assertFailed(someCheck)
+    passCount += TEST_COUNT - fails
+```
+Mutating a **parameter** is fine — arrays and user-defined-type objects are
+passed by reference, so `array.push(arr, x)` and `obj.field := x` inside a
+function are both legal and are not flagged. Mutating a global **outside** a
+function is also fine.
+
+### PINE043 — error — Trailing `if`/`else` branches return different types
+When an `if`/`else` is a function's last statement it becomes the return value,
+so both branches must yield the same type. TradingView rejects a mismatch as
+**CE10235**.
+```pinescript
+// bad — "series int" from one branch, "series label" from the other
+record(bool ok, string msg) =>
+    int n = 0
+    if ok
+        n := n + 1
+    else
+        label.new(bar_index, high, msg)
+```
+```pinescript
+// good — end the function on one plain expression
+record(bool ok, string msg) =>
+    if not ok
+        label.new(bar_index, high, msg)
+    ok ? 0 : 1
+```
+The check is deliberately narrow: it fires only when the trailing `if`/`else`
+has one branch ending in an assignment and the other in a `.new()` constructor,
+which is the shape that actually occurs.

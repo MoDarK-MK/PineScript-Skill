@@ -21,17 +21,17 @@ def codes(result):
 
 
 class TestRuleCatalog(unittest.TestCase):
-    def test_has_40_rules_and_no_pine024(self):
-        self.assertEqual(len(pine_lint.RULES), 40)
+    def test_has_42_rules_and_no_pine024(self):
+        self.assertEqual(len(pine_lint.RULES), 42)
         self.assertNotIn("PINE024", pine_lint.RULES)
         self.assertIn("PINE001", pine_lint.RULES)
-        self.assertIn("PINE041", pine_lint.RULES)
+        self.assertIn("PINE043", pine_lint.RULES)
 
     def test_list_rules_cli(self):
         proc = run_script("pine_lint.py", "--list-rules")
         self.assertEqual(proc.returncode, 0)
         lines = [l for l in proc.stdout.splitlines() if l.strip()]
-        self.assertEqual(len(lines), 40)
+        self.assertEqual(len(lines), 42)
 
 
 class TestCoreRules(unittest.TestCase):
@@ -376,6 +376,59 @@ class TestVisualAndPerfRules(unittest.TestCase):
     def test_pine041_accepts_normal_and_below(self):
         text = VALID_INDICATOR + 'label.new(bar_index, high, "X", size=size.normal)\n'
         self.assertNotIn("PINE041", codes(lint_text(text)))
+
+    # PINE042 — Pine forbids a function mutating a global (CE10088)
+    def test_pine042_function_mutates_global(self):
+        text = VALID_INDICATOR + (
+            'var int passCount = 0\n'
+            'bump(bool ok) =>\n'
+            '    if ok\n'
+            '        passCount += 1\n'
+            '    0\n'
+        )
+        self.assertIn("PINE042", codes(lint_text(text)))
+
+    def test_pine042_accepts_locals_params_and_object_fields(self):
+        # A local, a parameter's array, and a UDT field are all legal to mutate.
+        text = VALID_INDICATOR + (
+            'var int passCount = 0\n'
+            'build(array<float> arr) =>\n'
+            '    float total = 0.0\n'
+            '    total := total + 1\n'
+            '    array.push(arr, total)\n'
+            '    total\n'
+        )
+        self.assertNotIn("PINE042", codes(lint_text(text)))
+
+    def test_pine042_accepts_global_mutation_outside_a_function(self):
+        text = VALID_INDICATOR + (
+            'var int counter = 0\n'
+            'if close > open\n'
+            '    counter += 1\n'
+            'plot(counter, title="Counter")\n'
+        )
+        self.assertNotIn("PINE042", codes(lint_text(text)))
+
+    # PINE043 — trailing if/else with mismatched branch types (CE10235)
+    def test_pine043_trailing_branches_return_different_types(self):
+        text = VALID_INDICATOR + (
+            'record(bool ok, string msg) =>\n'
+            '    int n = 0\n'
+            '    if ok\n'
+            '        n := n + 1\n'
+            '    else\n'
+            '        label.new(bar_index, high, msg)\n'
+        )
+        self.assertIn("PINE043", codes(lint_text(text)))
+
+    def test_pine043_accepts_a_trailing_plain_expression(self):
+        text = VALID_INDICATOR + (
+            'record(bool ok, string msg) =>\n'
+            '    if not ok\n'
+            '        label.new(bar_index, high, msg)\n'
+            '    ok ? 0 : 1\n'
+        )
+        self.assertNotIn("PINE043", codes(lint_text(text)))
 
     # PINE022 rescoped to the declaration statement
     def test_pine022_ignores_overlay_mentioned_only_in_a_comment(self):

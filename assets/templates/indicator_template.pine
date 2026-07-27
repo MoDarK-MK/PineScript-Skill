@@ -116,26 +116,30 @@ if showDashboardInput and barstate.islast
 alertcondition(ta.cross(sourceInput, maValue), "Source crossed MA", "Source crossed the moving average")
 
 // ————— Debug / Test block (keep testModeInput false when handing off)
+int TEST_COUNT = 2      // keep in sync with the assertFailed() calls below
 var int passCount = 0
 var int failCount = 0
 
-// @function Counts an assertion and draws a label only on failure, so a long
-// history can't spend the whole 500-label budget on passing bars.
-recordAssertion(bool condition, string description) =>
-    if condition
-        passCount += 1
-    else
-        failCount += 1
+// @function Draws a failure marker and RETURNS 1 on failure, 0 on pass.
+// Pine forbids a function from modifying a global (CE10088), so the counting
+// happens at the call site. Drawing only on failure keeps a long history from
+// spending the whole 500-label budget on passing bars.
+assertFailed(bool condition, string description) =>
+    if not condition
         label.new(bar_index, high, "FAIL: " + description, color=bearColor,
              textcolor=color.white, style=label.style_label_down, size=size.small)
+    condition ? 0 : 1
 
 if testModeInput
+    int fails = 0
     // 1. The average must be defined once past its warm-up period.
-    recordAssertion(bar_index <= lengthInput or not na(maValue), "maValue is na past warm-up")
+    fails += assertFailed(bar_index <= lengthInput or not na(maValue), "maValue is na past warm-up")
     // 2. An average of a positive series can never fall outside its range.
-    recordAssertion(
+    fails += assertFailed(
          na(maValue) or (maValue >= srcLowest and maValue <= srcHighest),
          "maValue outside the source range")
+    failCount += fails
+    passCount += TEST_COUNT - fails
 
 var table testTable = table.new(position.bottom_left, 2, 2, border_width=1,
      bgcolor=getPanelColor(themeInput, panelTranspInput))

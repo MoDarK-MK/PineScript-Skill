@@ -498,44 +498,48 @@ alertcondition(longEntry, "Long Entry Signal", "Long entry signal fired.")
 alertcondition(shortEntry, "Short Entry Signal", "Short entry signal fired.")
 
 // ————— Debug / Test block (keep testModeInput false when handing off)
+int TEST_COUNT = 6      // keep in sync with the assertFailed() calls below
 var int passCount = 0
 var int failCount = 0
 
-// @function Counts an assertion and draws a label only when it fails, so a long
-// backtest can't exhaust the 500-label budget on passing bars.
-recordAssertion(bool condition, string description) =>
-    if condition
-        passCount += 1
-    else
-        failCount += 1
+// @function Draws a failure marker and RETURNS 1 on failure, 0 on pass.
+// Pine forbids a function from modifying a global (CE10088), so the counting
+// happens at the call site. Drawing only on failure keeps a long backtest from
+// exhausting the 500-label budget on passing bars.
+assertFailed(bool condition, string description) =>
+    if not condition
         label.new(bar_index, high, "FAIL: " + description, color=bearColor,
              textcolor=color.white, style=label.style_label_down, size=size.small)
+    condition ? 0 : 1
 
 if testModeInput
+    int fails = 0
     // 1. Sizing must never request a negative quantity.
-    recordAssertion(plannedQty >= 0, "planned qty is negative")
+    fails += assertFailed(plannedQty >= 0, "planned qty is negative")
     // 2. A zero stop distance would divide by zero in the sizing math.
-    recordAssertion(stopDist > 0, "stop distance collapsed to zero")
+    fails += assertFailed(stopDist > 0, "stop distance collapsed to zero")
     // 3. The stop may only ever ratchet in favour of an open long.
-    recordAssertion(
+    fails += assertFailed(
          strategy.position_size <= 0 or na(activeStop) or na(activeStop[1]) or activeStop >= activeStop[1],
          "long stop moved against the position")
     // 4. Realised risk on the arming bar must respect the configured risk cap.
-    recordAssertion(
+    fails += assertFailed(
          sizingModeInput != SIZE_RISK or not justFilled or na(entryRef) or na(initStop) or
          math.abs(plannedQty * (entryRef - initStop) * syminfo.pointvalue) <=
          strategy.equity * riskPercentInput / 100 * 1.05,
          "position risk exceeds the configured risk %")
     // 5. Targets must sit on the profitable side of the entry.
-    recordAssertion(
+    fails += assertFailed(
          na(tp1Price) or na(entryRef) or strategy.position_size == 0 or
          (strategy.position_size > 0 ? tp1Price > entryRef : tp1Price < entryRef),
          "TP1 is on the wrong side of entry")
     // 6. No position may survive outside the backtest window.
-    recordAssertion(
+    fails += assertFailed(
          not useDateWindowInput or inWindow or strategy.position_size == 0 or
          na(strategy.position_size[1]) or strategy.position_size[1] != 0,
          "position held outside the date window")
+    failCount += fails
+    passCount += TEST_COUNT - fails
 
 var table testTable = table.new(
      position.bottom_left, 2, 2, border_width=1,

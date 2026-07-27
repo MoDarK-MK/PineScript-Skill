@@ -812,48 +812,53 @@ alertcondition(newBullOb and alertOk, "New Bullish Order Block", "New bullish or
 alertcondition(newBearOb and alertOk, "New Bearish Order Block", "New bearish order block formed.")
 
 // ————— Debug / Test block (keep testModeInput false when handing off)
+int TEST_COUNT = 7
 var int passCount = 0
 var int failCount = 0
 
-// @function Counts an assertion and draws a label only on failure, so a long
-// history can't spend the whole 500-label budget on passing bars.
-recordAssertion(bool condition, string description) =>
-    if condition
-        passCount += 1
-    else
-        failCount += 1
+// @function Draws a failure marker and RETURNS 1 on failure, 0 on pass.
+// Pine forbids a function from modifying a global (CE10088), so the counting
+// has to happen at the call site — that is why this returns a number instead of
+// incrementing one. Drawing only on failure keeps a long history from spending
+// the whole 500-label budget on passing bars.
+assertFailed(bool condition, string description) =>
+    if not condition
         label.new(bar_index, high, "FAIL: " + description, color=bearColorInput,
              textcolor=color.white, style=label.style_label_down, size=size.small)
+    condition ? 0 : 1
 
 if testModeInput
+    int fails = 0
     // 1. Scores must always stay inside the 0..MAX_SCORE range.
-    recordAssertion(
+    fails += assertFailed(
          bearScore >= 0 and bearScore <= MAX_SCORE and bullScore >= 0 and bullScore <= MAX_SCORE,
          "score outside the 0-5 range")
     // 2. A score without a pivot on the same bar would be a logic bug.
-    recordAssertion(
+    fails += assertFailed(
          (bearScore == 0 or bearPivot) and (bullScore == 0 or bullPivot),
          "score set without a pivot")
     // 3. RSI must stay within its mathematical 0-100 bounds past warm-up.
-    recordAssertion(
+    fails += assertFailed(
          bar_index <= rsiLenInput or na(rsiValue) or (rsiValue >= 0 and rsiValue <= 100),
          "RSI outside 0-100")
     // 4. Live swing position must stay inside 0-100 when defined.
-    recordAssertion(
+    fails += assertFailed(
          na(swingPos) or (swingPos >= 0 and swingPos <= 100),
          "swing position outside 0-100")
     // 5. The volume zone must be a positive-height band.
-    recordAssertion(
+    fails += assertFailed(
          na(hvzTop) or na(hvzBottom) or hvzTop > hvzBottom,
          "volume zone has no height")
     // 6. Neither order-block list may exceed its configured cap.
-    recordAssertion(
+    fails += assertFailed(
          array.size(bullBlocks) <= obMaxInput and array.size(bearBlocks) <= obMaxInput,
          "order-block list exceeded its cap")
     // 7. A block registered this bar must be a positive-height zone.
-    recordAssertion(
+    fails += assertFailed(
          not newBullOb or na(lastBullObTop) or lastBullObTop >= low,
          "bullish order block sits below the break bar")
+    failCount += fails
+    passCount += TEST_COUNT - fails
 
 var table testTable = table.new(
      position.bottom_left, 2, 2, border_width=1,

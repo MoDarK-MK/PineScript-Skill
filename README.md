@@ -11,7 +11,7 @@ Transform your TradingView Pine Script ideas into **production-ready indicators 
 
 Most Pine Script traders treat each indicator as a one-off script. Pine Script Skill treats them like **real projects**:
 
-- 🔍 **40-Rule Linter** — Catches v6 compile errors, performance traps, strategy risk bugs, invisible dashboard text, and style issues *before* you paste into TradingView
+- 🔍 **42-Rule Linter** — Catches v6 compile errors, performance traps, strategy risk bugs, invisible dashboard text, and style issues *before* you paste into TradingView
 - 📋 **Professional Templates** — Scaffold new indicators/strategies with theme-aware dashboards, test blocks, and best-practice structure
 - 🛡️ **Strategy Risk Modules** — Risk-% position sizing, ATR stops, breakeven + trailing, TP1/TP2 partials, session and date-window filters — wired together and ready to use
 - ✅ **In-Script Testing** — Write assertions directly in your code; results show in a test-mode table
@@ -88,14 +88,14 @@ PineScript-Skill/
 │   ├── dashboard_block_template.pine # Dashboard component patterns
 │   └── test_block_template.pine     # Testing patterns
 ├── scripts/
-│   ├── pine_lint.py                 # 40-rule offline linter
+│   ├── pine_lint.py                 # 42-rule offline linter
 │   ├── scaffold_project.py          # Bootstrap new indicators/strategies
 │   ├── bump_version.py              # Semantic versioning + changelog
 │   └── generate_release_bundle.py   # Auto-generate release files
 ├── references/
 │   ├── pine-v6-guide.md             # v5→v6 breaking changes & platform limits
 │   ├── style-guide.md               # Naming, spacing, section order
-│   ├── lint-rules.md                # Full catalog of 40 lint rules (PINE001–041, PINE024 unassigned)
+│   ├── lint-rules.md                # Full catalog of 42 lint rules (PINE001–043, PINE024 unassigned)
 │   ├── design-system.md             # Theming, gradients, dashboards
 │   ├── strategy-guide.md            # Sizing math, risk modules, overfitting, walk-forward
 │   ├── publishing-guide.md          # TradingView House Rules condensed
@@ -125,7 +125,7 @@ python3 scripts/pine_lint.py indicators/my_rsi_bands/src/my_rsi_bands.pine --jso
 # Strict mode: warnings also fail
 python3 scripts/pine_lint.py indicators/my_rsi_bands/src/my_rsi_bands.pine --strict
 
-# List all 40 rules
+# List all 42 rules
 python3 scripts/pine_lint.py --list-rules
 ```
 
@@ -176,7 +176,7 @@ Every script benefits from these docs; required reading before shipping:
 |-------|---------|
 | **[pine-v6-guide.md](references/pine-v6-guide.md)** | v5→v6 breaking changes, platform limits, dynamic requests, repainting traps, `var`/`varip` semantics |
 | **[style-guide.md](references/style-guide.md)** | Official naming conventions (camelCase/SNAKE_CASE), section order, spacing, line wrapping |
-| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 40 lint rules (codes PINE001–PINE041; PINE024 unassigned) with examples and rationale |
+| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 42 lint rules (codes PINE001–PINE043; PINE024 unassigned) with examples and rationale |
 | **[performance-guide.md](references/performance-guide.md)** | Keeping a script fast AND live: work tiering, memoization, buffer reuse, drawing updates, var vs varip |
 | **[strategy-guide.md](references/strategy-guide.md)** | Building strategies: signal design, position sizing math, the four risk modules, filters, overfitting, walk-forward |
 | **[design-system.md](references/design-system.md)** | Theming, gradients, multi-color palettes, watermarks, dashboard patterns |
@@ -251,7 +251,7 @@ multiple ±25% and see whether the result degrades gracefully or collapses.
 
 ## 🎯 Key Features
 
-✅ **40-Rule Linter** — Fact-checked against TradingView docs (v6 as of mid-2026)  
+✅ **42-Rule Linter** — Fact-checked against TradingView docs (v6 as of mid-2026)  
 ✅ **Strategy Risk Modules** — Risk-% sizing, ATR stops, breakeven, trailing, partials, filters  
 ✅ **Backtest Realism Gate** — Blocks lookahead bias, synthetic chart types, zero-cost backtests  
 ✅ **In-Script Testing** — Assertion counter; no external test runner  

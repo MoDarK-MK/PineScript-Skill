@@ -550,46 +550,50 @@ alertcondition(longEntry, "Long Reversal Entry", "Long reversal entry signal fir
 alertcondition(shortEntry, "Short Reversal Entry", "Short reversal entry signal fired.")
 
 // ————— Debug / Test block (keep testModeInput false when handing off)
+int TEST_COUNT = 7      // keep in sync with the assertFailed() calls below
 var int passCount = 0
 var int failCount = 0
 
-// @function Counts an assertion and draws a label only when it fails, so a long
-// backtest can't exhaust the 500-label budget on passing bars.
-recordAssertion(bool condition, string description) =>
-    if condition
-        passCount += 1
-    else
-        failCount += 1
+// @function Draws a failure marker and RETURNS 1 on failure, 0 on pass.
+// Pine forbids a function from modifying a global (CE10088), so the counting
+// happens at the call site. Drawing only on failure keeps a long backtest from
+// exhausting the 500-label budget on passing bars.
+assertFailed(bool condition, string description) =>
+    if not condition
         label.new(bar_index, high, "FAIL: " + description, color=bearColorInput,
              textcolor=color.white, style=label.style_label_down, size=size.small)
+    condition ? 0 : 1
 
 if testModeInput
+    int fails = 0
     // 1. Scores must always stay inside the 0..MAX_SCORE range.
-    recordAssertion(
+    fails += assertFailed(
          bearScore >= 0 and bearScore <= MAX_SCORE and bullScore >= 0 and bullScore <= MAX_SCORE,
          "score outside the 0-5 range")
     // 2. A score without a pivot on the same bar would be a logic bug.
-    recordAssertion(
+    fails += assertFailed(
          (bearScore == 0 or bearPivot) and (bullScore == 0 or bullPivot),
          "score set without a pivot")
     // 3. Sizing must never request a negative quantity.
-    recordAssertion(plannedQty >= 0, "planned qty is negative")
+    fails += assertFailed(plannedQty >= 0, "planned qty is negative")
     // 4. A zero stop distance would divide by zero in the sizing math.
-    recordAssertion(stopDist > 0, "stop distance collapsed to zero")
+    fails += assertFailed(stopDist > 0, "stop distance collapsed to zero")
     // 5. The stop may only ever ratchet in favour of an open long.
-    recordAssertion(
+    fails += assertFailed(
          strategy.position_size <= 0 or na(activeStop) or na(activeStop[1]) or activeStop >= activeStop[1],
          "long stop moved against the position")
     // 6. Realised risk on the arming bar must respect the configured risk cap.
-    recordAssertion(
+    fails += assertFailed(
          sizingModeInput != SIZE_RISK or not justFilled or na(entryRef) or na(initStop) or
          math.abs(plannedQty * (entryRef - initStop) * syminfo.pointvalue) <=
          strategy.equity * riskPercentInput / 100 * 1.05,
          "position risk exceeds the configured risk %")
     // 7. Only pivots at or above the threshold may produce an entry.
-    recordAssertion(
+    fails += assertFailed(
          not longEntry or bullScore >= minEntryScoreInput,
          "long entry fired below the score threshold")
+    failCount += fails
+    passCount += TEST_COUNT - fails
 
 var table testTable = table.new(
      position.bottom_right, 2, 2, border_width=1,

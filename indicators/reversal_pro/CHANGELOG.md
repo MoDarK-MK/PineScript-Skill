@@ -3,6 +3,9 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [1.1.1] - 2026-07-27
+- Fix CE10088/CE10235 in the test block
+
 ## [1.1.0] - 2026-07-27
 ### Added
 - Order Blocks module: registers the origin candle of each displacement move that breaks the last confirmed swing, drawn as a zone that fades (or hides) once price trades back into it
