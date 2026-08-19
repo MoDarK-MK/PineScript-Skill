@@ -90,6 +90,7 @@ RULES = {
     "PINE041": ("warning", "size.large/size.huge used (design guide caps chart text at size.normal)"),
     "PINE042": ("error", "Function assigns to a global variable (compile error CE10088)"),
     "PINE043": ("error", "Function's trailing if/else branches return different types (CE10235)"),
+    "PINE044": ("info", "Seconds-based timeframe used — requires a Premium TradingView plan"),
 }
 
 STRATEGY_ORDER_FUNCS = [
@@ -966,6 +967,27 @@ def check_function_branch_types(lines, result):
                         "single plain expression instead.")
 
 
+SECONDS_TF_RE = re.compile(r'["\'](\d+)S["\']')
+
+
+def check_seconds_timeframe(lines, result):
+    """PINE044 — TradingView serves seconds-based timeframes only to Premium and
+    higher plans, and requesting one on a lower plan fails the WHOLE script, not
+    just that call. Advisory (info) because it is a legitimate choice when the
+    audience is known — but it should be a deliberate, gated one."""
+    for i, raw in enumerate(lines):
+        line = strip_comments_only(raw)
+        m = SECONDS_TF_RE.search(line)
+        if m:
+            value = m.group(1)
+            result.add(i + 1, "PINE044",
+                        f'"{value}S" is a seconds-based timeframe. TradingView serves those only '
+                        f"to Premium and higher plans, and asking for one on a lower plan fails "
+                        f"the entire script rather than that single call. Gate it behind an input "
+                        f"that defaults to OFF and falls back to a minute-based resolution.")
+            return
+
+
 def check_transp_removed(statements, result):
     for stmt in statements:
         if any(f in stmt["stripped"] for f in TRANSP_FUNCS) and re.search(r'\btransp\s*=', stmt["stripped"]):
@@ -1289,6 +1311,7 @@ def lint_file(path, cfg):
     check_oversized_text(lines, result)
     check_global_mutation_in_function(lines, result)
     check_function_branch_types(lines, result)
+    check_seconds_timeframe(lines, result)
     check_transp_removed(statements, result)
     check_linewidth_minimum(statements, result)
     check_switch_default(lines, result)

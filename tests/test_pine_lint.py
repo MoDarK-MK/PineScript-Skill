@@ -21,17 +21,17 @@ def codes(result):
 
 
 class TestRuleCatalog(unittest.TestCase):
-    def test_has_42_rules_and_no_pine024(self):
-        self.assertEqual(len(pine_lint.RULES), 42)
+    def test_has_43_rules_and_no_pine024(self):
+        self.assertEqual(len(pine_lint.RULES), 43)
         self.assertNotIn("PINE024", pine_lint.RULES)
         self.assertIn("PINE001", pine_lint.RULES)
-        self.assertIn("PINE043", pine_lint.RULES)
+        self.assertIn("PINE044", pine_lint.RULES)
 
     def test_list_rules_cli(self):
         proc = run_script("pine_lint.py", "--list-rules")
         self.assertEqual(proc.returncode, 0)
         lines = [l for l in proc.stdout.splitlines() if l.strip()]
-        self.assertEqual(len(lines), 42)
+        self.assertEqual(len(lines), 43)
 
 
 class TestCoreRules(unittest.TestCase):
@@ -429,6 +429,42 @@ class TestVisualAndPerfRules(unittest.TestCase):
             '    ok ? 0 : 1\n'
         )
         self.assertNotIn("PINE043", codes(lint_text(text)))
+
+    # PINE044 — seconds timeframes need a Premium plan
+    def test_pine044_flags_seconds_timeframe(self):
+        text = VALID_INDICATOR + (
+            'float x = request.security(syminfo.tickerid, "5S", close, '
+            'lookahead=barmerge.lookahead_off)\n'
+            'plot(x, title="X")\n'
+        )
+        self.assertIn("PINE044", codes(lint_text(text)))
+
+    def test_pine044_is_advisory_and_does_not_fail_strict(self):
+        text = VALID_INDICATOR + (
+            'float x = request.security(syminfo.tickerid, "5S", close, '
+            'lookahead=barmerge.lookahead_off)\n'
+            'plot(x, title="X")\n'
+        )
+        result = lint_text(text)
+        self.assertTrue(result.ok(strict=True))
+
+    def test_pine044_ignores_minute_timeframes(self):
+        text = VALID_INDICATOR + (
+            'float x = request.security(syminfo.tickerid, "5", close, '
+            'lookahead=barmerge.lookahead_off)\n'
+            'plot(x, title="X")\n'
+        )
+        self.assertNotIn("PINE044", codes(lint_text(text)))
+
+    def test_pine044_reports_once_per_file(self):
+        text = VALID_INDICATOR + (
+            'string a = "1S"\n'
+            'string b = "5S"\n'
+            'string c = "15S"\n'
+            'plot(close, title="C")\n'
+        )
+        seconds_findings = [f for f in lint_text(text).findings if f.code == "PINE044"]
+        self.assertEqual(1, len(seconds_findings))
 
     # PINE022 rescoped to the declaration statement
     def test_pine022_ignores_overlay_mentioned_only_in_a_comment(self):

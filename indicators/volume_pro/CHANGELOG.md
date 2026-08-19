@@ -3,6 +3,13 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.1.1] - 2026-08-19
+### Fixed
+- Seconds-based intrabar resolutions are no longer the default. TradingView serves them only to Premium and higher plans, and asking for one on a lower plan fails the ENTIRE script with "This script uses seconds-based timeframes" rather than degrading — so 0.1.0 simply would not load for most users.
+- Added an explicit "Allow Seconds-Based Intrabars" input, defaulting OFF. With it off, Auto never selects a seconds resolution and an explicitly chosen one falls back to 1 minute, so the script always loads.
+- The dashboard now flags when the intrabar resolution is not actually finer than the chart (the usual result of a low-timeframe chart without seconds data), instead of quietly showing a meaningless one-row footprint.
+- Gate seconds intrabars behind a Premium opt-in
+
 ## [0.1.0] - 2026-07-27
 ### Added
 - Initial version of Volume Pro, rebuilt from a reversal-plus-volume-profile script into a dedicated volume/order-flow indicator. The reversal lines, RSI boxes, multi-timeframe trend table and background shading are gone.

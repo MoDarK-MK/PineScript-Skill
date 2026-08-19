@@ -48,11 +48,19 @@ indicator(
 //   and disagree at turns, which is exactly where you would most want them to be
 //   right. Treat delta as a strong hint, not a measurement.
 //
-//   Also: seconds-based intrabar data requires a paid TradingView plan, and
-//   request.security_lower_tf() returns a limited number of intrabars per chart
-//   bar. On a high timeframe with a very low intrabar resolution the data will
-//   be truncated — the dashboard shows the live intrabar count so you can see
-//   exactly what the script is working with.
+// PLAN REQUIREMENT — the one that decides whether this loads at all:
+//   Seconds-based timeframes are served ONLY to Premium and higher plans, and
+//   asking for one on a lower plan fails the ENTIRE script, not just that call.
+//   So "Allow Seconds-Based Intrabars" is OFF by default and every seconds
+//   resolution falls back to 1 minute. With 1-minute intrabars the footprint is
+//   genuinely useful from roughly the 15-minute chart upward (15+ intrabars per
+//   bar); below that there is little or nothing to split, and the dashboard says
+//   so rather than drawing something meaningless.
+//
+//   request.security_lower_tf() also caps how many intrabars it returns per
+//   chart bar, so a very fine resolution on a very high timeframe gets
+//   truncated. The dashboard shows the live intrabar count for exactly this
+//   reason — what the script is working with is never hidden from you.
 
 // ————— Constants
 color TRANSPARENT_COLOR = #00000000
@@ -66,6 +74,12 @@ string ltfModeInput = input.string(
      options=["Auto", "1S", "5S", "10S", "15S", "30S", "1", "5", "15"], group=LTF_GROUP,
      tooltip="Auto picks a resolution that fits the chart timeframe. Seconds-based " +
      "resolutions need a paid TradingView plan.")
+bool allowSecondsInput = input.bool(
+     false, "Allow Seconds-Based Intrabars", group=LTF_GROUP,
+     tooltip="TradingView serves seconds-based data ONLY to Premium and higher plans. " +
+     "On any lower plan a seconds resolution makes the whole script fail to load, so " +
+     "this is OFF by default and any seconds choice silently falls back to 1 minute. " +
+     "Turn it on only if your plan is Premium or above.")
 string sideModeInput = input.string(
      "Tick Rule", "Aggressor Estimate", options=["Tick Rule", "Candle"], group=LTF_GROUP,
      tooltip="Pine cannot see bid/ask, so the side is inferred. Tick Rule compares " +
@@ -153,19 +167,29 @@ tablePosFrom(string name) =>
         "Bottom Left"  => position.bottom_left
         => position.top_right
 
-// @function Intrabar resolution to request. "Auto" targets roughly 30-120
-// intrabars per chart bar — the sweet spot between footprint detail and the
-// per-bar intrabar cap.
-resolveLtf(string mode) =>
+// @function Intrabar resolution to request, targeting roughly 30-120 intrabars
+// per chart bar — the sweet spot between footprint detail and the per-bar
+// intrabar cap.
+//
+// The seconds fallback is the important part. TradingView rejects a
+// seconds-based timeframe outright on anything below a Premium plan, and it
+// fails the WHOLE script rather than that one call. So unless the user has
+// explicitly confirmed a Premium plan, any seconds resolution — chosen directly
+// or produced by Auto — is downgraded to 1 minute. A degraded footprint beats a
+// script that will not load.
+resolveLtf(string mode, bool allowSeconds) =>
     int chartSec = timeframe.in_seconds(timeframe.period)
-    string auto = switch
-        chartSec <= 60    => "1S"
-        chartSec <= 300   => "5S"
-        chartSec <= 900   => "15S"
+    string coarse = switch
         chartSec <= 3600  => "1"
         chartSec <= 14400 => "5"
         => "15"
-    mode == "Auto" ? auto : mode
+    string fine = switch
+        chartSec <= 60    => "1S"
+        chartSec <= 300   => "5S"
+        chartSec <= 900   => "15S"
+        => coarse
+    string picked = mode == "Auto" ? (allowSeconds ? fine : coarse) : mode
+    str.endswith(picked, "S") and not allowSeconds ? "1" : picked
 
 // @function Compact human-readable volume ("1.24M", "345.6K").
 formatVolume(float v) =>
@@ -289,7 +313,13 @@ drawFootBar(FootBar fb, array<box> boxPool, array<label> labelPool, int boxCurso
 // ————— Calculations: theme and feed
 color textColor  = getTextColor(themeInput)
 color mutedColor = getMutedColor(themeInput)
-string ltfRes    = resolveLtf(ltfModeInput)
+string ltfRes    = resolveLtf(ltfModeInput, allowSecondsInput)
+int    ltfSec    = timeframe.in_seconds(ltfRes)
+int    chartSec  = timeframe.in_seconds(timeframe.period)
+// True when the requested resolution is not actually finer than the chart, so
+// there is no intrabar detail to be had — the usual cause is a low-timeframe
+// chart on a plan without seconds data.
+bool   ltfTooCoarse = ltfSec >= chartSec
 
 // ONE request returning a tuple of arrays. Three separate calls would spawn
 // three intrabar series over the same data and burn three of the 40 slots.
@@ -500,9 +530,10 @@ var table dash = table.new(
 if showTableInput and barstate.islast
     color  deltaCol = barDelta >= 0 ? buyColorInput : sellColorInput
     color  cvdCol   = cvd >= 0 ? buyColorInput : sellColorInput
-    string feedTxt  = haveIntrabar ?
-         ltfRes + "  (" + str.tostring(intrabarCount) + ")" : "unavailable"
-    color  feedCol  = haveIntrabar ? textColor : sellColorInput
+    string feedTxt  = not haveIntrabar ? "unavailable" :
+         ltfTooCoarse ? ltfRes + "  (needs Premium)" :
+         ltfRes + "  (" + str.tostring(intrabarCount) + ")"
+    color  feedCol  = not haveIntrabar or ltfTooCoarse ? sellColorInput : textColor
     table.cell(dash, 0, 0, "VOLUME PRO", text_color=textColor, text_size=size.normal,
          text_halign=text.align_center)
     table.cell(dash, 1, 0, "", text_color=textColor)

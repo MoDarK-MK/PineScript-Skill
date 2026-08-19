@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 42 rules spanning codes PINE001–PINE043. The code
+Note on numbering: there are 43 rules spanning codes PINE001–PINE044. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -445,3 +445,28 @@ record(bool ok, string msg) =>
 The check is deliberately narrow: it fires only when the trailing `if`/`else`
 has one branch ending in an assignment and the other in a `.new()` constructor,
 which is the shape that actually occurs.
+
+---
+
+## Plan requirements (PINE044)
+
+### PINE044 — info — Seconds-based timeframe
+TradingView serves seconds-based timeframes **only to Premium and higher plans**,
+and requesting one on a lower plan fails the **entire script**, not just that
+call — the user sees "This script uses seconds-based timeframes, which are only
+available to users with Premium and higher-tier plans" and nothing loads.
+
+```pinescript
+// risky as a default — breaks the script for most users
+[o, c, v] = request.security_lower_tf(syminfo.tickerid, "1S", [open, close, volume])
+```
+```pinescript
+// good — opt-in, defaulting off, with a minute-based fallback
+bool allowSecondsInput = input.bool(false, "Allow Seconds-Based Intrabars")
+resolveLtf(string mode, bool allowSeconds) =>
+    str.endswith(mode, "S") and not allowSeconds ? "1" : mode
+```
+
+Advisory (info) rather than a warning because seconds data is a legitimate
+choice when you know your audience has the plan — it just should never be the
+silent default. Reported once per file.
