@@ -3,6 +3,11 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [1.1.2] - 2026-08-19
+### Fixed
+- The high-volume zone never drew. Its memoisation guard compared `cachedLeft`/`cachedRight` — both starting at `na` — with `!=`, and Pine does not compare reliably against `na`, so the scan never ran. Same bug as the volume profile in Volume Pro, found by the new PINE045 rule.
+- Fix high-volume zone not drawing
+
 ## [1.1.1] - 2026-07-27
 - Fix CE10088/CE10235 in the test block
 

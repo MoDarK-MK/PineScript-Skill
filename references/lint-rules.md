@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 43 rules spanning codes PINE001–PINE044. The code
+Note on numbering: there are 44 rules spanning codes PINE001–PINE045. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -470,3 +470,33 @@ resolveLtf(string mode, bool allowSeconds) =>
 Advisory (info) rather than a warning because seconds data is a legitimate
 choice when you know your audience has the plan — it just should never be the
 silent default. Reported once per file.
+
+---
+
+## Silent-failure traps (PINE045)
+
+### PINE045 — warning — `na` compared with `==` / `!=`
+Pine does not compare reliably against `na`, so a test like `cachedBar != bar_index`
+on a variable that starts as `na` **never matches on the first pass**. Nothing
+errors; the guarded code simply never runs, and whatever it was supposed to draw
+or compute is silently absent.
+
+```pinescript
+// bad — the scan never runs, so the profile never appears
+var int cachedBar = na
+if barstate.islast and cachedBar != bar_index
+    cachedBar := bar_index
+    rebuildProfile()
+```
+```pinescript
+// good — na() handles the first pass explicitly
+var int cachedBar = na
+bool needsRebuild = na(cachedBar) or cachedBar != bar_index
+if barstate.islast and needsRebuild
+    cachedBar := bar_index
+    rebuildProfile()
+```
+
+Fires only for variables declared `var x = na` and never passed to `na()`
+anywhere in the file — if the file guards the variable properly even once, the
+rule stays quiet.

@@ -21,17 +21,17 @@ def codes(result):
 
 
 class TestRuleCatalog(unittest.TestCase):
-    def test_has_43_rules_and_no_pine024(self):
-        self.assertEqual(len(pine_lint.RULES), 43)
+    def test_has_44_rules_and_no_pine024(self):
+        self.assertEqual(len(pine_lint.RULES), 44)
         self.assertNotIn("PINE024", pine_lint.RULES)
         self.assertIn("PINE001", pine_lint.RULES)
-        self.assertIn("PINE044", pine_lint.RULES)
+        self.assertIn("PINE045", pine_lint.RULES)
 
     def test_list_rules_cli(self):
         proc = run_script("pine_lint.py", "--list-rules")
         self.assertEqual(proc.returncode, 0)
         lines = [l for l in proc.stdout.splitlines() if l.strip()]
-        self.assertEqual(len(lines), 43)
+        self.assertEqual(len(lines), 44)
 
 
 class TestCoreRules(unittest.TestCase):
@@ -465,6 +465,31 @@ class TestVisualAndPerfRules(unittest.TestCase):
         )
         seconds_findings = [f for f in lint_text(text).findings if f.code == "PINE044"]
         self.assertEqual(1, len(seconds_findings))
+
+    # PINE045 — na compared with ==/!= never matches
+    def test_pine045_flags_na_comparison(self):
+        text = VALID_INDICATOR + (
+            'var int cachedBar = na\n'
+            'if barstate.islast and cachedBar != bar_index\n'
+            '    cachedBar := bar_index\n'
+        )
+        self.assertIn("PINE045", codes(lint_text(text)))
+
+    def test_pine045_accepts_an_na_guard(self):
+        text = VALID_INDICATOR + (
+            'var int cachedBar = na\n'
+            'if barstate.islast and (na(cachedBar) or cachedBar != bar_index)\n'
+            '    cachedBar := bar_index\n'
+        )
+        self.assertNotIn("PINE045", codes(lint_text(text)))
+
+    def test_pine045_ignores_variables_not_initialised_to_na(self):
+        text = VALID_INDICATOR + (
+            'var int cachedBar = 0\n'
+            'if barstate.islast and cachedBar != bar_index\n'
+            '    cachedBar := bar_index\n'
+        )
+        self.assertNotIn("PINE045", codes(lint_text(text)))
 
     # PINE022 rescoped to the declaration statement
     def test_pine022_ignores_overlay_mentioned_only_in_a_comment(self):

@@ -91,6 +91,7 @@ RULES = {
     "PINE042": ("error", "Function assigns to a global variable (compile error CE10088)"),
     "PINE043": ("error", "Function's trailing if/else branches return different types (CE10235)"),
     "PINE044": ("info", "Seconds-based timeframe used — requires a Premium TradingView plan"),
+    "PINE045": ("warning", "Variable initialised to na compared with ==/!= instead of na()"),
 }
 
 STRATEGY_ORDER_FUNCS = [
@@ -988,6 +989,38 @@ def check_seconds_timeframe(lines, result):
             return
 
 
+VAR_NA_DECL_RE = re.compile(
+    r'^\s*var(?:ip)?\s+(?:int|float|bool|string|color|label|line|box|table)?\s*'
+    r'([a-zA-Z_]\w*)\s*=\s*na\s*$'
+)
+
+
+def check_na_comparison(lines, result):
+    """PINE045 — a variable initialised to `na` and then tested with `==`/`!=`.
+    Pine does not compare reliably against na, so the test silently never
+    matches and whatever it guards never runs. Use na(x) instead."""
+    na_vars = {}
+    for i, raw in enumerate(lines):
+        m = VAR_NA_DECL_RE.match(strip_strings_and_comments(raw))
+        if m:
+            na_vars[m.group(1)] = i + 1
+    if not na_vars:
+        return
+    text = chr(10).join(strip_strings_and_comments(l) for l in lines)
+    for name, decl_line in na_vars.items():
+        if re.search(r'\bna\s*\(\s*' + re.escape(name) + r'\s*\)', text):
+            continue      # the file already guards this one properly
+        for i, raw in enumerate(lines):
+            line = strip_strings_and_comments(raw)
+            if re.search(r'\b' + re.escape(name) + r'\s*[=!]=', line):
+                result.add(i + 1, "PINE045",
+                            f"'{name}' is initialised to na (line {decl_line}) and compared with "
+                            f"==/!=. Pine does not compare reliably against na, so this test never "
+                            f"matches on the first pass and whatever it guards silently never runs. "
+                            f"Use na({name}) for the na case.")
+                break
+
+
 def check_transp_removed(statements, result):
     for stmt in statements:
         if any(f in stmt["stripped"] for f in TRANSP_FUNCS) and re.search(r'\btransp\s*=', stmt["stripped"]):
@@ -1312,6 +1345,7 @@ def lint_file(path, cfg):
     check_global_mutation_in_function(lines, result)
     check_function_branch_types(lines, result)
     check_seconds_timeframe(lines, result)
+    check_na_comparison(lines, result)
     check_transp_removed(statements, result)
     check_linewidth_minimum(statements, result)
     check_switch_default(lines, result)

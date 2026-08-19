@@ -664,7 +664,12 @@ if barstate.islast and showHvzInput and not na(lastPivotBar) and not na(prevPivo
     if rightBar > leftBar and bar_index >= rightBar
         // Only the scan is gated on the fingerprint; the drawing below still
         // repositions every tick so the zone tracks the right edge live.
-        if cachedLeft != leftBar or cachedRight != rightBar
+        // na() rather than a bare !=: comparing against na is not reliable in
+        // Pine, so the plain != form was never true on the first pass and the
+        // zone silently never drew.
+        bool needsRebuild = na(cachedLeft) or na(cachedRight) or
+             cachedLeft != leftBar or cachedRight != rightBar
+        if needsRebuild
             cachedLeft  := leftBar
             cachedRight := rightBar
             int rightOff = bar_index - rightBar

@@ -88,7 +88,11 @@ string sideModeInput = input.string(
 // ————— Inputs: Footprint
 string FP_GROUP = "Footprint"
 bool  showFootInput    = input.bool(true, "Show Footprint", group=FP_GROUP)
-int   footBarsInput    = input.int(8, "Bars To Draw", minval=1, maxval=15, group=FP_GROUP)
+int   footBarsInput    = input.int(
+     8, "Bars To Draw", minval=1, maxval=30, group=FP_GROUP,
+     tooltip="Each bar costs one box per price row, against TradingView's hard cap of " +
+     "500 boxes for the whole script. At high bar counts the rows per bar are reduced " +
+     "automatically to fit — the dashboard shows the row count actually in use.")
 int   footRowsInput    = input.int(12, "Price Rows Per Bar", minval=3, maxval=20, group=FP_GROUP)
 float footImbalInput   = input.float(
      2.5, "Imbalance Ratio", minval=1.2, step=0.1, group=FP_GROUP,
@@ -310,6 +314,15 @@ drawFootBar(FootBar fb, array<box> boxPool, array<label> labelPool, int boxCurso
         used += 1
     used
 
+// ————— Calculations: box budget
+// Boxes are capped at 500 for the entire script. The profile claims its rows
+// first; whatever is left is shared across the footprint bars. Reducing rows
+// beats silently dropping bars, and beats hitting the cap and losing the oldest
+// drawings without saying so.
+int fpDrawCount = footBarsInput + 1
+int fpBudget    = 480 - (showVpInput ? vpRowsInput : 0)
+int fpRows      = math.max(3, math.min(footRowsInput, int(fpBudget / fpDrawCount)))
+
 // ————— Calculations: theme and feed
 color textColor  = getTextColor(themeInput)
 color mutedColor = getMutedColor(themeInput)
@@ -335,7 +348,7 @@ bool haveIntrabar  = intrabarCount > 0
 var array<FootBar> footHistory = array.new<FootBar>()
 FootBar currentFoot = na
 if showFootInput and haveIntrabar
-    currentFoot := buildFootBar(ltfOpen, ltfClose, ltfVolume, high, low, footRowsInput)
+    currentFoot := buildFootBar(ltfOpen, ltfClose, ltfVolume, high, low, fpRows)
 
 if barstate.isconfirmed and not na(currentFoot)
     array.push(footHistory, currentFoot)
@@ -377,7 +390,11 @@ var int   vpCachedBar = na
 float scanHi = ta.highest(high, vpLookbackInput)
 float scanLo = ta.lowest(low, vpLookbackInput)
 
-if showVpInput and barstate.islast and vpCachedBar != bar_index
+// na() rather than `vpCachedBar != bar_index`: comparing against na is not
+// reliable in Pine, so the != form was never true on the first pass, the scan
+// never ran, and the profile silently never drew.
+bool vpNeedsRebuild = na(vpCachedBar) or vpCachedBar != bar_index
+if showVpInput and barstate.islast and vpNeedsRebuild
     vpCachedBar := bar_index
     vpLo   := scanLo
     vpStep := math.max(scanHi - scanLo, syminfo.mintick * vpRowsInput) / vpRowsInput
@@ -485,10 +502,10 @@ if showFootInput and barstate.islast
     int histCount = array.size(footHistory)
     int liveCount = na(currentFoot) ? 0 : 1
     int drawCount = histCount + liveCount
-    ensureBoxPool(fpBoxes, math.max(1, drawCount * footRowsInput))
+    ensureBoxPool(fpBoxes, math.max(1, drawCount * fpRows))
     int numberBars = footNumbersInput ? math.min(footNumBarsInput, drawCount) : 0
     if numberBars > 0
-        ensureLabelPool(fpLabels, numberBars * footRowsInput)
+        ensureLabelPool(fpLabels, numberBars * fpRows)
     int cursor = 0
     int labelCursor = 0
     int firstNumbered = drawCount - numberBars
@@ -497,17 +514,17 @@ if showFootInput and barstate.islast
             FootBar fb = array.get(footHistory, i)
             bool withNums = numberBars > 0 and i >= firstNumbered
             cursor += drawFootBar(
-                 fb, fpBoxes, fpLabels, cursor, labelCursor, withNums, footRowsInput,
+                 fb, fpBoxes, fpLabels, cursor, labelCursor, withNums, fpRows,
                  buyColorInput, sellColorInput, footImbalInput)
             if withNums
-                labelCursor += footRowsInput
+                labelCursor += fpRows
     if liveCount > 0
         bool withNums = numberBars > 0
         cursor += drawFootBar(
-             currentFoot, fpBoxes, fpLabels, cursor, labelCursor, withNums, footRowsInput,
+             currentFoot, fpBoxes, fpLabels, cursor, labelCursor, withNums, fpRows,
              buyColorInput, sellColorInput, footImbalInput)
         if withNums
-            labelCursor += footRowsInput
+            labelCursor += fpRows
     hideBoxesFrom(fpBoxes, cursor)
     hideLabelsFrom(fpLabels, labelCursor)
 
@@ -522,7 +539,7 @@ plot(barDelta, "Bar delta", color=barDelta >= 0 ? buyColorInput : sellColorInput
 
 // ————— Visuals: dashboard
 var table dash = table.new(
-     tablePosFrom(tablePosInput), 2, 9,
+     tablePosFrom(tablePosInput), 2, 10,
      bgcolor=getPanelColor(themeInput, tableTranspInput), border_width=1,
      border_color=getPanelColor(themeInput, 100),
      frame_color=color.new(mutedColor, 70), frame_width=1)
@@ -551,6 +568,9 @@ if showTableInput and barstate.islast
          str.tostring(vpVah, format.mintick) + " / " + str.tostring(vpVal, format.mintick),
          mutedColor, vaColorInput)
     dashRow(dash, 8, "Intrabar", feedTxt, mutedColor, feedCol)
+    dashRow(dash, 9, "Footprint",
+         str.tostring(footBarsInput) + " bars x " + str.tostring(fpRows) + " rows",
+         mutedColor, fpRows < footRowsInput ? pocColorInput : textColor)
 
 // ————— Alerts
 bool deltaFlipUp   = barstate.isconfirmed and barDelta > 0 and nz(barDelta[1]) <= 0

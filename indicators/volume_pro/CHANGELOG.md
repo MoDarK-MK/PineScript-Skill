@@ -3,6 +3,15 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.1.2] - 2026-08-19
+### Fixed
+- The volume profile never appeared on the chart. The per-bar memoisation guard was `vpCachedBar != bar_index` on a variable starting at `na`, and Pine does not compare reliably against `na` — so the condition was never true, the scan never ran, and the draw block was never entered. Now guarded with `na()`.
+
+### Changed
+- "Bars To Draw" now goes up to 30 (was 15). Because boxes are capped at 500 for the whole script, the rows per bar are now derived from the remaining budget: the profile claims its rows first, and the footprint shares what is left. Reducing rows beats silently losing the oldest drawings.
+- The dashboard gained a "Footprint" row showing the bar x row count actually in use, highlighted when the rows were reduced to fit.
+- Fix profile not drawing; raise bar cap to 30
+
 ## [0.1.1] - 2026-08-19
 ### Fixed
 - Seconds-based intrabar resolutions are no longer the default. TradingView serves them only to Premium and higher plans, and asking for one on a lower plan fails the ENTIRE script with "This script uses seconds-based timeframes" rather than degrading — so 0.1.0 simply would not load for most users.

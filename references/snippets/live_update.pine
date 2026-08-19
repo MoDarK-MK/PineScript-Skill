@@ -34,7 +34,13 @@ int scanTo   = bar_index
 if barstate.islast
     // The fingerprint is whatever the result genuinely depends on. If none of it
     // changed, the previous answer is still correct — skip the work entirely.
-    bool inputsChanged = cachedFrom != scanFrom or cachedTo != scanTo
+    //
+    // The na() terms are NOT optional. Pine does not compare reliably against
+    // na, so on the first pass `cachedFrom != scanFrom` is not true even though
+    // cachedFrom is unset — leave them out and the work never runs at all, with
+    // no error to tell you. PINE045 exists because this shipped twice.
+    bool inputsChanged =
+      na(cachedFrom) or na(cachedTo) or cachedFrom != scanFrom or cachedTo != scanTo
     if inputsChanged or na(cachedResult)
         cachedResult := heavyCalculation(scanFrom, scanTo)
         cachedFrom   := scanFrom
