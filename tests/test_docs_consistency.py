@@ -92,7 +92,7 @@ class TestProjectVersions(unittest.TestCase):
     """version.json and the CHANGELOG's newest release must agree."""
 
     def project_dirs(self):
-        for parent in ("indicators", "strategies"):
+        for parent in ("indicators", "strategies", "libraries"):
             base = REPO_ROOT / parent
             if base.is_dir():
                 for child in sorted(base.iterdir()):

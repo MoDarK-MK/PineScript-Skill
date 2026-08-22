@@ -69,12 +69,23 @@ string THEME_LIGHT      = "Light"
 
 // ————— Inputs: Reversal
 int   pivotLenInput    = input.int(
-     15, "Pivot Sensitivity", minval=2, maxval=400, group="Reversal")
+     15, "Pivot Sensitivity", minval=2, maxval=400, group="Reversal",
+     tooltip="How many bars either side a high/low must lead to count as a " +
+     "reversal. This is the one setting that changes everything else: a pivot " +
+     "is only CONFIRMED this many bars after the extreme, so raising it means " +
+     "fewer, larger, later signals. 15 suits intraday; lower it on higher " +
+     "timeframes where each bar is worth more.")
 bool  extendLinesInput = input.bool(false, "Extend Reversal Lines", group="Reversal")
 int   lineLengthInput  = input.int(20, "Fixed Line Length (if not extended)", minval=1, group="Reversal")
 
 // ————— Inputs: Strength Filters
-int   minScoreInput    = input.int(0, "Min Score To Show (0 = all)", minval=0, maxval=5, group="Strength Filters")
+int   minScoreInput    = input.int(
+     0, "Min Score To Show (0 = all)", minval=0, maxval=5, group="Strength Filters",
+     tooltip="Every reversal is scored 0-5 by five independent confirmations: " +
+     "RSI exhaustion, a volume spike, candle direction, wick rejection, and " +
+     "whether the pivot is also the extreme of a wider swing. The settings in " +
+     "this group define what each of those means. Raise this to hide the " +
+     "weaker signals rather than to make fewer of them.")
 int   strongScoreInput = input.int(4, "'Strong' Alert Threshold", minval=1, maxval=5, group="Strength Filters")
 int   rsiLenInput      = input.int(14, "RSI Length", minval=1, maxval=400, group="Strength Filters")
 int   rsiObInput       = input.int(60, "RSI Exhaustion for Tops", minval=50, maxval=100, group="Strength Filters")
@@ -86,7 +97,12 @@ int   swingLookInput   = input.int(
      50, "Major Swing Lookback", minval=2, maxval=400, group="Strength Filters")
 
 // ————— Inputs: Table
-bool   showTableInput   = input.bool(true, "Show Live Price/Swing Table", group="Table")
+bool   showTableInput   = input.bool(
+     true, "Show Live Price/Swing Table", group="Table",
+     tooltip="A small panel showing the live price with a tick-direction arrow " +
+     "and the swing position — where price sits, as a percentage, between the " +
+     "last reversal low and the last reversal high. 0% is at the low, 100% at " +
+     "the high. It updates on every tick, not just on bar close.")
 string tablePosInput    = input.string(
      "Top Right", "Table Position",
      options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Table")
@@ -95,7 +111,13 @@ string tableSizeInput   = input.string(
 int    tableTranspInput = input.int(15, "Table Transparency", minval=0, maxval=90, group="Table")
 
 // ————— Inputs: Key Levels
-bool   showLevelsInput = input.bool(true, "Show Key Levels", group="Key Levels")
+bool   showLevelsInput = input.bool(
+     true, "Show Key Levels", group="Key Levels",
+     tooltip="Horizontal lines at the prices other traders are watching: " +
+     "previous day/week/month high, low and close, the day open, the live " +
+     "current-day high and low, and the most recent reversal swing. Each line " +
+     "can be turned off individually, and the nearest level above and below " +
+     "price is highlighted.")
 string dayTfInput      = input.timeframe("D", "Daily Levels Timeframe", group="Key Levels")
 string weekTfInput     = input.timeframe("W", "Weekly Levels Timeframe", group="Key Levels")
 string monthTfInput    = input.timeframe("M", "Monthly Levels Timeframe", group="Key Levels")
@@ -140,7 +162,13 @@ string levelLabelSizeInput  = input.string(
 
 // ————— Inputs: Volume Analysis
 string VOL_GROUP = "Volume Analysis"
-bool   showPivotVolInput = input.bool(true, "Show Volume At Reversals", group=VOL_GROUP)
+bool   showPivotVolInput = input.bool(
+     true, "Show Volume At Reversals", group=VOL_GROUP,
+     tooltip="Adds the volume traded on each pivot bar to its label, and builds " +
+     "a volume profile across the swing between the two most recent reversals " +
+     "to find where trade actually concentrated. Note the approximation: Pine " +
+     "gives no intrabar volume distribution, so each bar's volume is placed at " +
+     "its hlc3.")
 bool   showVolMultInput  = input.bool(true, "Show Volume As x Average", group=VOL_GROUP)
 bool   showHvzInput      = input.bool(true, "Show High-Volume Zone Between Reversals", group=VOL_GROUP)
 int    hvzRowsInput      = input.int(
@@ -155,7 +183,14 @@ bool   hvzLabelInput     = input.bool(true, "Label The Zone", group=VOL_GROUP)
 
 // ————— Inputs: Order Blocks
 string OB_GROUP = "Order Blocks"
-bool   showObInput      = input.bool(true, "Show Order Blocks", group=OB_GROUP)
+bool   showObInput      = input.bool(
+     true, "Show Order Blocks", group=OB_GROUP,
+     tooltip="Marks the origin candle of each displacement move that broke the " +
+     "last confirmed swing — the candle the move came FROM, not the break " +
+     "itself. Each block carries a volume bar whose WIDTH is that candle's " +
+     "volume relative to the heaviest live block, so the set reads like a " +
+     "volume histogram lying on its side. Blocks fade or hide once price " +
+     "trades back into them.")
 int    obMaxInput       = input.int(
      6, "Max Live Blocks Per Side", minval=1, maxval=20, group=OB_GROUP)
 int    obScanInput      = input.int(

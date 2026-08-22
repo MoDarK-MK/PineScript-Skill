@@ -18,6 +18,24 @@ def run_script(script_name, *args, cwd=None):
         cwd=cwd,
     )
 
+def lint_text(text):
+    """Lint a Pine source string with the default config; returns LintResult.
+
+    Lives here rather than in one test module so every test file can use it
+    without importing another test file — an import path that breaks depending
+    on how unittest was invoked."""
+    import tempfile
+    import pine_lint
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "script.pine"
+        path.write_text(text, encoding="utf-8")
+        return pine_lint.lint_file(str(path), dict(pine_lint.DEFAULT_CONFIG))
+
+
+def codes(result):
+    """The set of rule codes in a LintResult."""
+    return {f.code for f in result.findings}
+
 
 VALID_INDICATOR = '''\
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/

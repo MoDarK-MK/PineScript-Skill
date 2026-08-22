@@ -113,7 +113,13 @@ bool colorBarsInput = input.bool(
 
 // ————— Inputs: Volume Profile
 string VP_GROUP = "Volume Profile"
-bool  showVpInput     = input.bool(true, "Show Volume Profile", group=VP_GROUP)
+bool  showVpInput     = input.bool(
+     true, "Show Volume Profile", group=VP_GROUP,
+     tooltip="A horizontal histogram of how much volume traded at each price " +
+     "over the lookback window, with the Point Of Control — the busiest row — " +
+     "marked. Rows are split into the buying and selling share. More rows means " +
+     "finer price resolution and more drawing objects against TradingView's " +
+     "500-box cap.")
 int   vpLookbackInput = input.int(300, "Lookback Bars", minval=20, maxval=900, group=VP_GROUP)
 int   vpRowsInput     = input.int(60, "Price Rows", minval=10, maxval=100, group=VP_GROUP)
 int   vpWidthInput    = input.int(60, "Profile Width (bars)", minval=10, maxval=200, group=VP_GROUP)
@@ -125,7 +131,12 @@ color vaColorInput    = input.color(#5b9cf6, "Value Area Lines", group=VP_GROUP)
 
 // ————— Inputs: Table
 string TBL_GROUP = "Table"
-bool   showTableInput   = input.bool(true, "Show Dashboard", group=TBL_GROUP)
+bool   showTableInput   = input.bool(
+     true, "Show Dashboard", group=TBL_GROUP,
+     tooltip="Live readout of bar delta, cumulative delta, buy/sell share and " +
+     "the intrabar resolution actually in use. Watch that last row: if the " +
+     "requested lower timeframe is unavailable on your plan the script falls " +
+     "back, and the dashboard is where it tells you so.")
 string tablePosInput    = input.string(
      "Top Right", "Position",
      options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=TBL_GROUP)

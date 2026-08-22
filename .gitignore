@@ -11,3 +11,6 @@ Thumbs.db
 
 # Generated release bundles inside scaffolded projects
 **/release/
+
+# Generated alert-only indicators (scripts/strategy_to_indicator.py)
+**/generated/

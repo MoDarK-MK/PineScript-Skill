@@ -1,0 +1,193 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © PINETOOLKIT
+
+//@version=6
+
+// Shared helpers for the indicators and strategies in this repo.
+//
+// WHY THIS EXISTS: Pine has no local file imports. Every helper here was
+// previously copy-pasted into four separate scripts, and a comment asking
+// future readers to keep the copies in sync is not a mechanism. One of those
+// copies drifted; a test now holds two of them byte-identical, which works but
+// does not scale. A published library is the actual fix — see
+// references/decisions.md D9.
+//
+// SCOPE, DELIBERATELY NARROW: pure functions only. No inputs, no drawings, no
+// request.*(), no `var` state. Two reasons. Pine restricts what a library may
+// contain, and a pure function is the part that is unambiguously allowed. And a
+// pure function is testable by inspection — a stateful one imported into four
+// scripts is a shared mutable dependency, which is a worse problem than the
+// duplication it would replace.
+//
+// WHAT IS NOT HERE: the drawing pools and the reversal scoring engine. Pools
+// hold `var` state and the engine reads series data and inputs; both would drag
+// this past the boundary above. references/snippets/ still carries those, and
+// tests/test_shared_engine.py still holds the engine's two copies identical.
+//
+// NOT YET COMPILE-VERIFIED ON TRADINGVIEW. Libraries have publication
+// requirements no offline tool can check. Paste it once and publish it before
+// any script here depends on it.
+
+library("PineToolkit", overlay = true)
+
+// ————— Theme
+// One palette, one place. Every dashboard in this repo was picking its own
+// greys, and "roughly the same dark grey" across four scripts is what a design
+// system is supposed to prevent.
+
+// @function Primary text colour for a theme — the value column reads first.
+// @param theme "Dark" or "Light". Anything else is treated as Dark.
+// @returns The colour for primary text.
+export textColor(string theme) =>
+    theme == "Light" ? #131722 : #d1d4dc
+
+// @function Secondary text colour, deliberately lower contrast than the value
+// it labels. A label competing with its own number is the most common way a
+// dashboard becomes hard to read.
+// @param theme "Dark" or "Light".
+// @returns The colour for secondary text.
+export mutedColor(string theme) =>
+    theme == "Light" ? #4a4e58 : #b2b5be
+
+// @function Panel background for a theme.
+// @param theme "Dark" or "Light".
+// @param transp Transparency 0-100. Keep it low: above roughly 80 the candles
+// behind the panel win and the numbers stop being readable.
+// @returns The panel background colour.
+export panelColor(string theme, int transp) =>
+    color.new(theme == "Light" ? #ffffff : #131722, math.max(0, math.min(100, transp)))
+
+// @function The repo's standard bullish colour.
+// @returns TradingView's own green, so scripts sit next to the platform's UI.
+export bullColor() =>
+    #089981
+
+// @function The repo's standard bearish colour.
+// @returns TradingView's own red.
+export bearColor() =>
+    #f23645
+
+// @function The repo's standard accent, used for points of control and for
+// anything flagged as at-a-limit.
+// @returns An amber that reads on both themes.
+export accentColor() =>
+    #d98b1f
+
+// ————— Formatting
+
+// @function Compact human-readable volume: 1.24M, 345.6K, 12.3.
+// @param v The value. na and negative values are handled.
+// @returns A short string suitable for a table cell or a label.
+export formatVolume(float v) =>
+    float av = math.abs(nz(v))
+    string out = switch
+        av >= 1000000000 => str.tostring(v / 1000000000, "#.##") + "B"
+        av >= 1000000    => str.tostring(v / 1000000, "#.##") + "M"
+        av >= 1000       => str.tostring(v / 1000, "#.#") + "K"
+        => str.tostring(nz(v), "#.#")
+    out
+
+// @function Formats a ratio as a percentage string.
+// @param value The numerator.
+// @param total The denominator. Zero and na return "--" rather than a
+// misleading 0%.
+// @param digits Decimal places, 0-4.
+// @returns e.g. "62.4%" or "--".
+export formatPercent(float value, float total, int digits) =>
+    string out = na(total) or total == 0 or na(value) ? "--" :
+         str.tostring(value / total * 100, "#." + str.repeat("#", math.max(0, math.min(4, digits)))) + "%"
+    out
+
+// @function Repeats an on/off glyph pair into a filled/empty meter.
+// @param score How many positions are filled.
+// @param maxScore Total positions.
+// @param onGlyph The filled glyph, e.g. "★".
+// @param offGlyph The empty glyph, e.g. "☆".
+// @returns The meter as one string.
+export glyphMeter(int score, int maxScore, string onGlyph, string offGlyph) =>
+    int filled = math.max(0, math.min(maxScore, score))
+    str.repeat(onGlyph, filled) + str.repeat(offGlyph, math.max(0, maxScore - filled))
+
+// ————— Maths
+
+// @function Clamps a value into a range.
+// @param value The value.
+// @param lo Lower bound.
+// @param hi Upper bound.
+// @returns The clamped value.
+export clamp(float value, float lo, float hi) =>
+    math.max(lo, math.min(hi, value))
+
+// @function Division that returns a fallback instead of na or infinity.
+// @param numerator The numerator.
+// @param denominator The denominator.
+// @param fallback Returned when the denominator is zero or na.
+// @returns The quotient, or the fallback.
+export safeDiv(float numerator, float denominator, float fallback) =>
+    na(denominator) or denominator == 0 ? fallback : numerator / denominator
+
+// @function Where a value sits between two bounds, as a percentage.
+// Used for "price is 62% of the way from the swing low to the swing high".
+// @param value The value.
+// @param lo The 0% bound.
+// @param hi The 100% bound.
+// @returns 0-100, or na when the bounds are unusable.
+export positionBetween(float value, float lo, float hi) =>
+    float span = hi - lo
+    float out = na(span) or span <= 0 ? na : math.max(0.0, math.min(100.0, (value - lo) / span * 100))
+    out
+
+// @function The share of a bar's volume attributable to buying, estimated from
+// where the bar closed inside its own range.
+//
+// STATED PLAINLY: Pine exposes no bid/ask, so no script can know which side was
+// the aggressor. A bar closing at its high counts fully as buying, at its low
+// fully as selling, in the middle 50/50. This is the standard approximation and
+// it is wrong on bars that reverse hard intrabar — exactly where you would most
+// want it to be right. See references/decisions.md D2.
+// @param barOpen Unused by the range model; accepted so a caller can switch
+// models without changing its call sites.
+// @param barHigh The bar's high.
+// @param barLow The bar's low.
+// @param barClose The bar's close.
+// @returns 0.0-1.0. A zero-range bar returns 0.5 rather than na.
+export buyShare(float barOpen, float barHigh, float barLow, float barClose) =>
+    float range = barHigh - barLow
+    float share = range > 0 ? (barClose - barLow) / range : 0.5
+    math.max(0.0, math.min(1.0, share))
+
+// ————— Mapping helpers
+// These exist because every script was writing the same switch, and a typo in
+// one of them fails at runtime rather than at compile time.
+
+// @function Maps a style name to a line.style_* constant.
+// @param name "Solid", "Dashed" or "Dotted". Anything else gives solid.
+// @returns The matching line.style_* constant.
+export lineStyleFrom(string name) =>
+    switch name
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+// @function Maps a size name to a size.* constant, capped at size.normal.
+// The cap is the design system's, not Pine's: size.large and size.huge dwarf
+// TradingView's own chart text and make a script look like an intrusion.
+// @param name "Tiny", "Small" or "Normal".
+// @returns The matching size.* constant.
+export sizeFrom(string name) =>
+    switch name
+        "Tiny"  => size.tiny
+        "Small" => size.small
+        => size.normal
+
+// ————— Library self-check
+// A library cannot be unit-tested offline, so it plots its own invariants. Load
+// it on a chart once: every one of these must read 1.
+
+plot(formatVolume(1240000) == "1.24M" ? 1 : 0, "selfcheck: formatVolume", display = display.data_window)
+plot(glyphMeter(3, 5, "*", "-") == "***--" ? 1 : 0, "selfcheck: glyphMeter", display = display.data_window)
+plot(safeDiv(1, 0, -1) == -1 ? 1 : 0, "selfcheck: safeDiv", display = display.data_window)
+plot(clamp(7, 0, 5) == 5 ? 1 : 0, "selfcheck: clamp", display = display.data_window)
+plot(positionBetween(5, 0, 10) == 50 ? 1 : 0, "selfcheck: positionBetween", display = display.data_window)
+plot(buyShare(1, 2, 1, 2) == 1.0 ? 1 : 0, "selfcheck: buyShare", display = display.data_window)
+plot(na(positionBetween(5, 10, 10)) ? 1 : 0, "selfcheck: positionBetween na", display = display.data_window)

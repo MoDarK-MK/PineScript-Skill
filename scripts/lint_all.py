@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import pine_lint  # noqa: E402
 
-SOURCE_ROOTS = ["assets", "references", "indicators", "strategies"]
+SOURCE_ROOTS = ["assets", "references", "indicators", "strategies", "libraries"]
 EXCLUDED_DIRS = {"release", "fixtures"}
 
 

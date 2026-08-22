@@ -67,7 +67,13 @@ string SIG_GROUP = "Reversal Signal"
 // commit — see references/repo-structure.md.
 // maxval matters on every input used as a history offset below: without it a
 // large value reaches past the auto-detected history buffer and errors at runtime.
-int   pivotLenInput  = input.int(15, "Pivot Sensitivity", minval=2, maxval=400, group=SIG_GROUP)
+int   pivotLenInput  = input.int(
+     15, "Pivot Sensitivity", minval=2, maxval=400, group=SIG_GROUP,
+     tooltip="These settings must match the Reversal Pro indicator for the " +
+     "chart and the backtest to agree — the scoring engine is byte-identical " +
+     "between the two on purpose. A pivot is only confirmed this many bars " +
+     "after the extreme, and the strategy enters at that CONFIRMATION bar, " +
+     "never at the pivot itself, which would be lookahead.")
 int   rsiLenInput    = input.int(14, "RSI Length", minval=1, maxval=400, group=SIG_GROUP)
 int   rsiObInput     = input.int(60, "RSI Exhaustion for Tops", minval=50, maxval=100, group=SIG_GROUP)
 int   rsiOsInput     = input.int(40, "RSI Exhaustion for Bottoms", minval=0, maxval=50, group=SIG_GROUP)
@@ -77,13 +83,23 @@ float wickRatioInput = input.float(0.5, "Wick Rejection", minval=0.1, maxval=1.0
 int   swingLookInput = input.int(50, "Major Swing Lookback", minval=2, maxval=400, group=SIG_GROUP)
 
 // ————— Inputs: Entry
-int  minEntryScoreInput = input.int(3, "Minimum Score To Trade", minval=1, maxval=5, group="Entry")
+int  minEntryScoreInput = input.int(
+     3, "Minimum Score To Trade", minval=1, maxval=5, group="Entry",
+     tooltip="The 0-5 reversal score a signal must reach before it becomes an " +
+     "order. This is the strategy's main quality/frequency dial: raising it " +
+     "trades less and waits for more confirmation. A backtest with very few " +
+     "trades tells you very little regardless of how good it looks.")
 bool confirmedOnlyInput = input.bool(true, "Act Only On Confirmed Bars", group="Entry")
 
 // ————— Inputs: Direction & Regime
 string tradeDirectionInput = input.string(
      DIR_BOTH, "Trade Direction",
-     options=[DIR_BOTH, DIR_LONG, DIR_SHORT], group="Direction & Regime")
+     options=[DIR_BOTH, DIR_LONG, DIR_SHORT], group="Direction & Regime",
+     tooltip="Filters that decide whether a valid signal is allowed to trade at " +
+     "all: direction, an optional higher-timeframe trend gate, and an optional " +
+     "volatility-regime gate. Every filter here removes trades — check what a " +
+     "filter costs in trade count before keeping it, not just what it adds to " +
+     "the win rate.")
 bool   useTrendFilterInput = input.bool(false, "Use HTF Trend Filter", group="Direction & Regime")
 string trendTfInput        = input.timeframe("240", "Trend Timeframe", group="Direction & Regime")
 int    trendMaLenInput     = input.int(200, "Trend MA Length", minval=1, group="Direction & Regime")
@@ -92,7 +108,13 @@ float  minAtrPercentInput  = input.float(
      0.15, "Min ATR % Of Price", minval=0.0, step=0.05, group="Direction & Regime")
 
 // ————— Inputs: Session & Date Window
-bool   useSessionInput       = input.bool(false, "Restrict To Session", group="Session & Date Window")
+bool   useSessionInput       = input.bool(
+     false, "Restrict To Session", group="Session & Date Window",
+     tooltip="Confines trading to a time window, and optionally flattens any " +
+     "open position at the session end. The date window below narrows the " +
+     "backtest itself — useful for holding out a period you have not looked at " +
+     "while tuning, which is the only honest way to check you have not fitted " +
+     "the settings to the past.")
 string sessionInput          = input.session("0930-1600", "Session", group="Session & Date Window")
 string sessionTzInput        = input.string(
      "America/New_York", "Session Timezone",
@@ -107,7 +129,12 @@ int    endDateInput          = input.time(
 // ————— Inputs: Position Sizing
 string sizingModeInput     = input.string(
      SIZE_RISK, "Sizing Mode",
-     options=[SIZE_RISK, SIZE_EQ, SIZE_FIX], group="Position Sizing")
+     options=[SIZE_RISK, SIZE_EQ, SIZE_FIX], group="Position Sizing",
+     tooltip="Risk % sizes each position from the distance to ITS OWN stop, so " +
+     "every trade risks the same amount of equity regardless of how wide the " +
+     "stop is — that is what makes results across different volatility regimes " +
+     "comparable. Equity % and Fixed ignore the stop distance and let risk per " +
+     "trade vary.")
 float  riskPercentInput    = input.float(
      1.0, "Risk % Of Equity Per Trade", minval=0.1, maxval=10.0, step=0.1, group="Position Sizing")
 float  equityPercentInput  = input.float(
@@ -119,7 +146,13 @@ float  qtyStepInput        = input.float(
      0.0, "Quantity Step (0 = fractional ok)", minval=0.0, step=0.1, group="Position Sizing")
 
 // ————— Inputs: Stops & Targets
-string stopModeInput     = input.string(STOP_ATR, "Stop Model", options=[STOP_ATR, STOP_PCT], group="Stops & Targets")
+string stopModeInput     = input.string(
+     STOP_ATR, "Stop Model", options=[STOP_ATR, STOP_PCT], group="Stops & Targets",
+     tooltip="ATR scales the stop with current volatility; Percent keeps it " +
+     "fixed. Targets are set in R — multiples of the stop distance — so a " +
+     "2R target always means twice what the trade risks, whatever the stop " +
+     "model. A minimum-tick floor stops a very quiet market producing a stop " +
+     "too tight to survive the spread.")
 int    atrLenInput       = input.int(14, "ATR Length", minval=1, group="Stops & Targets")
 float  atrStopMultInput  = input.float(2.0, "ATR Stop Multiple", minval=0.1, step=0.1, group="Stops & Targets")
 float  stopPercentInput  = input.float(2.0, "Percent Stop", minval=0.1, step=0.1, group="Stops & Targets")
@@ -132,7 +165,12 @@ int    tp1PercentInput   = input.int(
 bool   useTp2Input       = input.bool(true, "Use TP2 On The Runner", group="Stops & Targets")
 
 // ————— Inputs: Breakeven & Trailing
-bool  useBreakevenInput    = input.bool(true, "Move Stop To Breakeven", group=BE_GROUP)
+bool  useBreakevenInput    = input.bool(
+     true, "Move Stop To Breakeven", group=BE_GROUP,
+     tooltip="Breakeven and trailing are resolved into ONE ratcheting stop " +
+     "price rather than two exits competing with each other, and it only ever " +
+     "moves in the favourable direction. Both trigger on R multiples, so they " +
+     "behave the same way across instruments and volatility regimes.")
 float beTriggerRmultInput  = input.float(1.0, "Breakeven Trigger (R)", minval=0.1, step=0.1, group=BE_GROUP)
 float beOffsetRmultInput   = input.float(0.1, "Breakeven Offset (R)", minval=0.0, step=0.05, group=BE_GROUP)
 bool  useTrailInput        = input.bool(true, "Use Trailing Stop", group=BE_GROUP)
@@ -142,7 +180,11 @@ float trailAtrMultInput    = input.float(2.0, "Trail Distance (ATR)", minval=0.1
 // ————— Inputs: Trade Management
 string oppositeModeInput = input.string(
      OPP_FLIP, "On Opposite Signal",
-     options=[OPP_HOLD, OPP_CLOSE, OPP_FLIP], group="Trade Management")
+     options=[OPP_HOLD, OPP_CLOSE, OPP_FLIP], group="Trade Management",
+     tooltip="What happens when a valid signal arrives against an open " +
+     "position: hold it, close flat, or reverse. Flip is the most active and " +
+     "the most sensitive to a noisy Pivot Sensitivity — it doubles the trade " +
+     "count and the commission with it. The cooldown below is the brake.")
 int    cooldownBarsInput = input.int(0, "Cooldown After Exit (bars)", minval=0, group="Trade Management")
 int    maxEntriesInput   = input.int(1, "Max Concurrent Entries", minval=1, group="Trade Management")
 bool   reanchorInput     = input.bool(true, "Re-anchor Plan To Fill Price", group="Trade Management")

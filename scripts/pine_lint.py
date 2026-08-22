@@ -29,6 +29,7 @@ Suppressing a rule inline:
 """
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -139,11 +140,20 @@ class Finding:
         return RULES[self.code][0]
 
 
+# Set by scripts/mutate_check.py to neutralise ONE rule and confirm the test
+# suite notices. It is read once, here, and does nothing unless deliberately
+# set — a test that cannot fail is worth nothing, and this is how we find out
+# which of these rules are in that state.
+MUTED_RULE = os.environ.get("PINE_LINT_MUTATE", "")
+
+
 class LintResult:
     def __init__(self):
         self.findings = []
 
     def add(self, line_no, code, msg):
+        if code and code == MUTED_RULE:
+            return
         self.findings.append(Finding(line_no, code, msg))
 
     def by_severity(self, sev):
@@ -298,11 +308,30 @@ def call_arg_text(text, func):
 
 
 def split_top_level_args(arg_text):
-    """Splits a call's argument text on commas at paren/bracket depth 0."""
+    """Splits a call's argument text on commas at paren/bracket depth 0.
+
+    String-aware, because a tooltip is prose and prose contains commas. Without
+    this, `input.int(10, "Len", tooltip = "Raise it, or lower it")` reports four
+    arguments and the tooltip is truncated at the comma."""
     args = []
     depth = 0
     current = []
+    in_str = None
+    escaped = False
     for ch in arg_text:
+        if in_str:
+            current.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == '\\':
+                escaped = True
+            elif ch == in_str:
+                in_str = None
+            continue
+        if ch in ('"', "'"):
+            in_str = ch
+            current.append(ch)
+            continue
         if ch in '([':
             depth += 1
         elif ch in ')]':

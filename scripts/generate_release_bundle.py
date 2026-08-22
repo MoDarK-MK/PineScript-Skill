@@ -33,6 +33,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import pine_lint  # noqa: E402  (reuse the same linter, don't reimplement checks)
+import input_inventory  # noqa: E402
 
 LICENSE_HEADER = (
     "// This source code is subject to the terms of the Mozilla Public License 2.0 "
@@ -308,6 +309,13 @@ def main():
     desc = build_publish_description(name, version_info, changelog_text, is_strategy, declaration)
     (out_dir / "PUBLISH_DESCRIPTION.md").write_text(desc, encoding="utf-8")
 
+    # The settings panel is the published script's user interface, so the
+    # bundle carries a table of it. Generated, never hand-written, so it cannot
+    # drift from the source the way a hand-kept list always eventually does.
+    script_inputs = input_inventory.extract_inputs(text)
+    (out_dir / "INPUTS.md").write_text(
+        input_inventory.render_markdown(script_inputs, name), encoding="utf-8")
+
     summary_lines = [
         f"Release bundle for {name} v{version_info.get('version', '?')}",
         f"Generated {datetime.date.today().isoformat()}",
@@ -337,6 +345,11 @@ def main():
         summary_lines.append("Test-mode defaults: none found defaulting to true. OK.")
     summary_lines.append("")
     summary_lines.append(f"License header: {'added (was missing)' if license_added else 'already present'}.")
+    documented = sum(1 for i in script_inputs if i["tooltip"])
+    summary_lines.append(
+        f"Inputs: {len(script_inputs)} across "
+        f"{len(input_inventory.group_order(script_inputs))} group(s); "
+        f"{documented} carry a tooltip. See INPUTS.md.")
     summary_lines.append("")
     ready = lint_ok and not test_mode_warnings and not strategy_blocking
     if args.strict and strategy_advisory:
@@ -347,6 +360,7 @@ def main():
     print(f"Release bundle written to {out_dir}")
     print(f"  - {final_pine_path.name}")
     print("  - PUBLISH_DESCRIPTION.md")
+    print("  - INPUTS.md")
     print("  - RELEASE_SUMMARY.txt")
     print()
     print("\n".join(summary_lines))

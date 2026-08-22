@@ -21,6 +21,10 @@ TradingView's servers.
 
 | File | Covers |
 |---|---|
+| `references/mtf-guide.md` | `request.security` / `request.security_lower_tf`: the three lookahead combinations, which one is the bug, gaps, the 40-call budget, and what "repaint" actually means |
+| `references/alerts-guide.md` | `alertcondition` vs `alert()`, frequency, placeholders, webhook JSON payloads, and why no secret belongs in a message |
+| `references/troubleshooting.md` | Symptom-first index of every failure this repo actually hit, with the rule that now catches each one |
+| `references/decisions.md` | Decision record: what was decided, why, and what would change our mind |
 | `references/pine-v6-guide.md` | v5→v6 breaking changes, dynamic requests, repainting traps, `var`/`varip`, verified hard platform limits |
 | `references/style-guide.md` | Official naming/structure/spacing conventions (camelCase, SNAKE_CASE, section order, line-wrapping) |
 | `references/lint-rules.md` | Full catalog of all 52 lint rules (codes PINE001–PINE053; PINE024 unassigned) with bad/good examples |
@@ -28,7 +32,8 @@ TradingView's servers.
 | `references/strategy-guide.md` | Building strategies: signal design, position sizing math, the four risk modules, filters, overfitting, walk-forward, v6 strategy pitfalls |
 | `references/publishing-guide.md` | TradingView House Rules condensed: privacy/visibility, strategy realism, description format |
 | `references/repo-structure.md` | Folder layout, `version.json`, `CHANGELOG.md` format, optional pre-commit hook |
-| `references/snippets/` | Copy-paste Pine fragments: `palette.pine` (unified colors + theme helpers), `table_helpers.pine`, `glyphs.pine`, `live_update.pine`. Pine has no local imports; paste, or publish as a TradingView library for real reuse |
+| `references/snippets/` | Copy-paste Pine fragments for the parts a library cannot hold: `table_helpers.pine`, `glyphs.pine`, `live_update.pine`, `palette.pine`. Pine has no local imports, so stateful helpers are pasted |
+| `libraries/pine_toolkit/` | The pure helpers as a real Pine `library()`: theme palette, `formatVolume`, `glyphMeter`, `clamp`/`safeDiv`/`positionBetween`/`buyShare`, constant mappers. Publish it once, then `import` instead of pasting |
 
 Several of these apply to any single request — e.g. "write me an indicator" still
 benefits from `pine-v6-guide.md` (correctness) and `design-system.md` (it not looking

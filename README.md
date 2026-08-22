@@ -174,6 +174,10 @@ Every script benefits from these docs; required reading before shipping:
 
 | Guide | Purpose |
 |-------|---------|
+| **[mtf-guide.md](references/mtf-guide.md)** | Multi-timeframe: the three `lookahead` combinations and which is the bug, `security_lower_tf`, gaps, the 40-call budget, repaint vs lookahead |
+| **[alerts-guide.md](references/alerts-guide.md)** | `alertcondition` vs `alert()`, frequency, placeholders, webhook JSON, and the security rules for alert payloads |
+| **[troubleshooting.md](references/troubleshooting.md)** | Symptom-first: every failure this repo hit, its cause, and the rule that now catches it |
+| **[decisions.md](references/decisions.md)** | Decision record — what was decided, why, and what would change our mind |
 | **[pine-v6-guide.md](references/pine-v6-guide.md)** | v5→v6 breaking changes, platform limits, dynamic requests, repainting traps, `var`/`varip` semantics |
 | **[style-guide.md](references/style-guide.md)** | Official naming conventions (camelCase/SNAKE_CASE), section order, spacing, line wrapping |
 | **[lint-rules.md](references/lint-rules.md)** | Full catalog of 52 lint rules (codes PINE001–PINE053; PINE024 unassigned) with examples and rationale |

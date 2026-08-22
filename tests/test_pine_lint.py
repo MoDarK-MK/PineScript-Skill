@@ -3,21 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.helpers import REPO_ROOT, VALID_INDICATOR, VALID_STRATEGY, run_script
+from tests.helpers import (
+    REPO_ROOT, VALID_INDICATOR, VALID_STRATEGY, codes, lint_text, run_script)
 
 import pine_lint
-
-
-def lint_text(text):
-    """Lint a Pine source string with the default config; returns LintResult."""
-    with tempfile.TemporaryDirectory() as td:
-        path = Path(td) / "script.pine"
-        path.write_text(text, encoding="utf-8")
-        return pine_lint.lint_file(str(path), dict(pine_lint.DEFAULT_CONFIG))
-
-
-def codes(result):
-    return {f.code for f in result.findings}
 
 
 class TestRuleCatalog(unittest.TestCase):
