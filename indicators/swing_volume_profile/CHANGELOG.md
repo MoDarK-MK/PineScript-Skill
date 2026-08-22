@@ -3,6 +3,26 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.3.0] - 2026-08-22
+### Added
+- **Entry level.** One line marking the strongest volume IMBALANCE on the tradeable side of price: for a buy, the row below price where buying most outweighed selling; for a sell, the row above price where selling most outweighed buying. Scored as `(buy - sell) / busiest row`, one number carrying both how lopsided the row was and how much volume it held — a row where buyers barely won on tiny volume scores near zero, and so does a huge row that was evenly matched. Neither is a level.
+- Below the Minimum Strength input nothing is drawn at all and the table says "none". A profile with no strong imbalance genuinely has no level to offer, and inventing one would be the exact failure this feature must not have.
+- The search covers every drawn swing by default, not just the newest: the strongest level available is often in an older leg price has not returned to yet, and an untested imbalance is more interesting than a tested one.
+- **Value Area (VAH / VAL)** per swing, built the standard way — grown outward from the POC, always taking the heavier neighbour, until 70% of the swing's volume is inside. Standard matters here because other traders are drawing the same two lines.
+- **Total volume label above each swing's profile**, with the buy share. The developing swing is prefixed with `~` because its number is still moving. The tooltip carries the buy/sell split, bar count and row count.
+- Alert when price reaches a drawn entry level, on bar close. Mid-bar a touch can un-happen, and an alert for something that never finished is worse than no alert.
+- Table gained Entry level, Strength, Distance, Swing volume and Value area rows, with the entry block first — it is the only line on the chart that answers a question rather than describing history.
+
+### Changed
+- **Volume distribution is now body-weighted by default.** Spreading a bar's volume evenly across every row it spans gives a wick the same volume per row as the body, which is wrong in an obvious way: a wick is a price the market REJECTED and traded through quickly. Even distribution is still available. The weighting is closed-form, so it costs no extra pass over the rows, and it preserves each bar's total volume exactly.
+- New "Buy/Sell Estimate" option blending close-in-range with bar direction. The default is left on plain close-in-range: neither is verifiably better everywhere, and quietly changing the numbers under a chart someone has been reading would be worse than offering the choice.
+- **The profile drawing now runs once per bar instead of once per tick.** Up to 492 box `.set_*()` calls were re-running on every tick to redraw a picture that was already correct — by far the most expensive thing this script did. Only the entry level tracks live price, so only it stays on the per-tick path: one pass over the rows plus two line updates.
+- The redraw trigger is a generation counter bumped by every change to the set of profiles, not the swing count. A push plus a drop on the same tick leaves the count identical and the picture wrong.
+
+### Fixed
+- In "Best Side Only" mode both entry prices were published while only one was drawn, so the alert could fire for a level that was not on the chart. Only drawn levels are published now.
+- Removed `drawableSwings`, dead since the 0.2.0 budget rework, and two write-only `array.shift()` results. All three were found by the new PINE051 rule.
+
 ## [0.2.0] - 2026-08-22
 ### Added
 - Price Rows Per Swing now goes to 500, up from 60. Rows are built at the resolution you ask for regardless of how many get drawn, so POC / Max Buy / Max Sell sharpen with every row added.

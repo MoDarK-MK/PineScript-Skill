@@ -17,10 +17,33 @@ indicator(
 // Swings are found automatically from pivots, so the profile always describes
 // the leg price is actually in — not an arbitrary last-N-bars box.
 //
-// Each swing gets three marker lines, which is what the profile is for:
-//   • POC      — the price row that traded the most total volume
-//   • Max Buy  — the row with the most estimated BUYING
-//   • Max Sell — the row with the most estimated SELLING
+// Each swing gets five reference lines and a volume tag:
+//   • POC       — the price row that traded the most total volume
+//   • Max Buy   — the row with the most estimated BUYING
+//   • Max Sell  — the row with the most estimated SELLING
+//   • VAH / VAL — the edges of the value area, the band holding 70% of the
+//                 swing's volume. Its EDGES are what people trade: price
+//                 leaving the area is the market disagreeing with the price it
+//                 spent the whole swing agreeing on.
+//   • a label above each profile with the swing's total volume and buy share
+//
+// And ONE line that answers a question rather than describing history:
+//
+//   • ENTRY — the strongest volume IMBALANCE on the tradeable side of price.
+//     For a buy, the row below price where buying most outweighed selling; for
+//     a sell, the row above price where selling most outweighed buying. Scored
+//     as (buy - sell) / busiest row, which is one number carrying both things
+//     that matter: how lopsided the row was, scaled by how much volume it held.
+//     A row where buyers barely won on tiny volume scores near zero, and so
+//     does a huge row that was evenly matched. Neither is a level. What scores
+//     high is a price where one side traded heavily and the other did not
+//     answer.
+//
+//     IT IS A LEVEL, NOT A SIGNAL. It says where the book was heavy. It says
+//     nothing about trend, direction, or whether now is the time. Below the
+//     Minimum Strength input nothing is drawn at all, because a profile with no
+//     strong imbalance genuinely has no level to offer and inventing one is the
+//     exact failure this indicator should not have.
 //
 // Tuned for the 5-minute chart out of the box: Pivot Length 10 (≈50-minute
 // swings), 30 rows, 3 swings. Those are inputs — raise Pivot Length on a lower
@@ -52,17 +75,46 @@ indicator(
 //   table reports the budget in use. To buy more drawn detail: fewer swings, or
 //   turn the sell|buy split off, which halves the cost per row.
 //
-// PERFORMANCE: a completed swing's profile is computed ONCE, when the swing
-// closes, and then only repositioned. Only the developing swing is recomputed,
-// and that is memoised per bar rather than per tick. See
-// references/performance-guide.md.
+// ACCURACY: two models, both adjustable, neither pretending to be order flow.
+//   Distribution — a bar's volume is spread across the rows it spans. Even
+//     gives a wick the same volume per row as the body, which is wrong in an
+//     obvious way: a wick is a price the market REJECTED and traded through
+//     quickly. Body-weighted is the default and puts most of the volume between
+//     open and close.
+//   Buy/sell split — see above. The plain close-in-range model is the default;
+//     the blend also counts bar direction, which helps on trending bars and
+//     hurts on choppy ones. Neither is verifiably better everywhere, so the
+//     default is the well-understood one.
+//
+// PERFORMANCE: three tiers, because they change at three different rates.
+//   A completed swing's profile is computed ONCE, when the swing closes.
+//   The developing swing is recomputed once per BAR, not per tick.
+//   The profile drawing — up to 492 box .set_*() calls — now also runs once per
+//     bar. It used to run on every tick, redrawing a picture that was already
+//     correct, and it was by far the most expensive thing this script did.
+//   Only the entry level tracks live price, so only it runs per tick: one pass
+//     over the rows plus two line updates.
+// See references/performance-guide.md.
 
 // ————— Constants
 color TRANSPARENT_COLOR = #00000000
 string THEME_DARK       = "Dark"
 string THEME_LIGHT      = "Light"
-int    MARKERS_PER_SWING = 3          // POC, max buy, max sell
+int    MARKERS_PER_SWING = 5          // POC, max buy, max sell, VAH, VAL
 int    MAX_ROW_BOXES     = 492        // 500 box cap, a few held in reserve
+string ENTRY_BEST  = "Best Side Only"
+string ENTRY_BOTH  = "Both Sides"
+string ENTRY_BUY   = "Buy Side Only"
+string ENTRY_SELL  = "Sell Side Only"
+string DIST_BODY   = "Body-weighted"
+string DIST_EVEN   = "Even"
+string SPLIT_RANGE = "Close position in range"
+string SPLIT_BLEND = "Range + bar direction"
+// How much of a body row's volume a WICK row gets, under body-weighted
+// distribution. A heuristic, not a measurement: Pine cannot say how volume
+// was really spread inside a bar. What is not a heuristic is that giving a
+// rejected price the same weight as a traded-through one is wrong.
+float  WICK_WEIGHT  = 0.35
 
 // ————— Inputs: Swing Detection
 string SW_GROUP = "Swing Detection"
@@ -110,6 +162,86 @@ bool   showSplitInput = input.bool(
      "segments. Off draws one bar coloured by whichever side dominated - and costs " +
      "HALF the boxes, which is the cheapest way to buy more rows.")
 
+// ————— Inputs: Entry Levels
+string EN_GROUP = "Entry Levels"
+bool   showEntryInput = input.bool(
+     true, "Show Entry Level", group=EN_GROUP,
+     tooltip="Marks the strongest volume IMBALANCE on the tradeable side of price: " +
+     "for a buy, the row below price where buying most outweighed selling; for a " +
+     "sell, the row above price where selling most outweighed buying. Those are the " +
+     "prices one side previously defended and the other side failed to break." +
+     "\n\nIt is a level, not a signal. It says where the book was heavy, not that " +
+     "the trade is good, and it says nothing at all about direction, trend or " +
+     "timing. Read Strength in the table before using it: a level built on a weak " +
+     "imbalance is a level that will not hold.")
+string entryModeInput = input.string(
+     ENTRY_BEST, "Which Side", options=[ENTRY_BEST, ENTRY_BOTH, ENTRY_BUY, ENTRY_SELL],
+     group=EN_GROUP,
+     tooltip="Best Side draws only the stronger of the two, which is the one the " +
+     "profile actually argues for. Both Sides draws the buy level below price and " +
+     "the sell level above it at the same time — useful for framing a range, " +
+     "cluttered when you only want one decision.")
+float  entryMinStrengthInput = input.float(
+     15.0, "Minimum Strength (%)", minval=1.0, maxval=100.0, step=1.0, group=EN_GROUP,
+     tooltip="How lopsided a row must be before it counts, as a percentage of the " +
+     "busiest row in the swing. Below this nothing is drawn and the table says so — " +
+     "a profile with no strong imbalance genuinely has no level to offer, and " +
+     "inventing one would be the failure mode this input exists to prevent.")
+bool   entryExtendInput = input.bool(
+     true, "Extend Entry Lines Right", group=EN_GROUP)
+int    entryWidthInput = input.int(
+     2, "Entry Line Width", minval=1, maxval=4, group=EN_GROUP)
+string entrySourceInput = input.string(
+     "All shown swings", "Search For Levels In",
+     options=["All shown swings", "Newest swing only"], group=EN_GROUP,
+     tooltip="The strongest level available is often in an OLDER leg that price " +
+     "has not come back to yet — an untested imbalance is more interesting than a " +
+     "tested one, not less. Newest swing only restricts the search to the leg " +
+     "price is in now, which is fresher but has less to work with early in a " +
+     "swing.\n\nStrength is measured against each swing's own busiest row, so " +
+     "levels from different swings stay comparable.")
+bool   entryAlertInput = input.bool(
+     true, "Alert When Price Reaches The Level", group=EN_GROUP,
+     tooltip="Fires on bar close, once per bar. Mid-bar the touch can un-happen, " +
+     "and an alert for something that never finished is worse than no alert.")
+
+// ————— Inputs: Value Area
+string VA_GROUP = "Value Area"
+bool   showValueAreaInput = input.bool(
+     true, "Show Value Area (VAH / VAL)", group=VA_GROUP,
+     tooltip="The price band containing the given share of the swing's volume, " +
+     "grown outward from the POC. It is the range the market agreed on. Its edges " +
+     "matter more than its middle: price leaving the value area is the market " +
+     "disagreeing, and price returning into it is the disagreement failing.")
+float  valueAreaPctInput = input.float(
+     70.0, "Value Area (%)", minval=30.0, maxval=95.0, step=5.0, group=VA_GROUP,
+     tooltip="70% is the convention, and conventions matter here because other " +
+     "traders are drawing the same line.")
+color  vaColorInput = input.color(#787b86, "Value Area Color", group=VA_GROUP)
+
+// ————— Inputs: Accuracy
+string AC_GROUP = "Accuracy"
+string distModeInput = input.string(
+     DIST_BODY, "Volume Distribution", options=[DIST_BODY, DIST_EVEN], group=AC_GROUP,
+     tooltip="How one bar's volume is spread across the price rows it spans. Even " +
+     "gives a wick the same volume per row as the body, which is wrong in an " +
+     "obvious way: a wick is a price the market REJECTED and traded through " +
+     "quickly. Body-weighted puts most of the bar's volume between open and close " +
+     "and is the better default.")
+string splitModeInput = input.string(
+     SPLIT_RANGE, "Buy/Sell Estimate", options=[SPLIT_RANGE, SPLIT_BLEND], group=AC_GROUP,
+     tooltip="Pine exposes no bid/ask, so both of these are estimates and neither " +
+     "is order flow. Close-in-range is the standard one. Range + direction also " +
+     "counts whether the bar closed above or below the previous close, which helps " +
+     "on trending bars and hurts on choppy ones. Neither is verifiably better " +
+     "everywhere, which is why the default is left on the plain, well-understood " +
+     "one rather than quietly changed under you.")
+bool   showVolumeTagInput = input.bool(
+     true, "Label Each Swing's Total Volume", group=AC_GROUP,
+     tooltip="Prints the swing's total traded volume above its profile, with the " +
+     "buy share. The developing swing is prefixed with ~ because its number is " +
+     "still moving.")
+
 // ————— Inputs: Marker Lines
 string LN_GROUP = "Marker Lines"
 bool   showPocInput     = input.bool(true, "POC (most total volume)", inline="poc", group=LN_GROUP)
@@ -149,6 +281,8 @@ type SwingProfile
     int   pocIdx
     int   maxBuyIdx
     int   maxSellIdx
+    int   vaTopIdx
+    int   vaBotIdx
     float peakRow
     float totalVol
     float buyVol
@@ -239,16 +373,49 @@ buildProfile(int leftBar, int rightBar, int rows, int scanCap) =>
             float barVol = nz(volume[i])
             if barVol > 0
                 float barRange = high[i] - low[i]
-                float buyShare = barRange > 0 ? (close[i] - low[i]) / barRange : 0.5
+                float rangePos = barRange > 0 ? (close[i] - low[i]) / barRange : 0.5
+                float buyShare = rangePos
+                if splitModeInput == SPLIT_BLEND
+                    // The tick rule, at bar resolution: which way the bar closed
+                    // relative to the last one. Averaged with the range position
+                    // rather than replacing it, because each is wrong in a
+                    // different place and neither is order flow.
+                    float dirShare = close[i] > close[i + 1] ? 1.0 :
+                         close[i] < close[i + 1] ? 0.0 : 0.5
+                    buyShare := (rangePos + dirShare) / 2
                 buyShare := math.max(0.0, math.min(1.0, buyShare))
                 int startIdx = int(math.floor((low[i] - lo) / step))
                 int endIdx   = int(math.floor((high[i] - lo) / step))
                 startIdx := math.max(0, math.min(useRows - 1, startIdx))
                 endIdx   := math.max(0, math.min(useRows - 1, endIdx))
-                float perRow = barVol / (endIdx - startIdx + 1)
+                // Body rows carry the bar's volume; wick rows carry a fraction of
+                // it. A wick is a price the market REJECTED and traded through
+                // quickly, so giving it the same volume per row as the body
+                // overstates every extreme in the profile — which is precisely
+                // where the levels people trade get drawn.
+                int bodyStart = startIdx
+                int bodyEnd = endIdx
+                float wickWeight = 1.0
+                if distModeInput == DIST_BODY
+                    float bodyLo = math.min(open[i], close[i])
+                    float bodyHi = math.max(open[i], close[i])
+                    bodyStart := math.max(startIdx, math.min(useRows - 1,
+                         int(math.floor((bodyLo - lo) / step))))
+                    bodyEnd := math.min(endIdx, math.max(0,
+                         int(math.floor((bodyHi - lo) / step))))
+                    if bodyEnd < bodyStart
+                        bodyEnd := bodyStart
+                    wickWeight := WICK_WEIGHT
+                int bodyCount = bodyEnd - bodyStart + 1
+                int wickCount = (endIdx - startIdx + 1) - bodyCount
+                // Closed form, so the weighting costs no extra pass over the rows.
+                float weightSum = bodyCount + wickCount * wickWeight
+                float unitVol = barVol / math.max(weightSum, 1e-10)
                 for r = startIdx to endIdx
-                    array.set(buys, r, array.get(buys, r) + perRow * buyShare)
-                    array.set(sells, r, array.get(sells, r) + perRow * (1 - buyShare))
+                    float w = r >= bodyStart and r <= bodyEnd ? 1.0 : wickWeight
+                    float rowVol = unitVol * w
+                    array.set(buys, r, array.get(buys, r) + rowVol * buyShare)
+                    array.set(sells, r, array.get(sells, r) + rowVol * (1 - buyShare))
                 grandTotal += barVol
                 grandBuy   += barVol * buyShare
         // Three separate peaks: the row that traded most in total, the row that
@@ -272,17 +439,72 @@ buildProfile(int leftBar, int rightBar, int rows, int scanCap) =>
             if s > peakSell
                 peakSell := s
                 sellIdx := r
+        // Value area: grow outward from the POC, always taking the heavier
+        // neighbour, until the target share of the swing's volume is inside.
+        // This is the standard construction, and standard matters here — other
+        // traders are drawing the same two lines.
+        int   vaTop = pocIdx
+        int   vaBot = pocIdx
+        float vaTarget = grandTotal * valueAreaPctInput / 100
+        float vaVol = array.get(buys, pocIdx) + array.get(sells, pocIdx)
+        // Bounded by the row count: each pass moves at least one edge, so it can
+        // never run longer than there are rows, whatever the volume looks like.
+        for _step = 1 to useRows
+            if vaVol >= vaTarget or (vaBot <= 0 and vaTop >= useRows - 1)
+                break
+            float above = vaTop < useRows - 1 ?
+                 array.get(buys, vaTop + 1) + array.get(sells, vaTop + 1) : -1.0
+            float below = vaBot > 0 ?
+                 array.get(buys, vaBot - 1) + array.get(sells, vaBot - 1) : -1.0
+            if above >= below
+                vaTop += 1
+                vaVol += above
+            else
+                vaBot -= 1
+                vaVol += below
         if peakTotal > 0
             result := SwingProfile.new(
                  leftBar = math.max(leftBar, bar_index - leftOff), rightBar = rightBar,
                  lo = lo, step = step, pocIdx = pocIdx, maxBuyIdx = buyIdx,
-                 maxSellIdx = sellIdx, peakRow = peakTotal, totalVol = grandTotal,
+                 maxSellIdx = sellIdx, vaTopIdx = vaTop, vaBotIdx = vaBot,
+                 peakRow = peakTotal, totalVol = grandTotal,
                  buyVol = grandBuy, buyRows = buys, sellRows = sells)
     result
 
 // @function Price at the centre of a profile row.
 rowPrice(SwingProfile p, int idx) =>
     p.lo + (idx + 0.5) * p.step
+
+// @function The strongest volume imbalance on each side of a price.
+//
+// Returns [buyIdx, buyStrength, sellIdx, sellStrength]; an index of -1 means
+// that side has nothing worth drawing.
+//
+// The score is (buy - sell) / peakRow, which is one number carrying both things
+// that matter: how lopsided the row was, scaled by how much volume it held.
+// A row where buyers barely won on tiny volume scores near zero, and so does a
+// huge row that was evenly matched. Neither is a level. What scores high is a
+// price where one side traded heavily and the other side did not answer.
+//
+// Priced off the row CENTRES, and evaluated against live price, so this is the
+// only part of the drawing that has to run on every tick.
+bestEntry(SwingProfile p, float price, float minStrength) =>
+    int rows = array.size(p.buyRows)
+    int   buyIdx = -1
+    int   sellIdx = -1
+    float buyBest = minStrength
+    float sellBest = minStrength
+    if p.peakRow > 0 and rows > 0
+        for r = 0 to rows - 1
+            float rowMid = p.lo + (r + 0.5) * p.step
+            float imbalance = (array.get(p.buyRows, r) - array.get(p.sellRows, r)) / p.peakRow
+            if rowMid < price and imbalance > buyBest
+                buyBest := imbalance
+                buyIdx := r
+            if rowMid > price and -imbalance > sellBest
+                sellBest := -imbalance
+                sellIdx := r
+    [buyIdx, buyIdx >= 0 ? buyBest : 0.0, sellIdx, sellIdx >= 0 ? sellBest : 0.0]
 
 // @function Grows a box pool, parking new boxes invisibly.
 ensureBoxPool(array<box> pool, int needed) =>
@@ -336,7 +558,6 @@ hideLabelsFrom(array<label> pool, int from) =>
 // rows that actually hold volume — at high resolution most rows in a swing are
 // empty, and an empty row now costs nothing at all. Newest swing draws first, so
 // if the budget does run out it is the oldest swing that thins, not the live one.
-int drawableSwings = maxSwingsInput + (showLiveSwingInput ? 1 : 0)
 int boxesPerRow    = showSplitInput ? 2 : 1
 int profileRows    = rowsInput
 
@@ -355,6 +576,11 @@ bool  newPivot  = not na(pivotHigh) or not na(pivotLow)
 var array<int> pivotBars = array.new<int>()
 var array<SwingProfile> swings = array.new<SwingProfile>()
 
+// Bumped by every change to the set of profiles. The drawing compares against
+// it rather than against the swing count, because a push plus a drop on the
+// same tick leaves the count identical and the picture wrong.
+var int profileGen = 0
+
 if newPivot
     int pivotBar = bar_index - pivotLenInput
     // Build the profile for the leg that just closed, then keep only the most
@@ -364,11 +590,13 @@ if newPivot
         SwingProfile finished = buildProfile(prevBar, pivotBar, profileRows, maxSwingBarsInput)
         if not na(finished)
             array.push(swings, finished)
+            profileGen += 1
             while array.size(swings) > maxSwingsInput
-                SwingProfile dropped = array.shift(swings)
+                array.shift(swings)
+                profileGen += 1
     array.push(pivotBars, pivotBar)
     while array.size(pivotBars) > maxSwingsInput + 2
-        int droppedBar = array.shift(pivotBars)
+        array.shift(pivotBars)
 
 // The developing leg: last confirmed pivot to the current bar. Memoised on
 // bar_index so it recomputes once per bar rather than on every realtime tick —
@@ -381,12 +609,27 @@ if showLiveSwingInput and array.size(pivotBars) > 0
         liveCachedBar := bar_index
         int lastPivot = array.get(pivotBars, array.size(pivotBars) - 1)
         liveSwing := buildProfile(lastPivot, bar_index, profileRows, maxSwingBarsInput)
+        profileGen += 1
 
 // ————— Visuals: pools
 var array<box>   rowBoxes    = array.new<box>()
 var int          boxesUsed   = 0
 var array<line>  markerLines = array.new<line>()
 var array<label> markerTags  = array.new<label>()
+
+// The entry level is the one drawing that depends on live price, so it lives in
+// its own pool and updates on every tick while everything else does not.
+var array<line>  entryLines = array.new<line>()
+var array<label> entryTags  = array.new<label>()
+var array<label> volumeTags = array.new<label>()
+
+// Live state, published so the table and the alerts read the same numbers the
+// chart is showing rather than recomputing them and drifting.
+var float entryBuyPrice   = na
+var float entrySellPrice  = na
+var float entryBuyPower   = 0.0
+var float entrySellPower  = 0.0
+
 
 // @function Draws one swing's rows into the box pool starting at `cursor`,
 // stopping before box index `limit`, and returns how many boxes it used.
@@ -434,6 +677,25 @@ drawRows(SwingProfile p, array<box> pool, int cursor, int limit, int rightEdge, 
                 used += 1
     used
 
+// @function Prints a swing's total traded volume above its profile.
+// `settled` is false for the leg still forming, whose number is still moving.
+drawVolumeTag(SwingProfile p, label lb, int x, float topPrice, bool settled) =>
+    float buyPct = p.totalVol > 0 ? p.buyVol / p.totalVol * 100 : na
+    string prefix = settled ? "" : "~"
+    label.set_xy(lb, x, topPrice)
+    label.set_text(lb, prefix + formatVolume(p.totalVol) +
+         (na(buyPct) ? "" : "  " + str.tostring(buyPct, "#") + "% buy"))
+    label.set_textcolor(lb, na(buyPct) or buyPct >= 50 ? buyColorInput : sellColorInput)
+    label.set_size(lb, size.small)
+    label.set_style(lb, label.style_label_down)
+    label.set_color(lb, TRANSPARENT_COLOR)
+    label.set_tooltip(lb, (settled ? "Completed swing" : "Developing swing — still changing") +
+         "\nTotal volume: " + formatVolume(p.totalVol) +
+         "\nBuying: " + formatVolume(p.buyVol) +
+         "\nSelling: " + formatVolume(p.totalVol - p.buyVol) +
+         "\nBars: " + str.tostring(p.rightBar - p.leftBar + 1) +
+         "\nRows: " + str.tostring(array.size(p.buyRows)))
+
 // @function Draws one marker line (and optional label), returning 1 if it was
 // used so the caller can advance its cursor.
 drawMarker(bool enabled, float price, string tag, color col, array<line> linePool,
@@ -458,20 +720,62 @@ drawMarker(bool enabled, float price, string tag, color col, array<line> linePoo
         used := 1
     used
 
-// ————— Visuals: draw every swing
-if barstate.islast
-    int swingCount = array.size(swings)
-    int liveCount  = na(liveSwing) ? 0 : 1
-    int totalSwings = swingCount + liveCount
+// @function Draws one entry level and its label.
+drawEntry(line ln, label lb, float price, float power, bool isBuy, int leftBar) =>
+    color col = isBuy ? buyColorInput : sellColorInput
+    line.set_xy1(ln, leftBar, price)
+    line.set_xy2(ln, bar_index, price)
+    line.set_color(ln, col)
+    line.set_width(ln, entryWidthInput)
+    line.set_style(ln, line.style_solid)
+    line.set_extend(ln, entryExtendInput ? extend.right : extend.none)
+    label.set_xy(lb, bar_index, price)
+    label.set_text(lb, (isBuy ? "BUY " : "SELL ") + str.tostring(price, format.mintick) +
+         "  " + str.tostring(power * 100, "#") + "%")
+    label.set_textcolor(lb, col)
+    label.set_size(lb, size.small)
+    label.set_style(lb, label.style_label_left)
+    label.set_color(lb, TRANSPARENT_COLOR)
+    label.set_tooltip(lb,
+         (isBuy ? "Strongest BUY imbalance below price" : "Strongest SELL imbalance above price") +
+         "\nStrength: " + str.tostring(power * 100, "#.#") + "% of the busiest row" +
+         "\nDistance: " + str.tostring(math.abs(close - price), format.mintick) +
+         "\n\nThis is a level, not a signal. It marks where one side traded " +
+         "heavily and the other did not answer — it says nothing about trend, " +
+         "direction or timing.")
+
+
+// ————— Visuals: the profile, redrawn once per bar
+//
+// Nothing in this block depends on live price, and the profiles themselves only
+// change when a bar closes or a pivot confirms. Running it on every tick meant
+// up to 492 box .set_*() calls to redraw a picture that was already correct —
+// the single most expensive thing this script did, repeated for no reason. The
+// entry level, which genuinely does track price, is drawn separately below.
+//
+// The generation counter is part of the trigger, not just the bar: a pivot can
+// confirm mid-bar, and a new swing must not wait for the next candle to appear.
+var int drawnBar = na
+var int drawnGen = -1
+int swingCount = array.size(swings)
+int liveCount  = na(liveSwing) ? 0 : 1
+int totalSwings = swingCount + liveCount
+bool profileNeedsRedraw = na(drawnBar) or drawnBar != bar_index or drawnGen != profileGen
+
+if barstate.islast and profileNeedsRedraw
+    drawnBar := bar_index
+    drawnGen := profileGen
     // Ask for what the swings would use, capped by what TradingView allows.
     int poolSize = math.min(
          MAX_ROW_BOXES, math.max(1, totalSwings * profileRows * boxesPerRow))
     ensureBoxPool(rowBoxes, poolSize)
     ensureLinePool(markerLines, math.max(1, totalSwings * MARKERS_PER_SWING))
     ensureLabelPool(markerTags, math.max(1, totalSwings * MARKERS_PER_SWING))
+    ensureLabelPool(volumeTags, math.max(1, totalSwings))
 
     int boxCursor = 0
     int lineCursor = 0
+    int tagCursor = 0
     // The guard is not cosmetic: Pine counts DOWN when a for-loop's end value is
     // below its start, so `0 to totalSwings - 1` with no swings yet would run
     // with i = 0 and i = -1 and index an empty array.
@@ -504,23 +808,118 @@ if barstate.islast
                 lineCursor += drawMarker(
                      showMaxSellInput, rowPrice(p, p.maxSellIdx), "MAX SELL", maxSellColorInput,
                      markerLines, markerTags, lineCursor, lineCursor, p.leftBar, markerRight)
+                // The value area's EDGES are what people trade — price leaving
+                // the area is the market disagreeing with the price it spent
+                // most of the swing agreeing on.
+                lineCursor += drawMarker(
+                     showValueAreaInput, rowPrice(p, p.vaTopIdx), "VAH", vaColorInput,
+                     markerLines, markerTags, lineCursor, lineCursor, p.leftBar, markerRight)
+                lineCursor += drawMarker(
+                     showValueAreaInput, rowPrice(p, p.vaBotIdx), "VAL", vaColorInput,
+                     markerLines, markerTags, lineCursor, lineCursor, p.leftBar, markerRight)
+                if showVolumeTagInput
+                    float profileTop = p.lo + array.size(p.buyRows) * p.step
+                    drawVolumeTag(p, array.get(volumeTags, tagCursor),
+                         int((leftEdge + rightEdge) / 2), profileTop, i < swingCount)
+                    tagCursor += 1
     boxesUsed := boxCursor
     hideBoxesFrom(rowBoxes, boxCursor)
     hideLinesFrom(markerLines, lineCursor)
     hideLabelsFrom(markerTags, lineCursor)
+    hideLabelsFrom(volumeTags, tagCursor)
+
+// ————— Visuals: the entry level, every tick
+//
+// This is the only drawing that depends on live price, so it is the only one
+// that has to be recomputed while a bar is open. One pass over the rows.
+if barstate.islast
+    ensureLinePool(entryLines, 2)
+    ensureLabelPool(entryTags, 2)
+    entryBuyPrice  := na
+    entrySellPrice := na
+    entryBuyPower  := 0.0
+    entrySellPower := 0.0
+    int entryCursor = 0
+
+    if showEntryInput and totalSwings > 0
+        float bestBuyPrice  = na
+        float bestSellPrice = na
+        float bestBuyPower  = 0.0
+        float bestSellPower = 0.0
+        int   bestBuyLeft   = bar_index
+        int   bestSellLeft  = bar_index
+        // Searching every drawn swing, not just the newest: the strongest level
+        // available is often in an older leg price has not returned to yet, and
+        // an untested imbalance is more interesting than a tested one.
+        int searchFrom = entrySourceInput == "Newest swing only" ? totalSwings - 1 : 0
+        for i = searchFrom to totalSwings - 1
+            SwingProfile p = i < swingCount ? array.get(swings, i) : liveSwing
+            if not na(p)
+                [bIdx, bPow, sIdx, sPow] = bestEntry(p, close, entryMinStrengthInput / 100)
+                if bIdx >= 0 and bPow > bestBuyPower
+                    bestBuyPower := bPow
+                    bestBuyPrice := rowPrice(p, bIdx)
+                    bestBuyLeft  := p.leftBar
+                if sIdx >= 0 and sPow > bestSellPower
+                    bestSellPower := sPow
+                    bestSellPrice := rowPrice(p, sIdx)
+                    bestSellLeft  := p.leftBar
+
+        bool haveBuy  = not na(bestBuyPrice)
+        bool haveSell = not na(bestSellPrice)
+        // Best Side draws only the level the profile actually argues for.
+        bool drawBuy = switch entryModeInput
+            ENTRY_BUY  => haveBuy
+            ENTRY_SELL => false
+            ENTRY_BOTH => haveBuy
+            => haveBuy and bestBuyPower >= bestSellPower
+        bool drawSell = switch entryModeInput
+            ENTRY_BUY  => false
+            ENTRY_SELL => haveSell
+            ENTRY_BOTH => haveSell
+            => haveSell and bestSellPower > bestBuyPower
+        // Published only when DRAWN. Publishing a level that is not on the chart
+        // would let the alert fire for something the user cannot see, which is
+        // the kind of inconsistency that makes an indicator untrustworthy.
+        if drawBuy
+            entryBuyPrice := bestBuyPrice
+            entryBuyPower := bestBuyPower
+            drawEntry(array.get(entryLines, entryCursor), array.get(entryTags, entryCursor),
+                 bestBuyPrice, bestBuyPower, true, bestBuyLeft)
+            entryCursor += 1
+        if drawSell
+            entrySellPrice := bestSellPrice
+            entrySellPower := bestSellPower
+            drawEntry(array.get(entryLines, entryCursor), array.get(entryTags, entryCursor),
+                 bestSellPrice, bestSellPower, false, bestSellLeft)
+            entryCursor += 1
+    hideLinesFrom(entryLines, entryCursor)
+    hideLabelsFrom(entryTags, entryCursor)
 
 // ————— Visuals: summary table
 var table dash = table.new(
-     tablePosFrom(tablePosInput), 2, 8,
+     tablePosFrom(tablePosInput), 2, 12,
      bgcolor=getPanelColor(themeInput, 15), border_width=1,
      border_color=getPanelColor(themeInput, 100),
      frame_color=color.new(mutedColor, 70), frame_width=1)
 
 if showTableInput and barstate.islast
     SwingProfile shown = na(liveSwing) ?
-         (array.size(swings) > 0 ? array.get(swings, array.size(swings) - 1) : na) : liveSwing
+         (swingCount > 0 ? array.get(swings, swingCount - 1) : na) : liveSwing
     bool haveSwing = not na(shown)
     float buyPct = haveSwing and shown.totalVol > 0 ? shown.buyVol / shown.totalVol * 100 : na
+
+    // The entry row first: it is the only line on the chart that answers a
+    // question rather than describing history, so burying it under six
+    // reference prices would be the wrong order.
+    bool buyIsBest = not na(entryBuyPrice) and
+         (na(entrySellPrice) or entryBuyPower >= entrySellPower)
+    float shownEntry = buyIsBest ? entryBuyPrice : entrySellPrice
+    float shownPower = buyIsBest ? entryBuyPower : entrySellPower
+    color entryColor = buyIsBest ? buyColorInput : sellColorInput
+    string entryText = na(shownEntry) ? "none" :
+         (buyIsBest ? "BUY " : "SELL ") + str.tostring(shownEntry, format.mintick)
+
     // Two different numbers, and conflating them is what would mislead you:
     // rows is the resolution the profile was BUILT at, boxes is how much of the
     // drawing budget that resolution is currently spending.
@@ -529,34 +928,63 @@ if showTableInput and barstate.islast
          shownRows < rowsInput ?
          str.tostring(shownRows) + " / " + str.tostring(rowsInput) + " (tick limit)" :
          str.tostring(shownRows)
-    bool boxesFull = boxesUsed >= MAX_ROW_BOXES
+
     table.cell(dash, 0, 0, "SWING PROFILE", text_color=textColor, text_size=size.normal,
          text_halign=text.align_center)
     table.cell(dash, 1, 0, "", text_color=textColor)
     table.merge_cells(dash, 0, 0, 1, 0)
-    dashRow(dash, 1, "Swings drawn",
-         str.tostring(array.size(swings) + (na(liveSwing) ? 0 : 1)), mutedColor, textColor)
-    dashRow(dash, 2, "POC", haveSwing ? str.tostring(rowPrice(shown, shown.pocIdx), format.mintick) : "--",
-         mutedColor, pocColorInput)
-    dashRow(dash, 3, "Max buy", haveSwing ?
-         str.tostring(rowPrice(shown, shown.maxBuyIdx), format.mintick) : "--",
-         mutedColor, maxBuyColorInput)
-    dashRow(dash, 4, "Max sell", haveSwing ?
-         str.tostring(rowPrice(shown, shown.maxSellIdx), format.mintick) : "--",
-         mutedColor, maxSellColorInput)
+
+    dashRow(dash, 1, "Entry level", entryText, mutedColor,
+         na(shownEntry) ? mutedColor : entryColor)
+    dashRow(dash, 2, "Strength", na(shownEntry) ? "--" :
+         str.tostring(shownPower * 100, "#.#") + "%", mutedColor,
+         na(shownEntry) ? mutedColor : entryColor)
+    dashRow(dash, 3, "Distance", na(shownEntry) ? "--" :
+         str.tostring(math.abs(close - shownEntry), format.mintick) + "  (" +
+         str.tostring(math.abs(close - shownEntry) / close * 100, "#.##") + "%)",
+         mutedColor, textColor)
+
+    dashRow(dash, 4, "Swing volume", haveSwing ? formatVolume(shown.totalVol) : "--",
+         mutedColor, textColor)
     dashRow(dash, 5, "Buy share", na(buyPct) ? "--" : str.tostring(buyPct, "#.#") + "%",
          mutedColor, nz(buyPct, 50) >= 50 ? buyColorInput : sellColorInput)
-    dashRow(dash, 6, "Rows / swing", rowNote, mutedColor,
+    dashRow(dash, 6, "POC", haveSwing ? str.tostring(rowPrice(shown, shown.pocIdx), format.mintick) : "--",
+         mutedColor, pocColorInput)
+    dashRow(dash, 7, "Value area", haveSwing ?
+         str.tostring(rowPrice(shown, shown.vaBotIdx), format.mintick) + " - " +
+         str.tostring(rowPrice(shown, shown.vaTopIdx), format.mintick) : "--",
+         mutedColor, vaColorInput)
+    dashRow(dash, 8, "Max buy", haveSwing ?
+         str.tostring(rowPrice(shown, shown.maxBuyIdx), format.mintick) : "--",
+         mutedColor, maxBuyColorInput)
+    dashRow(dash, 9, "Max sell", haveSwing ?
+         str.tostring(rowPrice(shown, shown.maxSellIdx), format.mintick) : "--",
+         mutedColor, maxSellColorInput)
+    dashRow(dash, 10, "Rows / swing", rowNote, mutedColor,
          shownRows < rowsInput ? pocColorInput : textColor)
-    dashRow(dash, 7, "Boxes used",
+    dashRow(dash, 11, "Boxes used",
          str.tostring(boxesUsed) + " / " + str.tostring(MAX_ROW_BOXES), mutedColor,
-         boxesFull ? pocColorInput : textColor)
+         boxesUsed >= MAX_ROW_BOXES ? pocColorInput : textColor)
 
 // ————— Alerts
 alertcondition(newPivot, "New swing confirmed", "A new swing pivot has been confirmed.")
 
+// Gated on bar close, deliberately. Mid-bar a touch can un-happen, and an alert
+// for something that never finished is worse than no alert at all.
+if entryAlertInput and barstate.islast and barstate.isconfirmed
+    if not na(entryBuyPrice) and low <= entryBuyPrice and high >= entryBuyPrice
+        alert("Price reached the BUY level at " +
+             str.tostring(entryBuyPrice, format.mintick) + " (strength " +
+             str.tostring(entryBuyPower * 100, "#") + "%) on " + syminfo.ticker,
+             alert.freq_once_per_bar_close)
+    if not na(entrySellPrice) and low <= entrySellPrice and high >= entrySellPrice
+        alert("Price reached the SELL level at " +
+             str.tostring(entrySellPrice, format.mintick) + " (strength " +
+             str.tostring(entrySellPower * 100, "#") + "%) on " + syminfo.ticker,
+             alert.freq_once_per_bar_close)
+
 // ————— Debug / Test block (keep testModeInput false when handing off)
-int TEST_COUNT = 5      // keep in sync with the assertFailed() calls below
+int TEST_COUNT = 8      // keep in sync with the assertFailed() calls below
 var int passCount = 0
 var int failCount = 0
 
@@ -592,6 +1020,24 @@ if testModeInput
          "profile row is thinner than one tick")
     // 5. The drawing must never exceed the box budget it was given.
     fails += assertFailed(boxesUsed <= MAX_ROW_BOXES, "row boxes exceeded the budget")
+    // 6. The value area must contain the POC and stay inside the row range.
+    fails += assertFailed(
+         na(liveSwing) or (liveSwing.vaBotIdx <= liveSwing.pocIdx and
+         liveSwing.vaTopIdx >= liveSwing.pocIdx and liveSwing.vaBotIdx >= 0 and
+         liveSwing.vaTopIdx < array.size(liveSwing.buyRows)),
+         "value area does not bracket the POC")
+    // 7. A buy level must sit BELOW price and a sell level ABOVE it. Getting
+    //    this backwards would be the worst failure available to this script:
+    //    a level that looks authoritative and is on the wrong side.
+    fails += assertFailed(
+         (na(entryBuyPrice) or entryBuyPrice < close) and
+         (na(entrySellPrice) or entrySellPrice > close),
+         "entry level is on the wrong side of price")
+    // 8. A drawn level must clear the strength floor it claims to respect.
+    fails += assertFailed(
+         (na(entryBuyPrice) or entryBuyPower >= entryMinStrengthInput / 100) and
+         (na(entrySellPrice) or entrySellPower >= entryMinStrengthInput / 100),
+         "entry level is below the minimum strength")
     failCount += fails
     passCount += TEST_COUNT - fails
 
