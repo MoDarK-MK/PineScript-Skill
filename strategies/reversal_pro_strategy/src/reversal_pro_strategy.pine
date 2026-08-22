@@ -268,10 +268,18 @@ float pivotLow  = ta.pivotlow(low, pivotLenInput, pivotLenInput)
 bool  bearPivot = not na(pivotHigh)
 bool  bullPivot = not na(pivotLow)
 
+// ————— SHARED SCORING ENGINE — BEGIN (keep byte-identical in both files)
+// Pine has no local imports, so indicators/reversal_pro and
+// strategies/reversal_pro_strategy each carry their own copy of this block.
+// tests/test_shared_engine.py compares the two byte for byte — change one and
+// the suite fails until you change the other. Do it in the SAME commit and bump
+// both projects, or the two will quietly disagree about what a signal is.
 float pivotRange = high[pivotLenInput] - low[pivotLenInput]
 float upperWick  = high[pivotLenInput] - math.max(open[pivotLenInput], close[pivotLenInput])
 float lowerWick  = math.min(open[pivotLenInput], close[pivotLenInput]) - low[pivotLenInput]
 
+// Confirmations are evaluated at the pivot bar, except the candle check, which
+// uses the current confirmation bar's close.
 bool volSpikeAtPivot = nz(volume[pivotLenInput]) > volAvg[pivotLenInput] * volMultInput
 
 bool bearRsiOk    = rsiValue[pivotLenInput] >= rsiObInput
@@ -286,6 +294,7 @@ bool bullSwingOk  = low[pivotLenInput] <= lowestN[pivotLenInput]
 
 int bearScore = bearPivot ? countConfirmations(bearRsiOk, volSpikeAtPivot, bearCandleOk, bearWickOk, bearSwingOk) : 0
 int bullScore = bullPivot ? countConfirmations(bullRsiOk, volSpikeAtPivot, bullCandleOk, bullWickOk, bullSwingOk) : 0
+// ————— SHARED SCORING ENGINE — END
 
 // ————— Calculations: filters
 float atrPercent   = close > 0 ? atrValue / close * 100 : 0.0

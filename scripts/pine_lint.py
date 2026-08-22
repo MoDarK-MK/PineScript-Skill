@@ -1027,12 +1027,16 @@ def check_na_comparison(lines, result):
                 break
 
 
-GLOBAL_ONLY_INPUT_RE = re.compile(r'\binput\s*\.\s*\w+\s*\(|\binput\s*\(')
+# The leading (?<![.\w]) matters: these are all bare global functions, never
+# members of a namespace. Without it `array.fill(` matches the `fill(` in the
+# plot family and every buffer reset gets flagged as an illegal plot call.
+GLOBAL_ONLY_INPUT_RE = re.compile(r'(?<![.\w])input\s*(?:\.\s*\w+\s*)?\(')
 GLOBAL_ONLY_PLOT_RE = re.compile(
-    r'\b(plot|plotshape|plotchar|plotarrow|plotbar|plotcandle|bgcolor|barcolor|fill|'
+    r'(?<![.\w])(plot|plotshape|plotchar|plotarrow|plotbar|plotcandle|bgcolor|barcolor|fill|'
     r'hline|alertcondition)\s*\('
 )
-STRATEGY_CALL_RE = re.compile(r'\bstrategy\s*\.\s*(entry|order|exit|close|close_all|cancel|cancel_all)\s*\(')
+STRATEGY_CALL_RE = re.compile(
+    r'(?<![.\w])strategy\s*\.\s*(entry|order|exit|close|close_all|cancel|cancel_all)\s*\(')
 
 
 def _indented_code_lines(lines, statements):

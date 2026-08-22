@@ -458,7 +458,12 @@ if array.size(bearBlocks) > 0
         if not ob.mitigated and isMitigated(ob.top, ob.bottom, ob.dir)
             ob.mitigated := true
 
-// Pivot-bar candle geometry (pivotLenInput bars back).
+// ————— SHARED SCORING ENGINE — BEGIN (keep byte-identical in both files)
+// Pine has no local imports, so indicators/reversal_pro and
+// strategies/reversal_pro_strategy each carry their own copy of this block.
+// tests/test_shared_engine.py compares the two byte for byte — change one and
+// the suite fails until you change the other. Do it in the SAME commit and bump
+// both projects, or the two will quietly disagree about what a signal is.
 float pivotRange = high[pivotLenInput] - low[pivotLenInput]
 float upperWick  = high[pivotLenInput] - math.max(open[pivotLenInput], close[pivotLenInput])
 float lowerWick  = math.min(open[pivotLenInput], close[pivotLenInput]) - low[pivotLenInput]
@@ -479,6 +484,7 @@ bool bullSwingOk  = low[pivotLenInput] <= lowestN[pivotLenInput]
 
 int bearScore = bearPivot ? countConfirmations(bearRsiOk, volSpikeAtPivot, bearCandleOk, bearWickOk, bearSwingOk) : 0
 int bullScore = bullPivot ? countConfirmations(bullRsiOk, volSpikeAtPivot, bullCandleOk, bullWickOk, bullSwingOk) : 0
+// ————— SHARED SCORING ENGINE — END
 
 // Completed-period levels. lookahead_on + [1] is the correct NON-repainting way
 // to read a finished higher-timeframe period. The daily open rides along in the
