@@ -1858,6 +1858,18 @@ def check_var_collection_realtime_growth(lines, result):
             collections.add(m.group(1))
     if not collections:
         return
+    # A collection that is cleared somewhere is a reused scratch buffer, not
+    # accumulated state: it is emptied before each refill, so a push from a tick
+    # that turns out not to count is overwritten rather than kept.
+    # performance-guide.md recommends exactly this instead of allocating a fresh
+    # array per bar, and a rule that fires on the idiom its own docs teach is a
+    # rule that gets suppressed.
+    joined = "\n".join(strip_strings_and_comments(l) for l in lines)
+    collections = {c for c in collections
+                   if not re.search(r'(?:array|matrix|map)\s*\.\s*clear\s*\(\s*'
+                                    + re.escape(c) + r'\s*\)', joined)}
+    if not collections:
+        return
 
     stripped = [strip_strings_and_comments(l) for l in lines]
     reported = set()

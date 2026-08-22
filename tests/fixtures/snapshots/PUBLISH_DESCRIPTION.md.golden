@@ -1,0 +1,29 @@
+# Publish description draft for snap_demo v0.1.0
+
+> Fill in the bracketed sections below with specifics about this script's actual logic, then paste everything below the '---' into TradingView's description field. See references/publishing-guide.md for the full rules this structure follows.
+
+---
+
+## Purpose
+[What does this script show or do, in 1-2 sentences?]
+
+## How it works
+[Explain the calculation/logic in plain language — this is what makes a script 'original' rather than a re-skin of a built-in, and TradingView moderators check for it.]
+
+## How to use it
+[Settings worth knowing, what a signal means, how to read the dashboard if this script has one.]
+
+## Originality
+[Why this isn't just a copy of an existing public script, if relevant.]
+
+## Changelog
+```
+# Changelog
+
+## [Unreleased]
+- (nothing yet)
+
+## [0.1.0] - 2026-08-22
+### Added
+- Initial version of Snap Demo
+```

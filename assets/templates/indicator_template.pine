@@ -23,17 +23,38 @@ color  BULL_LIGHT  = #00796b
 color  BEAR_LIGHT  = #c62828
 
 // ————— Inputs
-int    lengthInput        = input.int(14, "Length", minval=1, maxval=2000, group="Settings")
-float  sourceInput        = input.source(close, "Source", group="Settings")
+// Every input carries a tooltip. That is not politeness: the settings dialog is
+// the only documentation most users will ever read, and an input whose effect
+// has to be guessed gets left on its default forever. Say what it CHANGES, not
+// what it is called.
+int    lengthInput        = input.int(
+     14, "Length", minval=1, maxval=2000, group="Settings",
+     tooltip="Lookback in bars. Higher is smoother and slower to react; lower " +
+     "reacts sooner and gives more false turns.")
+float  sourceInput        = input.source(
+     close, "Source", group="Settings",
+     tooltip="Which price each bar contributes. close is the convention; hlc3 " +
+     "is steadier on noisy symbols.")
 string themeInput         = input.string(
-     THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
-bool   showDashboardInput = input.bool(true, "Show Dashboard", group="Appearance")
+     THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance",
+     tooltip="Match this to your chart. Pine cannot read the chart's theme, so " +
+     "getting it wrong is what produces dark text on a dark panel.")
+bool   showDashboardInput = input.bool(
+     true, "Show Dashboard", group="Appearance",
+     tooltip="Hides the panel without disabling any calculation.")
 string tablePosInput      = input.string(
      "Top Right", "Dashboard Position",
-     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Appearance")
+     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Appearance",
+     tooltip="Move the panel when it covers price, or when a second script has " +
+     "already taken this corner.")
 int    panelTranspInput   = input.int(
-     15, "Dashboard Transparency", minval=0, maxval=90, group="Appearance")
-bool   testModeInput      = input.bool(false, "Test Mode", group="Debug/Test")
+     15, "Dashboard Transparency", minval=0, maxval=90, group="Appearance",
+     tooltip="0 is opaque. Past about 60 the candles behind the panel start " +
+     "winning and the numbers stop being readable.")
+bool   testModeInput      = input.bool(
+     false, "Test Mode", group="Debug/Test",
+     tooltip="Runs the in-script assertions and shows their pass/fail counts. " +
+     "Leave OFF when publishing — the release bundle blocks on it.")
 
 // ————— Function declarations
 // @function Returns the bullish accent color for the selected theme.

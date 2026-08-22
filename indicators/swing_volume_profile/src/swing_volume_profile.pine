@@ -75,6 +75,36 @@ indicator(
 //   table reports the budget in use. To buy more drawn detail: fewer swings, or
 //   turn the sell|buy split off, which halves the cost per row.
 //
+// DOES IT ACTUALLY WORK? The indicator answers that itself. Every level it
+//   would have drawn is recorded when its swing closes, then followed: when
+//   price reaches the level, did the move that followed travel the target
+//   distance in the level's favour before travelling the same distance against?
+//   The table reports the share that did, with the sample size.
+//
+//   This is NOT a backtest. It ignores spread, commission and slippage, it uses
+//   one symmetric target and stop, and it says nothing about sizing or exits.
+//   When a single bar covers both the target and the stop, the order they
+//   happened in is unknowable from bar data and it is counted as a LOSS —
+//   calling it a win would inflate every number in the block. What it does tell
+//   you is whether these levels hold on THIS symbol and timeframe more often
+//   than not, which no strength percentage can. Under ~20 samples it is noise.
+//
+// SWING SOURCE: three ways to define a leg, all feeding the same pipeline.
+//   Pivots on the chart timeframe (default), pivots on a higher timeframe, or
+//   trading sessions. Sessions are exact. The higher-timeframe pivot's PRICE is
+//   exact but its BAR is converted by the timeframe ratio, so across gaps the
+//   left edge can land a bar or two off — stated in the input tooltip too,
+//   because a user choosing it deserves to know before they choose.
+//
+// CONFLUENCE: when levels from different swings land within a few ticks of each
+//   other, they are one zone, not three lines. The agreement is the
+//   information, and separate lines hide it.
+//
+// ABSORPTION: a swing that makes a new extreme while the OTHER side's share of
+//   its volume rises. The extreme says one side pushed; the rising share says
+//   the other side was there to take it. Both halves are required — a new low
+//   on rising selling is just a downtrend.
+//
 // ACCURACY: two models, both adjustable, neither pretending to be order flow.
 //   Distribution — a bar's volume is spread across the rows it spans. Even
 //     gives a wick the same volume per row as the body, which is wrong in an
@@ -101,7 +131,8 @@ color TRANSPARENT_COLOR = #00000000
 string THEME_DARK       = "Dark"
 string THEME_LIGHT      = "Light"
 int    MARKERS_PER_SWING = 5          // POC, max buy, max sell, VAH, VAL
-int    MAX_ROW_BOXES     = 492        // 500 box cap, a few held in reserve
+int    MAX_ROW_BOXES     = 484        // 500 box cap, 8 reserved for confluence
+int    STAT_ATR_LEN      = 14         // the conventional ATR, so the number is comparable
 string ENTRY_BEST  = "Best Side Only"
 string ENTRY_BOTH  = "Both Sides"
 string ENTRY_BUY   = "Buy Side Only"
@@ -110,6 +141,9 @@ string DIST_BODY   = "Body-weighted"
 string DIST_EVEN   = "Even"
 string SPLIT_RANGE = "Close position in range"
 string SPLIT_BLEND = "Range + bar direction"
+string SRC_PIVOT   = "Pivots (chart timeframe)"
+string SRC_HTF     = "Pivots (higher timeframe)"
+string SRC_SESSION = "Sessions"
 // How much of a body row's volume a WICK row gets, under body-weighted
 // distribution. A heuristic, not a measurement: Pine cannot say how volume
 // was really spread inside a bar. What is not a heuristic is that giving a
@@ -118,6 +152,28 @@ float  WICK_WEIGHT  = 0.35
 
 // ————— Inputs: Swing Detection
 string SW_GROUP = "Swing Detection"
+string swingSourceInput = input.string(
+     SRC_PIVOT, "Swing Source", options=[SRC_PIVOT, SRC_HTF, SRC_SESSION],
+     group=SW_GROUP,
+     tooltip="What defines one leg.\n\nPivots (chart timeframe) is the default: " +
+     "swing highs and lows on the chart you are looking at.\n\nPivots (higher " +
+     "timeframe) finds the structure of a bigger chart while you trade the small " +
+     "one. Read the caveat on the Higher Timeframe input — the leg boundary is " +
+     "converted, not exact.\n\nSessions splits by trading session instead of by " +
+     "structure, which is exact and is how most volume traders actually think " +
+     "about gold: the London open regularly breaks the value Asia built.")
+string htfInput = input.timeframe(
+     "60", "Higher Timeframe", group=SW_GROUP,
+     tooltip="Only used by the higher-timeframe source. HONEST CAVEAT: the pivot's " +
+     "PRICE comes from that timeframe exactly, but its BAR is converted by the " +
+     "ratio of the two timeframes, so across session gaps and holidays the left " +
+     "edge of a leg can land a bar or two off. The profile it builds is still the " +
+     "right leg; its boundary is approximate. Sessions mode has no such caveat.")
+string sessionInput = input.session(
+     "0000-0800", "Session", group=SW_GROUP,
+     tooltip="Only used by the Sessions source. Each session becomes one profile. " +
+     "Set it to the session you care about — Asia 0000-0800, London 0800-1600, " +
+     "New York 1300-2100 (exchange time).")
 int  pivotLenInput = input.int(
      10, "Pivot Length", minval=2, maxval=200, group=SW_GROUP,
      tooltip="How many bars either side a high/low must lead to count as a swing " +
@@ -200,10 +256,39 @@ string entrySourceInput = input.string(
      "price is in now, which is fresher but has less to work with early in a " +
      "swing.\n\nStrength is measured against each swing's own busiest row, so " +
      "levels from different swings stay comparable.")
+bool   preferUntestedInput = input.bool(
+     true, "Only Untested Levels", group=EN_GROUP,
+     tooltip="Skips rows price has already traded back through since the swing " +
+     "ended. An imbalance that has been revisited has already had its argument " +
+     "tested; one that has not is still standing. The developing swing is never " +
+     "filtered, because price is inside it by definition.")
+string alertFormatInput = input.string(
+     "Text", "Alert Format", options=["Text", "JSON (webhook)"], group=EN_GROUP,
+     tooltip="JSON emits a flat object a bot can parse directly — symbol, " +
+     "timeframe, side, price, strength and bar time. See " +
+     "references/alerts-guide.md. Do not put anything private in an alert: the " +
+     "payload leaves TradingView to whatever URL you configure.")
 bool   entryAlertInput = input.bool(
      true, "Alert When Price Reaches The Level", group=EN_GROUP,
      tooltip="Fires on bar close, once per bar. Mid-bar the touch can un-happen, " +
      "and an alert for something that never finished is worse than no alert.")
+
+// ————— Inputs: Confluence
+string CF_GROUP = "Confluence"
+bool   showConfluenceInput = input.bool(
+     true, "Merge Overlapping Levels Into Zones", group=CF_GROUP,
+     tooltip="When the POC of one swing, the value-area edge of another and the " +
+     "max-buy row of a third all land within a few ticks, that is one ZONE, not " +
+     "three lines. Drawn as a band labelled with how many levels agree." +
+     "\n\nThe agreement is the information. Three separate lines on a chart hide " +
+     "the very thing that makes them worth looking at.")
+float  confluenceAtrInput = input.float(
+     0.25, "Merge Distance (ATR)", minval=0.05, maxval=2.0, step=0.05, group=CF_GROUP,
+     tooltip="How close two levels must be to count as the same zone, in ATR so " +
+     "it adapts to the symbol instead of assuming a tick size.")
+int    confluenceMinInput = input.int(
+     2, "Minimum Levels Per Zone", minval=2, maxval=6, group=CF_GROUP)
+color  confluenceColorInput = input.color(#2962ff, "Zone Color", group=CF_GROUP)
 
 // ————— Inputs: Value Area
 string VA_GROUP = "Value Area"
@@ -236,6 +321,33 @@ string splitModeInput = input.string(
      "on trending bars and hurts on choppy ones. Neither is verifiably better " +
      "everywhere, which is why the default is left on the plain, well-understood " +
      "one rather than quietly changed under you.")
+bool   showAbsorptionInput = input.bool(
+     true, "Detect Absorption", group=AC_GROUP,
+     tooltip="Flags the classic volume-analysis reversal shape: a swing that makes " +
+     "a NEW EXTREME while the other side's share of its volume RISES. A lower low " +
+     "on rising buy share means the selling that made the low was being absorbed — " +
+     "someone was taking the other side and the price did not follow through." +
+     "\n\nIt compares the newest completed swing with the one before it, so it " +
+     "needs two. Like everything else here it uses estimated buy/sell, not order " +
+     "flow.")
+bool   showStatsInput = input.bool(
+     true, "Measure Level Hit Rate", group=AC_GROUP,
+     tooltip="Every level this indicator draws is recorded when its swing closes " +
+     "and then followed. When price reaches it, the move that follows is measured: " +
+     "did it travel the target distance in the level's favour before travelling " +
+     "the same distance against? The table reports the share that did." +
+     "\n\nTHIS IS NOT A BACKTEST. It ignores spread, commission and slippage, it " +
+     "uses one symmetric target and stop, and it says nothing about position size " +
+     "or when to exit. What it does tell you is whether these levels hold on THIS " +
+     "symbol and timeframe more often than not — which is the question a strength " +
+     "percentage alone cannot answer. Treat a sample under about 20 as noise.")
+float  statTargetAtrInput = input.float(
+     1.0, "Hit Rate Target (ATR)", minval=0.2, maxval=10.0, step=0.1, group=AC_GROUP,
+     tooltip="How far price must travel from the level, in ATR, for the level to " +
+     "count as having held — and equally far against it to count as broken. " +
+     "Symmetric on purpose: an asymmetric test would flatter the result.")
+int    statMaxLevelsInput = input.int(
+     60, "Levels To Track", minval=10, maxval=200, group=AC_GROUP)
 bool   showVolumeTagInput = input.bool(
      true, "Label Each Swing's Total Volume", group=AC_GROUP,
      tooltip="Prints the swing's total traded volume above its profile, with the " +
@@ -288,6 +400,22 @@ type SwingProfile
     float buyVol
     array<float> buyRows
     array<float> sellRows
+    // The price range covered SINCE this swing ended. A row outside it has not
+    // been revisited, which is what "untested" means here. na while the swing
+    // is still developing, because price is inside it by definition.
+    float postLo
+    float postHi
+
+// One drawn level, followed until its outcome is decided. This is the only
+// state in the script that exists purely to be honest about whether the levels
+// work — nothing on the chart depends on it.
+type TrackedLevel
+    float price
+    bool  isBuy
+    int   bornBar
+    bool  touched
+    bool  resolved
+    bool  won
 
 // ————— Function declarations
 // @function Primary text color — the value column reads first.
@@ -331,6 +459,26 @@ formatVolume(float v) =>
         av >= 1000000    => str.tostring(v / 1000000, "#.##") + "M"
         av >= 1000       => str.tostring(v / 1000, "#.#") + "K"
         => str.tostring(nz(v), "#.#")
+
+// @function The alert payload for a level being reached, in whichever format
+// the user picked. JSON is emitted by hand rather than by str.format_json
+// because the field ORDER and the exact key names are the contract a receiving
+// bot is written against; a formatter that reorders them silently breaks it.
+entryAlertPayload(bool isBuy, float price, float power, string format) =>
+    string side = isBuy ? "buy" : "sell"
+    format == "Text" ?
+         "Price reached the " + str.upper(side) + " level at " +
+         str.tostring(price, format.mintick) + " (strength " +
+         str.tostring(power * 100, "#") + "%) on " + syminfo.ticker :
+         '{"source":"swing_volume_profile"' +
+         ',"symbol":"' + syminfo.ticker + '"' +
+         ',"timeframe":"' + timeframe.period + '"' +
+         ',"event":"level_reached"' +
+         ',"side":"' + side + '"' +
+         ',"price":' + str.tostring(price, format.mintick) +
+         ',"strength_pct":' + str.tostring(power * 100, "#.#") +
+         ',"close":' + str.tostring(close, format.mintick) +
+         ',"bar_time":' + str.tostring(time) + '}'
 
 // @function One label/value table row. Both colors are required arguments,
 // which is what stops a cell shipping without text_color — Pine defaults cell
@@ -468,7 +616,8 @@ buildProfile(int leftBar, int rightBar, int rows, int scanCap) =>
                  lo = lo, step = step, pocIdx = pocIdx, maxBuyIdx = buyIdx,
                  maxSellIdx = sellIdx, vaTopIdx = vaTop, vaBotIdx = vaBot,
                  peakRow = peakTotal, totalVol = grandTotal,
-                 buyVol = grandBuy, buyRows = buys, sellRows = sells)
+                 buyVol = grandBuy, buyRows = buys, sellRows = sells,
+                 postLo = na, postHi = na)
     result
 
 // @function Price at the centre of a profile row.
@@ -494,14 +643,18 @@ bestEntry(SwingProfile p, float price, float minStrength) =>
     int   sellIdx = -1
     float buyBest = minStrength
     float sellBest = minStrength
+    // A developing swing has no "since" to test against, so it is never
+    // filtered — na(postLo) is the signal for that, not a missing value.
+    bool canFilter = preferUntestedInput and not na(p.postLo) and not na(p.postHi)
     if p.peakRow > 0 and rows > 0
         for r = 0 to rows - 1
             float rowMid = p.lo + (r + 0.5) * p.step
+            bool untested = not canFilter or rowMid > p.postHi or rowMid < p.postLo
             float imbalance = (array.get(p.buyRows, r) - array.get(p.sellRows, r)) / p.peakRow
-            if rowMid < price and imbalance > buyBest
+            if untested and rowMid < price and imbalance > buyBest
                 buyBest := imbalance
                 buyIdx := r
-            if rowMid > price and -imbalance > sellBest
+            if untested and rowMid > price and -imbalance > sellBest
                 sellBest := -imbalance
                 sellIdx := r
     [buyIdx, buyIdx >= 0 ? buyBest : 0.0, sellIdx, sellIdx >= 0 ? sellBest : 0.0]
@@ -565,10 +718,57 @@ color textColor  = getTextColor(themeInput)
 color mutedColor = getMutedColor(themeInput)
 string markerStyle = lineStyleFrom(lineStyleInput)
 
-// ————— Calculations: swing detection
+// ————— Calculations: segment detection
+//
+// Three sources, one output: a boolean saying a leg just ended, and the bar
+// index where it ended. Everything downstream — the profile, the value area,
+// the levels, the drawing — only ever needed those two things, so all three
+// sources reuse the whole pipeline rather than forking it.
+
+// Source 1: pivots on the chart timeframe.
 float pivotHigh = ta.pivothigh(high, pivotLenInput, pivotLenInput)
 float pivotLow  = ta.pivotlow(low, pivotLenInput, pivotLenInput)
-bool  newPivot  = not na(pivotHigh) or not na(pivotLow)
+bool  chartPivot = not na(pivotHigh) or not na(pivotLow)
+
+// Source 2: pivots on a higher timeframe. The price is exact; the BAR is
+// converted by the ratio of the two timeframes, which is exact within a session
+// and drifts by a bar or two across gaps. Said plainly in the input tooltip
+// rather than buried here, because a user choosing this option deserves to know
+// before they choose it.
+bool useHtf = swingSourceInput == SRC_HTF
+[htfPivotHigh, htfPivotLow] = request.security(
+     syminfo.tickerid, useHtf ? htfInput : timeframe.period,
+     [ta.pivothigh(high, pivotLenInput, pivotLenInput),
+      ta.pivotlow(low, pivotLenInput, pivotLenInput)],
+     lookahead=barmerge.lookahead_off)
+// "A new HTF pivot" means the value CHANGED, not merely that one exists: the
+// security call republishes the same pivot on every chart bar until the next
+// one forms. Each side is tested separately so an na on one cannot make the
+// other look new.
+bool htfNewHigh = not na(htfPivotHigh) and (na(htfPivotHigh[1]) or htfPivotHigh != htfPivotHigh[1])
+bool htfNewLow  = not na(htfPivotLow) and (na(htfPivotLow[1]) or htfPivotLow != htfPivotLow[1])
+bool htfPivot   = useHtf and (htfNewHigh or htfNewLow)
+float htfSeconds = timeframe.in_seconds(htfInput)
+float chartSeconds = math.max(timeframe.in_seconds(timeframe.period), 1)
+int htfBarRatio = math.max(1, int(htfSeconds / chartSeconds))
+
+// Source 3: sessions. Exact, because a session boundary is a clock time and
+// needs no conversion at all.
+bool inSession = not na(time(timeframe.period, sessionInput))
+bool wasInSession = inSession[1]
+bool sessionEnded = swingSourceInput == SRC_SESSION and not inSession and wasInSession
+
+bool newSegment = switch swingSourceInput
+    SRC_HTF     => htfPivot
+    SRC_SESSION => sessionEnded
+    => chartPivot
+int segmentBar = switch swingSourceInput
+    SRC_HTF     => bar_index - pivotLenInput * htfBarRatio
+    SRC_SESSION => bar_index - 1
+    => bar_index - pivotLenInput
+// A converted or session-derived bar must still be a real, in-range bar.
+segmentBar := math.max(0, math.min(bar_index, segmentBar))
+
 
 // Absolute bar index of every confirmed pivot, newest last.
 //
@@ -587,8 +787,15 @@ var array<SwingProfile> swings = array.new<SwingProfile>()
 // same tick leaves the count identical and the picture wrong.
 var int profileGen = 0
 
-if newPivot and barstate.isconfirmed
-    int pivotBar = bar_index - pivotLenInput
+// Level tracking. Nothing on the chart depends on this; it exists so the
+// indicator can be honest about whether its own levels hold.
+var array<TrackedLevel> tracked = array.new<TrackedLevel>()
+var int statWins = 0
+var int statResolved = 0
+float atrValue = ta.atr(STAT_ATR_LEN)
+
+if newSegment and barstate.isconfirmed
+    int pivotBar = segmentBar
     // Build the profile for the leg that just closed, then keep only the most
     // recent ones. A completed swing never changes, so this runs once per swing.
     if array.size(pivotBars) > 0
@@ -597,6 +804,22 @@ if newPivot and barstate.isconfirmed
         if not na(finished)
             array.push(swings, finished)
             profileGen += 1
+            // Record what this swing WOULD have offered, at the moment it
+            // closed, so the hit rate measures the same levels the chart draws
+            // rather than some easier-to-compute proxy.
+            if showStatsInput
+                [statBuyIdx, _statBuyPow, statSellIdx, _statSellPow] =
+                     bestEntry(finished, close, entryMinStrengthInput / 100)
+                if statBuyIdx >= 0
+                    array.push(tracked, TrackedLevel.new(
+                         price = rowPrice(finished, statBuyIdx), isBuy = true,
+                         bornBar = bar_index, touched = false, resolved = false, won = false))
+                if statSellIdx >= 0
+                    array.push(tracked, TrackedLevel.new(
+                         price = rowPrice(finished, statSellIdx), isBuy = false,
+                         bornBar = bar_index, touched = false, resolved = false, won = false))
+                while array.size(tracked) > statMaxLevelsInput
+                    array.shift(tracked)
             while array.size(swings) > maxSwingsInput
                 array.shift(swings)
                 profileGen += 1
@@ -617,6 +840,71 @@ if showLiveSwingInput and array.size(pivotBars) > 0
         liveSwing := buildProfile(lastPivot, bar_index, profileRows, maxSwingBarsInput)
         profileGen += 1
 
+// ————— Calculations: level tracking
+//
+// Two passes per CLOSED bar, both over a handful of items. The first keeps each
+// stored swing's "range covered since it ended" current, which is what makes an
+// untested row cheap to identify — no rescanning history, one min and one max.
+if barstate.isconfirmed and array.size(swings) > 0
+    for i = 0 to array.size(swings) - 1
+        SwingProfile sp = array.get(swings, i)
+        if sp.rightBar < bar_index
+            sp.postLo := na(sp.postLo) ? low : math.min(sp.postLo, low)
+            sp.postHi := na(sp.postHi) ? high : math.max(sp.postHi, high)
+
+// The second decides outcomes. A level is touched when price trades through it,
+// and resolved when price has since travelled the target distance one way or
+// the other.
+//
+// The stop is checked BEFORE the target on purpose. When a single bar covers
+// both, the order they happened in is unknowable from bar data, and calling
+// that a win would inflate every number in this block. It is counted as a loss.
+if showStatsInput and barstate.isconfirmed and array.size(tracked) > 0
+    float statTarget = nz(atrValue) * statTargetAtrInput
+    if statTarget > 0
+        for i = 0 to array.size(tracked) - 1
+            TrackedLevel lv = array.get(tracked, i)
+            if not lv.resolved and bar_index > lv.bornBar
+                if not lv.touched and low <= lv.price and high >= lv.price
+                    lv.touched := true
+                if lv.touched
+                    float favourable = lv.isBuy ? high - lv.price : lv.price - low
+                    float adverse    = lv.isBuy ? lv.price - low : high - lv.price
+                    if adverse >= statTarget
+                        lv.resolved := true
+                        statResolved += 1
+                    else if favourable >= statTarget
+                        lv.resolved := true
+                        lv.won := true
+                        statWins += 1
+                        statResolved += 1
+
+// ————— Calculations: absorption
+//
+// A new extreme made on RISING opposite-side participation. The extreme says
+// one side pushed; the rising share says the other side was there to take it.
+// Both halves are needed — a new low on rising selling is just a downtrend.
+var string absorptionState = "none"
+var int    absorptionBar = na
+if showAbsorptionInput and array.size(swings) >= 2
+    SwingProfile newer = array.get(swings, array.size(swings) - 1)
+    SwingProfile older = array.get(swings, array.size(swings) - 2)
+    if newer.totalVol > 0 and older.totalVol > 0
+        float newerBuyShare = newer.buyVol / newer.totalVol
+        float olderBuyShare = older.buyVol / older.totalVol
+        float newerTop = newer.lo + array.size(newer.buyRows) * newer.step
+        float olderTop = older.lo + array.size(older.buyRows) * older.step
+        string found = "none"
+        if newer.lo < older.lo and newerBuyShare > olderBuyShare
+            found := "bullish"
+        else if newerTop > olderTop and newerBuyShare < olderBuyShare
+            found := "bearish"
+        if found != "none" and (na(absorptionBar) or absorptionBar != newer.rightBar)
+            absorptionState := found
+            absorptionBar := newer.rightBar
+        else if found == "none"
+            absorptionState := "none"
+
 // ————— Visuals: pools
 var array<box>   rowBoxes    = array.new<box>()
 var int          boxesUsed   = 0
@@ -628,6 +916,12 @@ var array<label> markerTags  = array.new<label>()
 var array<line>  entryLines = array.new<line>()
 var array<label> entryTags  = array.new<label>()
 var array<label> volumeTags = array.new<label>()
+var array<box>   zoneBoxes  = array.new<box>()
+var array<label> zoneTags   = array.new<label>()
+var int          zoneCount  = 0
+
+// Every reference price currently drawn, refilled each redraw and then clustered.
+var array<float> levelPool = array.new<float>()
 
 // Live state, published so the table and the alerts read the same numbers the
 // chart is showing rather than recomputing them and drifting.
@@ -682,6 +976,49 @@ drawRows(SwingProfile p, array<box> pool, int cursor, int limit, int rightEdge, 
                 box.set_border_color(bx, TRANSPARENT_COLOR)
                 used += 1
     used
+
+// @function Groups nearby prices into zones and draws a band for each group
+// that has at least `minMembers` levels in it. Returns how many zones it drew.
+//
+// The prices arrive unsorted, so this is an insertion sort followed by a single
+// sweep — n is the number of reference lines on the chart, a few dozen at most,
+// and an O(n^2) sort on a few dozen items once per bar is free.
+drawConfluence(array<float> prices, float tolerance, int minMembers,
+     array<box> boxes, array<label> tags, int leftX, int rightX) =>
+    int drawn = 0
+    int n = array.size(prices)
+    if n > 0 and tolerance > 0
+        array.sort(prices, order.ascending)
+        int i = 0
+        while i < n and drawn < array.size(boxes)
+            int j = i
+            // Extend the cluster while the next price is within tolerance of
+            // the one before it, not of the first — otherwise a long ladder of
+            // close levels would never close.
+            while j + 1 < n and array.get(prices, j + 1) - array.get(prices, j) <= tolerance
+                j += 1
+            int members = j - i + 1
+            if members >= minMembers
+                float lo = array.get(prices, i)
+                float hi = array.get(prices, j)
+                box bx = array.get(boxes, drawn)
+                box.set_lefttop(bx, leftX, hi)
+                box.set_rightbottom(bx, rightX, lo)
+                box.set_bgcolor(bx, color.new(confluenceColorInput, 82))
+                box.set_border_color(bx, color.new(confluenceColorInput, 40))
+                label lb = array.get(tags, drawn)
+                label.set_xy(lb, rightX, (hi + lo) / 2)
+                label.set_text(lb, str.tostring(members) + "x")
+                label.set_textcolor(lb, confluenceColorInput)
+                label.set_size(lb, size.small)
+                label.set_style(lb, label.style_label_left)
+                label.set_color(lb, TRANSPARENT_COLOR)
+                label.set_tooltip(lb, str.tostring(members) + " reference levels agree here" +
+                     "\nZone: " + str.tostring(lo, format.mintick) + " - " +
+                     str.tostring(hi, format.mintick))
+                drawn += 1
+            i := j + 1
+    drawn
 
 // @function Prints a swing's total traded volume above its profile.
 // `settled` is false for the leg still forming, whose number is still moving.
@@ -782,6 +1119,7 @@ if barstate.islast and profileNeedsRedraw
     int boxCursor = 0
     int lineCursor = 0
     int tagCursor = 0
+    array.clear(levelPool)
     // The guard is not cosmetic: Pine counts DOWN when a for-loop's end value is
     // below its start, so `0 to totalSwings - 1` with no swings yet would run
     // with i = 0 and i = -1 and index an empty array.
@@ -823,6 +1161,19 @@ if barstate.islast and profileNeedsRedraw
                 lineCursor += drawMarker(
                      showValueAreaInput, rowPrice(p, p.vaBotIdx), "VAL", vaColorInput,
                      markerLines, markerTags, lineCursor, lineCursor, p.leftBar, markerRight)
+                // Collected for the confluence pass. Only levels that are
+                // actually DRAWN go in — a zone built from hidden lines would
+                // point at agreement the user cannot see.
+                if showConfluenceInput
+                    if showPocInput
+                        array.push(levelPool, rowPrice(p, p.pocIdx))
+                    if showMaxBuyInput
+                        array.push(levelPool, rowPrice(p, p.maxBuyIdx))
+                    if showMaxSellInput
+                        array.push(levelPool, rowPrice(p, p.maxSellIdx))
+                    if showValueAreaInput
+                        array.push(levelPool, rowPrice(p, p.vaTopIdx))
+                        array.push(levelPool, rowPrice(p, p.vaBotIdx))
                 if showVolumeTagInput
                     float profileTop = p.lo + array.size(p.buyRows) * p.step
                     drawVolumeTag(p, array.get(volumeTags, tagCursor),
@@ -833,6 +1184,21 @@ if barstate.islast and profileNeedsRedraw
     hideLinesFrom(markerLines, lineCursor)
     hideLabelsFrom(markerTags, lineCursor)
     hideLabelsFrom(volumeTags, tagCursor)
+
+    // Confluence, drawn last because it needs every level the pass collected.
+    // Its boxes come from the 8 held back from MAX_ROW_BOXES, so a busy profile
+    // can never starve it.
+    ensureBoxPool(zoneBoxes, 8)
+    ensureLabelPool(zoneTags, 8)
+    zoneCount := 0
+    if showConfluenceInput and totalSwings > 0
+        int zoneRight = bar_index
+        int zoneLeft = bar_index - math.max(10, maxSwingBarsInput / 4)
+        zoneCount := drawConfluence(
+             levelPool, nz(atrValue) * confluenceAtrInput, confluenceMinInput,
+             zoneBoxes, zoneTags, zoneLeft, zoneRight)
+    hideBoxesFrom(zoneBoxes, zoneCount)
+    hideLabelsFrom(zoneTags, zoneCount)
 
 // ————— Visuals: the entry level, every tick
 //
@@ -904,7 +1270,7 @@ if barstate.islast
 
 // ————— Visuals: summary table
 var table dash = table.new(
-     tablePosFrom(tablePosInput), 2, 12,
+     tablePosFrom(tablePosInput), 2, 15,
      bgcolor=getPanelColor(themeInput, 15), border_width=1,
      border_color=getPanelColor(themeInput, 100),
      frame_color=color.new(mutedColor, 70), frame_width=1)
@@ -950,47 +1316,67 @@ if showTableInput and barstate.islast
          str.tostring(math.abs(close - shownEntry) / close * 100, "#.##") + "%)",
          mutedColor, textColor)
 
-    dashRow(dash, 4, "Swing volume", haveSwing ? formatVolume(shown.totalVol) : "--",
+    // Hit rate sits with the entry block because it is the only thing on the
+    // panel that says whether the entry block has been worth anything.
+    string hitText = not showStatsInput ? "off" :
+         statResolved == 0 ? "no data yet" :
+         str.tostring(statWins * 100.0 / statResolved, "#") + "%  (" +
+         str.tostring(statResolved) + ")"
+    dashRow(dash, 4, "Level hit rate", hitText, mutedColor,
+         not showStatsInput or statResolved == 0 ? mutedColor :
+         statResolved < 20 ? pocColorInput :
+         statWins * 2 >= statResolved ? buyColorInput : sellColorInput)
+    dashRow(dash, 5, "Absorption",
+         absorptionState == "none" ? "--" : str.upper(absorptionState), mutedColor,
+         absorptionState == "bullish" ? buyColorInput :
+         absorptionState == "bearish" ? sellColorInput : mutedColor)
+    dashRow(dash, 6, "Confluence zones",
+         showConfluenceInput ? str.tostring(zoneCount) : "off", mutedColor,
+         zoneCount > 0 ? confluenceColorInput : mutedColor)
+    dashRow(dash, 7, "Swing volume", haveSwing ? formatVolume(shown.totalVol) : "--",
          mutedColor, textColor)
-    dashRow(dash, 5, "Buy share", na(buyPct) ? "--" : str.tostring(buyPct, "#.#") + "%",
+    dashRow(dash, 8, "Buy share", na(buyPct) ? "--" : str.tostring(buyPct, "#.#") + "%",
          mutedColor, nz(buyPct, 50) >= 50 ? buyColorInput : sellColorInput)
-    dashRow(dash, 6, "POC", haveSwing ? str.tostring(rowPrice(shown, shown.pocIdx), format.mintick) : "--",
+    dashRow(dash, 9, "POC", haveSwing ? str.tostring(rowPrice(shown, shown.pocIdx), format.mintick) : "--",
          mutedColor, pocColorInput)
-    dashRow(dash, 7, "Value area", haveSwing ?
+    dashRow(dash, 10, "Value area", haveSwing ?
          str.tostring(rowPrice(shown, shown.vaBotIdx), format.mintick) + " - " +
          str.tostring(rowPrice(shown, shown.vaTopIdx), format.mintick) : "--",
          mutedColor, vaColorInput)
-    dashRow(dash, 8, "Max buy", haveSwing ?
+    dashRow(dash, 11, "Max buy", haveSwing ?
          str.tostring(rowPrice(shown, shown.maxBuyIdx), format.mintick) : "--",
          mutedColor, maxBuyColorInput)
-    dashRow(dash, 9, "Max sell", haveSwing ?
+    dashRow(dash, 12, "Max sell", haveSwing ?
          str.tostring(rowPrice(shown, shown.maxSellIdx), format.mintick) : "--",
          mutedColor, maxSellColorInput)
-    dashRow(dash, 10, "Rows / swing", rowNote, mutedColor,
+    dashRow(dash, 13, "Rows / swing", rowNote, mutedColor,
          shownRows < rowsInput ? pocColorInput : textColor)
-    dashRow(dash, 11, "Boxes used",
+    dashRow(dash, 14, "Boxes used",
          str.tostring(boxesUsed) + " / " + str.tostring(MAX_ROW_BOXES), mutedColor,
          boxesUsed >= MAX_ROW_BOXES ? pocColorInput : textColor)
 
 // ————— Alerts
-alertcondition(newPivot, "New swing confirmed", "A new swing pivot has been confirmed.")
+alertcondition(showAbsorptionInput and absorptionState == "bullish" and
+     absorptionBar == bar_index - 1, "Bullish absorption",
+     "A new swing low formed on RISING buy share - selling is being absorbed.")
+alertcondition(showAbsorptionInput and absorptionState == "bearish" and
+     absorptionBar == bar_index - 1, "Bearish absorption",
+     "A new swing high formed on RISING sell share - buying is being absorbed.")
+alertcondition(newSegment, "New swing confirmed",
+     "A new swing has been confirmed (pivot, higher-timeframe pivot, or session close).")
 
 // Gated on bar close, deliberately. Mid-bar a touch can un-happen, and an alert
 // for something that never finished is worse than no alert at all.
 if entryAlertInput and barstate.islast and barstate.isconfirmed
     if not na(entryBuyPrice) and low <= entryBuyPrice and high >= entryBuyPrice
-        alert("Price reached the BUY level at " +
-             str.tostring(entryBuyPrice, format.mintick) + " (strength " +
-             str.tostring(entryBuyPower * 100, "#") + "%) on " + syminfo.ticker,
+        alert(entryAlertPayload(true, entryBuyPrice, entryBuyPower, alertFormatInput),
              alert.freq_once_per_bar_close)
     if not na(entrySellPrice) and low <= entrySellPrice and high >= entrySellPrice
-        alert("Price reached the SELL level at " +
-             str.tostring(entrySellPrice, format.mintick) + " (strength " +
-             str.tostring(entrySellPower * 100, "#") + "%) on " + syminfo.ticker,
+        alert(entryAlertPayload(false, entrySellPrice, entrySellPower, alertFormatInput),
              alert.freq_once_per_bar_close)
 
 // ————— Debug / Test block (keep testModeInput false when handing off)
-int TEST_COUNT = 8      // keep in sync with the assertFailed() calls below
+int TEST_COUNT = 11     // keep in sync with the assertFailed() calls below
 var int passCount = 0
 var int failCount = 0
 
@@ -1044,6 +1430,18 @@ if testModeInput
          (na(entryBuyPrice) or entryBuyPower >= entryMinStrengthInput / 100) and
          (na(entrySellPrice) or entrySellPower >= entryMinStrengthInput / 100),
          "entry level is below the minimum strength")
+    // 9. Wins can never exceed resolved outcomes. A hit rate over 100% would be
+    //    the most embarrassing number this table could print.
+    fails += assertFailed(statWins <= statResolved and statWins >= 0,
+         "hit rate counters are inconsistent")
+    // 10. Confluence must stay inside the boxes reserved for it.
+    fails += assertFailed(zoneCount <= array.size(zoneBoxes),
+         "confluence drew more zones than it has boxes")
+    // 11. Absorption is a closed set of three values; anything else means a
+    //     typo has been silently rendering as an empty table cell.
+    fails += assertFailed(
+         absorptionState == "none" or absorptionState == "bullish" or
+         absorptionState == "bearish", "absorption state is not a known value")
     failCount += fails
     passCount += TEST_COUNT - fails
 

@@ -4,6 +4,8 @@ from pathlib import Path
 
 from tests.helpers import run_script
 
+from generate_release_bundle import check_test_mode_default
+
 
 def scaffold(td, kind="indicator", name="rel_test"):
     proc = run_script("scaffold_project.py", "--kind", kind, "--name", name, "--out", td)
@@ -158,3 +160,33 @@ class TestStrategyRealismChecks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDebugToggleHeuristic(unittest.TestCase):
+    """The gate must catch real debug toggles and nothing else.
+
+    Substring matching flagged `preferUntestedInput` because "Untested"
+    contains "test", blocking a release that was fine. A gate with false
+    positives is a gate somebody turns off, so the negative cases here matter
+    as much as the positive ones.
+    """
+
+    def flagged(self, name):
+        return bool(check_test_mode_default(
+            f'bool {name} = input.bool(true, "X", group="G")'))
+
+    def test_real_debug_toggles_are_caught(self):
+        for name in ("testModeInput", "showTestInput", "test_mode",
+                     "testingInput", "debugPanelInput", "DEBUG_MODE"):
+            with self.subTest(name=name):
+                self.assertTrue(self.flagged(name))
+
+    def test_words_merely_containing_test_are_not(self):
+        for name in ("preferUntestedInput", "latestOnlyInput",
+                     "untestedOnlyInput", "showTableInput", "contestInput"):
+            with self.subTest(name=name):
+                self.assertFalse(self.flagged(name))
+
+    def test_false_default_is_never_flagged(self):
+        self.assertEqual([], check_test_mode_default(
+            'bool testModeInput = input.bool(false, "Test Mode")'))

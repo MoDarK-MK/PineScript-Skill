@@ -173,3 +173,45 @@ fixture corpus exists because the honest answer to a missed error is a new
 rule, not a louder claim.
 
 **Would change our mind:** TradingView publishing a compiler API.
+
+---
+
+### D11 — The hit rate measures the levels that are drawn, not an easier proxy
+
+**Decided:** `swing_volume_profile` records the entry level each swing would
+have produced, at the moment that swing closes, and follows it.
+
+**Why:** measuring something adjacent — every POC, say, or every value-area edge
+— would have been simpler and would have produced a bigger sample faster. It
+would also have been a number that looks like evidence for the line on screen
+while being about a different thing. If the statistic and the drawing disagree
+about what a "level" is, the statistic is decoration.
+
+**What would change our mind:** nothing about the principle. If the sample turns
+out to be too small to be useful on slow symbols, the fix is to say so in the
+table (it greys the number under 20 samples), not to measure something else.
+
+**Also decided:** when one bar covers both the target and the stop, the outcome
+is counted as a LOSS. The order they happened in is unknowable from bar data,
+and resolving the ambiguity in our own favour would inflate every number in the
+block. Conservative and stated, rather than accurate-looking and unfalsifiable.
+
+---
+
+### D12 — Gates with false positives get switched off
+
+**Decided:** when the release gate flagged `preferUntestedInput` as a debug
+toggle — "Untested" contains "test" — the fix was to make the heuristic split
+identifiers into words, not to rename the input or suppress the warning.
+
+**Why:** the gate exists to stop a script shipping with debug output on. A gate
+that also blocks legitimate releases teaches its user that its output is noise,
+and the next real finding gets waved through with the same shrug. The same
+reasoning produced the two PINE054 exemptions: drawing-pool growth and cleared
+scratch buffers are correct code, and a rule that fired on the idiom
+`performance-guide.md` teaches would have been suppressed file-wide within a
+week.
+
+**What would change our mind:** a false NEGATIVE that ships. If tightening these
+heuristics ever lets a real debug toggle through, the tradeoff moves and the
+noisier version is the right one.

@@ -6,13 +6,14 @@ agent reads the table, tries to open a reference that is not there, and carries
 on with less context than it was promised. Nothing in the repo could see that
 before this file.
 """
+import json
 import re
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 
-from tests.helpers import REPO_ROOT, SCRIPTS_DIR
+from tests.helpers import REPO_ROOT, SCRIPTS_DIR, run_script
 
 # Any repo-relative path mentioned inside backticks, or as a markdown link
 # target. Anchors and URLs are excluded.
@@ -182,3 +183,27 @@ class TestGeneratedRegions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLibrarySync(unittest.TestCase):
+    """The inlined copies of pine_toolkit helpers must not drift.
+
+    TradingView's `import` needs a PUBLISHED library, so until pine_toolkit is
+    on their servers every script carries its own copy — the exact situation
+    where copies diverge and nobody notices. The first run of this check found
+    six drifted copies, one of which formatted the same volume with a different
+    number of decimals in one indicator than in the other two.
+    """
+
+    def test_no_inlined_copy_has_drifted(self):
+        proc = run_script("check_library_sync.py")
+        self.assertEqual(0, proc.returncode,
+                         "run: python3 scripts/check_library_sync.py\n" + proc.stdout)
+
+    def test_check_actually_compares_something(self):
+        """A check that finds no copies to compare would pass forever."""
+        proc = run_script("check_library_sync.py", "--json")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertGreater(payload["exports"], 5)
+        self.assertGreater(payload["copies_checked"], 0)

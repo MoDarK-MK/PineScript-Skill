@@ -52,14 +52,35 @@ def find_source_file(project_dir, name):
     return None
 
 
+IDENT_WORDS_RE = re.compile(r'[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])')
+DEBUG_WORD_PREFIXES = ("test", "debug")
+
+
+def looks_like_debug_toggle(name):
+    """True when some WORD of the identifier begins with test/debug.
+
+    Splitting first is the whole point. A substring search matches "Untested"
+    and "latest", and it did: `preferUntestedInput` was reported as a debug
+    toggle and blocked a release that was fine. A gate with false positives is a
+    gate somebody turns off.
+    """
+    for word in IDENT_WORDS_RE.findall(name):
+        if word.lower().startswith(DEBUG_WORD_PREFIXES):
+            return True
+    return False
+
+
 def check_test_mode_default(text):
     """Returns a list of human-readable warnings for any test-mode-looking
     input that defaults to true — that would ship debug labels/dashboards
     turned on for every user by default."""
     warnings = []
-    for m in re.finditer(r'(\w*[Tt]est\w*)\s*=\s*input\.bool\(\s*true\b', text):
+    for m in re.finditer(r'\b(\w+)\s*=\s*input\.bool\(\s*true\b', text):
+        name = m.group(1)
+        if not looks_like_debug_toggle(name):
+            continue
         warnings.append(
-            f"'{m.group(1)}' looks like a test-mode toggle defaulting to TRUE — flip it to "
+            f"'{name}' looks like a test-mode toggle defaulting to TRUE — flip it to "
             f"false before publishing, or debug labels/dashboards will show for every user."
         )
     return warnings

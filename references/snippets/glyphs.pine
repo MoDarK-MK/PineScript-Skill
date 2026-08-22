@@ -36,8 +36,6 @@ string GLYPH_NONE = "–"
 // @function Repeats an on/off glyph pair into a filled/empty meter.
 // @param score How many positions are filled.
 // @param maxScore Total positions.
-glyphMeter(int score, int maxScore) =>
-    string meter = ""
-    for i = 1 to maxScore
-        meter := meter + (i <= score ? GLYPH_STAR_ON : GLYPH_STAR_OFF)
-    meter
+glyphMeter(int score, int maxScore, string onGlyph, string offGlyph) =>
+    int filled = math.max(0, math.min(maxScore, score))
+    str.repeat(onGlyph, filled) + str.repeat(offGlyph, math.max(0, maxScore - filled))

@@ -44,6 +44,9 @@ jobs:
       - name: Project registry and file tree match the repo
         run: python scripts/build_index.py --check
 
+      - name: Inlined library helpers have not drifted
+        run: python scripts/check_library_sync.py
+
   mutation:
     name: Every lint rule is protected by a test
     runs-on: ubuntu-latest

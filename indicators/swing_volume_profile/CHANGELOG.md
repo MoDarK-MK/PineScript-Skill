@@ -3,6 +3,20 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.4.0] - 2026-08-22
+### Added
+- **Measured hit rate.** Every level the indicator would draw is recorded when its swing closes and then followed: when price reaches it, did the move that followed travel the target distance in the level's favour before travelling the same distance against? The table reports the share that did, with the sample size, greyed under 20 samples. It measures the levels actually drawn, not an easier proxy — a statistic about something else would look like evidence for the line on screen while being about a different thing.
+- When a single bar covers both the target and the stop, the order they happened in is unknowable from bar data and it is counted as a LOSS. Calling it a win would inflate every number in the block.
+- **Untested levels only** (default on). Rows price has already traded back through since the swing ended are skipped. An imbalance that has been revisited has had its argument tested; one that has not is still standing. Implemented as a running min/max per stored swing, so it costs one comparison per swing per bar rather than a rescan.
+- **Swing source** is now pluggable: pivots on the chart timeframe, pivots on a higher timeframe, or trading sessions. All three feed the same pipeline. Sessions are exact. The higher-timeframe pivot's price is exact but its bar is converted by the timeframe ratio, so across gaps the left edge can land a bar or two off — said in the input tooltip, not just here.
+- **Confluence zones.** Levels from different swings landing within a configurable ATR distance are merged into one band labelled with how many agree. The agreement is the information, and three separate lines hide it. Drawn from 8 boxes held back from the row budget so a dense profile can never starve them.
+- **Absorption detection.** A swing that makes a new extreme while the OTHER side's share of its volume rises: the extreme says one side pushed, the rising share says the other side was there to take it. Both halves are required — a new low on rising selling is just a downtrend. Two alert conditions.
+- **JSON alert payloads** for webhooks, with a fixed key order because that ordering is the contract a receiving bot is written against.
+
+### Changed
+- Table gained hit rate, absorption and confluence rows, placed with the entry block rather than below the reference prices: the hit rate is the only line on the panel that says whether the entry block has been worth anything.
+- `MAX_ROW_BOXES` drops from 492 to 484 to reserve the confluence boxes.
+
 ## [0.3.1] - 2026-08-22
 ### Fixed
 - Pivots were recorded on any tick where `ta.pivothigh`/`ta.pivotlow` returned a value, but their window includes the bar still forming — a pivot can confirm on one tick and be invalidated by a higher high on the next. The comment at that spot claimed `var` protected against exactly this. It does not: `var` restores the variable on a realtime rollback, never the contents of the array it points at, so the phantom swing stayed recorded. Pivots are now recorded on `barstate.isconfirmed`. Found by the new PINE054 rule.

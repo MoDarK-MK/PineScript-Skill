@@ -898,6 +898,18 @@ plot(close, title="C")
 """
         self.assertNotIn("PINE054", codes(lint_text(src)))
 
+    def test_cleared_scratch_buffer_is_exempt(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+var array<float> scratch = array.new<float>()
+if barstate.islast
+    array.clear(scratch)
+    if close > open
+        array.push(scratch, close)
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE054", codes(lint_text(src)))
+
     def test_unconditional_global_push_is_exempt(self):
         src = """//@version=6
 indicator("T", overlay=true)

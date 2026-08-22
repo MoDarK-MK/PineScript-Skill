@@ -80,12 +80,11 @@ export accentColor() =>
 // @returns A short string suitable for a table cell or a label.
 export formatVolume(float v) =>
     float av = math.abs(nz(v))
-    string out = switch
+    switch
         av >= 1000000000 => str.tostring(v / 1000000000, "#.##") + "B"
         av >= 1000000    => str.tostring(v / 1000000, "#.##") + "M"
         av >= 1000       => str.tostring(v / 1000, "#.#") + "K"
         => str.tostring(nz(v), "#.#")
-    out
 
 // @function Formats a ratio as a percentage string.
 // @param value The numerator.

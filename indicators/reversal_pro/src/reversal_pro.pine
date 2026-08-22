@@ -275,7 +275,7 @@ formatVolume(float v) =>
         av >= 1000000000 => str.tostring(v / 1000000000, "#.##") + "B"
         av >= 1000000    => str.tostring(v / 1000000, "#.##") + "M"
         av >= 1000       => str.tostring(v / 1000, "#.#") + "K"
-        => str.tostring(nz(v), "#.##")
+        => str.tostring(nz(v), "#.#")
 
 // @function Multi-line tooltip describing which confirmations passed, plus the
 // volume actually traded on the pivot bar and how it compares to average.
@@ -303,6 +303,9 @@ volumeSuffix(float pivotVol, float pivotVolAvg) =>
 
 // @function Maps a size-name string to the matching size.* constant. Capped at
 // size.normal — anything larger clips or wraps at real panel widths.
+// library-sync-exempt: the toolkit falls back to size.normal; reversal labels
+// fall back to size.small, because there is one per pivot across the whole
+// chart and normal-sized text at that density buries the candles.
 sizeFrom(string name) =>
     switch name
         "Tiny"   => size.tiny
@@ -310,6 +313,8 @@ sizeFrom(string name) =>
         => size.small
 
 // @function Maps a line-style-name string to the matching line.style_* constant.
+// library-sync-exempt: the toolkit falls back to solid; key levels here fall
+// back to dashed, so a level is never mistaken for price action at a glance.
 lineStyleFrom(string name) =>
     switch name
         "Solid"  => line.style_solid
