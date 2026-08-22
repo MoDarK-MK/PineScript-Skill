@@ -11,16 +11,27 @@ Transform your TradingView Pine Script ideas into **production-ready indicators 
 
 Most Pine Script traders treat each indicator as a one-off script. Pine Script Skill treats them like **real projects**:
 
-- 🔍 **52-Rule Linter** — Catches v6 compile errors, performance traps, strategy risk bugs, invisible dashboard text, and style issues *before* you paste into TradingView
-- 📋 **Professional Templates** — Scaffold new indicators/strategies with theme-aware dashboards, test blocks, and best-practice structure
-- 🛡️ **Strategy Risk Modules** — Risk-% position sizing, ATR stops, breakeven + trailing, TP1/TP2 partials, session and date-window filters — wired together and ready to use
-- ✅ **In-Script Testing** — Write assertions directly in your code; results show in a test-mode table
-- 📦 **Automated Releases** — Generate lint reports, version bumps, changelogs, and publish descriptions with one command
-- 🎨 **Design System** — Unified palette, typography hierarchy, table anatomy, label-collision avoidance, contrast rules
+- 🔍 **52-Rule Linter** — v6 compile errors, repainting traps, scope violations, performance costs, invisible dashboard text. Five rules repair themselves with `--fix`
+- 🧠 **Real Static Analysis** — A symbol table catches `:=` to an undeclared name (TradingView's `Undeclared identifier`) and variables written but never read. Loop nests are costed at their worst case against Pine's 500 ms limit
+- 🎨 **Formatter** — `pine_fmt.py --check` in CI. It never touches block indentation, because in Pine that is structure, not style
+- 📋 **Professional Templates** — Scaffold indicators/strategies with theme-aware dashboards, test blocks, and best-practice structure
+- 🛡️ **Strategy Risk Modules** — Risk-% sizing, ATR stops, breakeven + trailing, TP1/TP2 partials, session and date-window filters, account-level guards — wired together and ready to use
+- ✅ **In-Script Testing** — Assertions inside your Pine code; results show in a test-mode table
+- 🧬 **Tests That Are Themselves Tested** — `mutate_check.py` disables each lint rule and confirms the suite goes red. Its first run found 16 of 52 rules with no test at all
+- 📦 **Automated Releases** — Lint report, version bump, changelog, git tag, publish description, and a generated table of every setting
 - ⚡ **Live & Fast** — Work-tiering and memoization so a dashboard tracks price tick-by-tick without re-running heavy scans
-- 📚 **Complete Reference Docs** — v6 migration guide, style guide, strategy-building guide, publish best practices, lint rule catalog
+- 📚 **12 Reference Guides** — including a multi-timeframe guide, a symptom-first troubleshooting index, and a decision record
 
 Perfect for traders who want **repeatable workflows** across multiple indicators, not just quick one-offs.
+
+### What this does *not* do
+
+TradingView publishes no compiler CLI or API, so **nothing here can guarantee a
+script compiles**. The linter matches patterns; it does not parse a syntax tree.
+Every rule in it was either read out of TradingView's own docs or added *after*
+a real paste failed — and when one gets missed, the fix is a new rule plus a
+fixture in `tests/fixtures/compile_errors/`, not a louder claim. See
+[decisions.md](references/decisions.md) D10.
 
 ---
 
@@ -44,11 +55,16 @@ This generates:
 ### 3. Write Your Logic
 Edit `indicators/my_rsi_bands/src/my_rsi_bands.pine` with your indicator code.
 
-### 4. Lint Before Publishing
+### 4. Lint & Format Before Publishing
 ```bash
 python3 scripts/pine_lint.py indicators/my_rsi_bands/src/my_rsi_bands.pine
+python3 scripts/pine_lint.py indicators/my_rsi_bands/src/my_rsi_bands.pine --fix
+python3 scripts/pine_fmt.py  indicators/my_rsi_bands/src/my_rsi_bands.pine
 ```
-Catches v6 errors, repainting traps, performance issues, and style violations—**offline, no TradingView compiler needed**.
+Catches v6 errors, repainting traps, scope violations, performance issues and
+style problems — **offline, no TradingView compiler needed**. `--fix` repairs
+the five rules that have exactly one correct rewrite; anything needing intent
+stays a finding, because a linter that guesses is worse than one that nags.
 
 ### 5. Test Your Logic
 Add assertions to the `Test Mode` block in your script, then toggle `Test Mode = true` in TradingView. Results appear in a table; no test framework to learn.
@@ -61,7 +77,11 @@ python3 scripts/generate_release_bundle.py indicators/my_rsi_bands
 Outputs:
 - Linted `.pine` file with MPL 2.0 header
 - Pre-filled TradingView publish description
-- Release checklist summary
+- `INPUTS.md` — every setting with its default, range and explanation
+- Release checklist summary with a READY / NOT READY verdict
+
+The bump also creates an annotated git tag `my_rsi_bands/v0.2.0`, namespaced per
+project so several can share one repo.
 
 ### 7. Publish to TradingView
 Paste the `.pine` file into the Pine Editor, use the generated description, publish. Done.
@@ -372,17 +392,22 @@ multiple ±25% and see whether the result degrades gracefully or collapses.
 
 ## 🎯 Key Features
 
-✅ **52-Rule Linter** — Fact-checked against TradingView docs (v6 as of mid-2026)  
-✅ **Strategy Risk Modules** — Risk-% sizing, ATR stops, breakeven, trailing, partials, filters  
-✅ **Backtest Realism Gate** — Blocks lookahead bias, synthetic chart types, zero-cost backtests  
-✅ **In-Script Testing** — Assertion counter; no external test runner  
-✅ **Theme System** — Dark/light mode aware; professional gradients & dashboards  
-✅ **Semantic Versioning** — MAJOR/MINOR/PATCH with automatic changelog  
-✅ **Release Bundles** — Lint → version → changelog → publish description → ready to go  
-✅ **No Compile API Dependency** — Everything runs offline on your machine  
-✅ **Professional Templates** — Indicators, strategies, dashboards, test patterns  
-✅ **Comprehensive Docs** — v6 guide, style guide, strategy guide, design system, publish rules  
-✅ **Git-Ready** — Structure supports multi-indicator repos and version control  
+| | |
+|---|---|
+| **52 lint rules** | PINE001–PINE053 (PINE024 vacant), fact-checked against TradingView's docs; 5 auto-fixable |
+| **Symbol table** | Undeclared `:=` targets, unused and write-only variables |
+| **Cost analysis** | Loop nests costed at their inputs' `maxval`; drawings made in loops checked against `max_*_count` |
+| **Formatter** | `--check` gate in CI; never re-indents, never collapses alignment columns |
+| **230 tests** | stdlib `unittest`, zero dependencies |
+| **Mutation-checked** | 52/52 rules verified to have a test that fails when the rule is disabled |
+| **Strategy risk modules** | Risk-% sizing, ATR stops, breakeven, trailing, partials, filters, `strategy.risk.*` account guards |
+| **Backtest realism gate** | Blocks lookahead bias, synthetic chart types, zero-cost backtests |
+| **In-script testing** | Assertion counter inside the Pine file; no external runner |
+| **Release bundles** | Lint → version → changelog → git tag → publish description → inputs table |
+| **Generated docs** | Project registry and file tree built from the repo, `--check`ed in CI |
+| **12 reference guides** | v6, style, lint catalog, performance, strategy, design, publishing, repo structure, MTF, alerts, troubleshooting, decisions |
+| **Shared library** | `libraries/pine_toolkit` — the pure helpers as a real Pine `library()` |
+| **Offline** | No compile-API dependency; everything runs on your machine |
 
 ---
 
@@ -391,11 +416,27 @@ multiple ±25% and see whether the result degrades gracefully or collapses.
 The Python tooling has its own test suite (stdlib `unittest`, no dependencies):
 
 ```bash
-python -m unittest discover -s tests -t . -v
+python -m unittest discover -s tests -t . -v     # 230 tests
+python scripts/lint_all.py                       # every source .pine, strict
+python scripts/pine_fmt.py FILE --check          # formatting gate
+python scripts/build_index.py --check            # generated docs are current
+python scripts/mutate_check.py                   # ~8 min; see below
 ```
 
-GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the
-test suite and lints every `.pine` file in the repo on each push and pull request.
+GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs four
+jobs: the test suite, the Pine lint + format sweep, the generated-docs check,
+and — on pushes to `main` only — the mutation run.
+
+**Why a mutation job.** A green suite proves the tests pass. It does not prove
+they would fail if the thing they test broke, and a test that cannot fail is
+worth nothing. `mutate_check.py` disables one lint rule at a time and re-runs
+the suite; a rule whose absence changes nothing is one the next refactor can
+delete silently. The first run found **16 of 52 rules in exactly that state** —
+nearly a third of the catalog, invisible while everything reported OK.
+
+**Adding a lint rule.** `scripts/new_rule.py` scaffolds the catalog entry, the
+check stub, the call site and the docs section. The consistency tests then fail
+until the rule is documented and the counts line up, which is the point.
 
 ---
 
@@ -407,9 +448,10 @@ test suite and lints every `.pine` file in the repo on each push and pull reques
 - Publish to TradingView → no release notes, no version tracking, hard to maintain
 
 **With Pine Script Skill:**
-- Write indicator → lint locally (catches errors *before* TradingView)
-- Scaffold → Write → Lint → Test → Version → Release → Publish in one repeatable workflow
-- Maintain 10+ indicators professionally with independent versions, changelogs, and release history
+- Write indicator → lint and format locally, catching most errors *before* TradingView
+- Scaffold → Write → Lint → Test → Version → Tag → Release → Publish, repeatably
+- Maintain 10+ indicators with independent versions, changelogs, git tags and release history
+- When something *does* slip through, it becomes a fixture and a rule, so it cannot come back
 - **Spend more time trading, less time wrestling with process**
 
 ---
@@ -423,12 +465,15 @@ See [SKILL.md](SKILL.md) for complete details on:
 - Git integration & pre-commit hooks
 - Advanced linting configuration
 
+Start with [troubleshooting.md](references/troubleshooting.md) when something is
+already wrong — it is indexed by symptom, and every row in it happened here.
+
 ---
 
 ## 🔧 Requirements
 
 - **Python 3.8+** — for scripts (no external dependencies!)
-- **Pine Script v6** knowledge — [TradingView docs](https://www.tradingview.com/pine-script-docs/en/v5/)
+- **Pine Script v6** knowledge — [TradingView docs](https://www.tradingview.com/pine-script-docs/)
 - **TradingView Account** — free or pro (for publishing)
 - **Git** (optional) — for version control
 
