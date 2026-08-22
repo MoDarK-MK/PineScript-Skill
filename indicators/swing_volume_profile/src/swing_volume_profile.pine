@@ -44,6 +44,14 @@ indicator(
 //   better than this and far more expensive. See indicators/volume_pro for the
 //   intrabar approach where it genuinely pays off.
 //
+// RESOLUTION: Price Rows Per Swing goes to 500. The rows are always BUILT at
+//   the number you ask for, so the three marker lines get more precise with every
+//   row you add — that is arrays, not drawings, and it is not rationed. What is
+//   rationed is the drawing: TradingView allows 500 boxes for the whole script.
+//   Rows holding no volume cost no box, the newest swing draws first, and the
+//   table reports the budget in use. To buy more drawn detail: fewer swings, or
+//   turn the sell|buy split off, which halves the cost per row.
+//
 // PERFORMANCE: a completed swing's profile is computed ONCE, when the swing
 // closes, and then only repositioned. Only the developing swing is recomputed,
 // and that is memoised per bar rather than per tick. See
@@ -54,6 +62,7 @@ color TRANSPARENT_COLOR = #00000000
 string THEME_DARK       = "Dark"
 string THEME_LIGHT      = "Light"
 int    MARKERS_PER_SWING = 3          // POC, max buy, max sell
+int    MAX_ROW_BOXES     = 492        // 500 box cap, a few held in reserve
 
 // ————— Inputs: Swing Detection
 string SW_GROUP = "Swing Detection"
@@ -77,9 +86,13 @@ bool showLiveSwingInput = input.bool(
 // ————— Inputs: Profile
 string PR_GROUP = "Profile"
 int    rowsInput = input.int(
-     30, "Price Rows Per Swing", minval=5, maxval=60, group=PR_GROUP,
-     tooltip="Each row costs one box against TradingView's 500-box cap. At high " +
-     "swing counts the rows are reduced automatically to fit.")
+     30, "Price Rows Per Swing", minval=5, maxval=500, step=5, group=PR_GROUP,
+     tooltip="Resolution of the profile. Raising it always sharpens POC / Max Buy / " +
+     "Max Sell, because those are computed at full resolution whether or not every " +
+     "row gets drawn. Drawing is what is limited: TradingView allows 500 boxes for " +
+     "the whole script, so boxes are spent on rows that actually hold volume, newest " +
+     "swing first, and the table reports the budget in use. Rows are never finer " +
+     "than one tick.")
 string profilePosInput = input.string(
      "Over Swing", "Profile Position",
      options=["Over Swing", "Right Of Swing"], group=PR_GROUP)
@@ -94,7 +107,8 @@ int    rowTranspInput = input.int(
 bool   showSplitInput = input.bool(
      true, "Split Each Row Into Sell | Buy", group=PR_GROUP,
      tooltip="Draws the selling share and the buying share of each row as two " +
-     "segments. Off draws one bar coloured by whichever side dominated.")
+     "segments. Off draws one bar coloured by whichever side dominated - and costs " +
+     "HALF the boxes, which is the cheapest way to buy more rows.")
 
 // ————— Inputs: Marker Lines
 string LN_GROUP = "Marker Lines"
@@ -208,10 +222,17 @@ buildProfile(int leftBar, int rightBar, int rows, int scanCap) =>
         for i = rightOff to leftOff
             hi := math.max(hi, high[i])
             lo := math.min(lo, low[i])
-        float span = math.max(hi - lo, syminfo.mintick * rows)
-        float step = span / rows
-        array<float> buys  = array.new<float>(rows, 0.0)
-        array<float> sells = array.new<float>(rows, 0.0)
+        float span = math.max(hi - lo, syminfo.mintick)
+        // Two things happen here, both of which only matter once rows go high.
+        // A row finer than one tick cannot hold anything its neighbour does not,
+        // so rows are reduced to the tick count the swing actually spans. And the
+        // floor is one tick, NOT mintick * rows: the old floor inflated span for
+        // any swing narrower than the row count, drawing a profile taller than
+        // the swing it describes.
+        int   useRows = math.max(5, math.min(rows, int(span / syminfo.mintick)))
+        float step = span / useRows
+        array<float> buys  = array.new<float>(useRows, 0.0)
+        array<float> sells = array.new<float>(useRows, 0.0)
         float grandTotal = 0.0
         float grandBuy   = 0.0
         for i = rightOff to leftOff
@@ -222,8 +243,8 @@ buildProfile(int leftBar, int rightBar, int rows, int scanCap) =>
                 buyShare := math.max(0.0, math.min(1.0, buyShare))
                 int startIdx = int(math.floor((low[i] - lo) / step))
                 int endIdx   = int(math.floor((high[i] - lo) / step))
-                startIdx := math.max(0, math.min(rows - 1, startIdx))
-                endIdx   := math.max(0, math.min(rows - 1, endIdx))
+                startIdx := math.max(0, math.min(useRows - 1, startIdx))
+                endIdx   := math.max(0, math.min(useRows - 1, endIdx))
                 float perRow = barVol / (endIdx - startIdx + 1)
                 for r = startIdx to endIdx
                     array.set(buys, r, array.get(buys, r) + perRow * buyShare)
@@ -239,7 +260,7 @@ buildProfile(int leftBar, int rightBar, int rows, int scanCap) =>
         int   pocIdx = 0
         int   buyIdx = 0
         int   sellIdx = 0
-        for r = 0 to rows - 1
+        for r = 0 to useRows - 1
             float b = array.get(buys, r)
             float s = array.get(sells, r)
             if b + s > peakTotal
@@ -305,13 +326,19 @@ hideLabelsFrom(array<label> pool, int from) =>
             label.set_text(array.get(pool, i), "")
 
 // ————— Calculations: budget
-// Boxes are capped at 500 for the whole script. Every swing costs `rows` boxes,
-// doubled when the split view is on. Reducing rows beats hitting the cap and
-// silently losing the oldest drawings.
+// Boxes are capped at 500 for the whole script, and the profile rows are the
+// only consumer — the marker lines and their tags come out of the separate line
+// and label pools.
+//
+// Rows are BUILT at the resolution you ask for, always. That is the part that
+// decides how precise POC / Max Buy / Max Sell are, and it costs arrays, not
+// boxes. Only the drawing is rationed, and it is rationed by spending boxes on
+// rows that actually hold volume — at high resolution most rows in a swing are
+// empty, and an empty row now costs nothing at all. Newest swing draws first, so
+// if the budget does run out it is the oldest swing that thins, not the live one.
 int drawableSwings = maxSwingsInput + (showLiveSwingInput ? 1 : 0)
 int boxesPerRow    = showSplitInput ? 2 : 1
-int rowBudget      = int(470 / (drawableSwings * boxesPerRow))
-int profileRows    = math.max(5, math.min(rowsInput, rowBudget))
+int profileRows    = rowsInput
 
 color textColor  = getTextColor(themeInput)
 color mutedColor = getMutedColor(themeInput)
@@ -357,15 +384,25 @@ if showLiveSwingInput and array.size(pivotBars) > 0
 
 // ————— Visuals: pools
 var array<box>   rowBoxes    = array.new<box>()
+var int          boxesUsed   = 0
 var array<line>  markerLines = array.new<line>()
 var array<label> markerTags  = array.new<label>()
 
-// @function Draws one swing's rows into the box pool starting at `cursor`, and
-// returns how many boxes it used.
-drawRows(SwingProfile p, array<box> pool, int cursor, int rows, int rightEdge, int leftEdge) =>
+// @function Draws one swing's rows into the box pool starting at `cursor`,
+// stopping before box index `limit`, and returns how many boxes it used.
+//
+// A row holding no volume consumes NO box. That is what makes a high row count
+// affordable: the rows a profile actually needs are the ones price traded in.
+drawRows(SwingProfile p, array<box> pool, int cursor, int limit, int rightEdge, int leftEdge) =>
     int used = 0
+    int rows = array.size(p.buyRows)
+    int cost = showSplitInput ? 2 : 1
     int fullWidth = math.max(1, rightEdge - leftEdge)
     for r = 0 to rows - 1
+        // Out of budget: every remaining row would be skipped anyway, and at 500
+        // rows a swing the wasted iterations are not free.
+        if cursor + used + cost > limit
+            break
         float b = array.get(p.buyRows, r)
         float s = array.get(p.sellRows, r)
         float t = b + s
@@ -393,13 +430,6 @@ drawRows(SwingProfile p, array<box> pool, int cursor, int rows, int rightEdge, i
                 box.set_lefttop(bx, leftEdge, yBot + p.step)
                 box.set_rightbottom(bx, leftEdge + rowWidth, yBot)
                 box.set_bgcolor(bx, color.new(b >= s ? buyColorInput : sellColorInput, rowTranspInput))
-                box.set_border_color(bx, TRANSPARENT_COLOR)
-                used += 1
-        else
-            int blanks = showSplitInput ? 2 : 1
-            for k = 0 to blanks - 1
-                box bx = array.get(pool, cursor + used)
-                box.set_bgcolor(bx, TRANSPARENT_COLOR)
                 box.set_border_color(bx, TRANSPARENT_COLOR)
                 used += 1
     used
@@ -433,7 +463,10 @@ if barstate.islast
     int swingCount = array.size(swings)
     int liveCount  = na(liveSwing) ? 0 : 1
     int totalSwings = swingCount + liveCount
-    ensureBoxPool(rowBoxes, math.max(1, totalSwings * profileRows * boxesPerRow))
+    // Ask for what the swings would use, capped by what TradingView allows.
+    int poolSize = math.min(
+         MAX_ROW_BOXES, math.max(1, totalSwings * profileRows * boxesPerRow))
+    ensureBoxPool(rowBoxes, poolSize)
     ensureLinePool(markerLines, math.max(1, totalSwings * MARKERS_PER_SWING))
     ensureLabelPool(markerTags, math.max(1, totalSwings * MARKERS_PER_SWING))
 
@@ -443,7 +476,10 @@ if barstate.islast
     // below its start, so `0 to totalSwings - 1` with no swings yet would run
     // with i = 0 and i = -1 and index an empty array.
     if totalSwings > 0
-        for i = 0 to totalSwings - 1
+        for k = 0 to totalSwings - 1
+            // Newest first. If the box budget runs out it must be the oldest
+            // swing that loses rows, never the leg price is trading in now.
+            int i = totalSwings - 1 - k
             SwingProfile p = i < swingCount ? array.get(swings, i) : liveSwing
             if not na(p)
                 int leftEdge = p.leftBar
@@ -456,7 +492,7 @@ if barstate.islast
                     // buries the candles it is describing.
                     int swingWidth = math.max(1, p.rightBar - p.leftBar)
                     rightEdge := p.leftBar + math.max(1, int(swingWidth * maxWidthPctInput / 100))
-                boxCursor += drawRows(p, rowBoxes, boxCursor, profileRows, rightEdge, leftEdge)
+                boxCursor += drawRows(p, rowBoxes, boxCursor, poolSize, rightEdge, leftEdge)
                 int markerRight = profilePosInput == "Right Of Swing" ?
                      p.rightBar + profileWidthInput : p.rightBar
                 lineCursor += drawMarker(
@@ -468,13 +504,14 @@ if barstate.islast
                 lineCursor += drawMarker(
                      showMaxSellInput, rowPrice(p, p.maxSellIdx), "MAX SELL", maxSellColorInput,
                      markerLines, markerTags, lineCursor, lineCursor, p.leftBar, markerRight)
+    boxesUsed := boxCursor
     hideBoxesFrom(rowBoxes, boxCursor)
     hideLinesFrom(markerLines, lineCursor)
     hideLabelsFrom(markerTags, lineCursor)
 
 // ————— Visuals: summary table
 var table dash = table.new(
-     tablePosFrom(tablePosInput), 2, 7,
+     tablePosFrom(tablePosInput), 2, 8,
      bgcolor=getPanelColor(themeInput, 15), border_width=1,
      border_color=getPanelColor(themeInput, 100),
      frame_color=color.new(mutedColor, 70), frame_width=1)
@@ -484,8 +521,15 @@ if showTableInput and barstate.islast
          (array.size(swings) > 0 ? array.get(swings, array.size(swings) - 1) : na) : liveSwing
     bool haveSwing = not na(shown)
     float buyPct = haveSwing and shown.totalVol > 0 ? shown.buyVol / shown.totalVol * 100 : na
-    string rowNote = profileRows < rowsInput ?
-         str.tostring(profileRows) + " (capped)" : str.tostring(profileRows)
+    // Two different numbers, and conflating them is what would mislead you:
+    // rows is the resolution the profile was BUILT at, boxes is how much of the
+    // drawing budget that resolution is currently spending.
+    int shownRows = haveSwing ? array.size(shown.buyRows) : 0
+    string rowNote = not haveSwing ? "--" :
+         shownRows < rowsInput ?
+         str.tostring(shownRows) + " / " + str.tostring(rowsInput) + " (tick limit)" :
+         str.tostring(shownRows)
+    bool boxesFull = boxesUsed >= MAX_ROW_BOXES
     table.cell(dash, 0, 0, "SWING PROFILE", text_color=textColor, text_size=size.normal,
          text_halign=text.align_center)
     table.cell(dash, 1, 0, "", text_color=textColor)
@@ -503,13 +547,16 @@ if showTableInput and barstate.islast
     dashRow(dash, 5, "Buy share", na(buyPct) ? "--" : str.tostring(buyPct, "#.#") + "%",
          mutedColor, nz(buyPct, 50) >= 50 ? buyColorInput : sellColorInput)
     dashRow(dash, 6, "Rows / swing", rowNote, mutedColor,
-         profileRows < rowsInput ? pocColorInput : textColor)
+         shownRows < rowsInput ? pocColorInput : textColor)
+    dashRow(dash, 7, "Boxes used",
+         str.tostring(boxesUsed) + " / " + str.tostring(MAX_ROW_BOXES), mutedColor,
+         boxesFull ? pocColorInput : textColor)
 
 // ————— Alerts
 alertcondition(newPivot, "New swing confirmed", "A new swing pivot has been confirmed.")
 
 // ————— Debug / Test block (keep testModeInput false when handing off)
-int TEST_COUNT = 4      // keep in sync with the assertFailed() calls below
+int TEST_COUNT = 5      // keep in sync with the assertFailed() calls below
 var int passCount = 0
 var int failCount = 0
 
@@ -528,16 +575,23 @@ if testModeInput
     fails += assertFailed(array.size(swings) <= maxSwingsInput, "swing list exceeded its cap")
     // 2. Every marker index must be inside the row range.
     fails += assertFailed(
-         na(liveSwing) or (liveSwing.pocIdx >= 0 and liveSwing.pocIdx < profileRows and
-         liveSwing.maxBuyIdx >= 0 and liveSwing.maxBuyIdx < profileRows and
-         liveSwing.maxSellIdx >= 0 and liveSwing.maxSellIdx < profileRows),
+         na(liveSwing) or (liveSwing.pocIdx >= 0 and
+         liveSwing.pocIdx < array.size(liveSwing.buyRows) and
+         liveSwing.maxBuyIdx >= 0 and
+         liveSwing.maxBuyIdx < array.size(liveSwing.buyRows) and
+         liveSwing.maxSellIdx >= 0 and
+         liveSwing.maxSellIdx < array.size(liveSwing.buyRows)),
          "marker row index out of range")
     // 3. Buying can never exceed the volume the swing actually traded.
     fails += assertFailed(
          na(liveSwing) or liveSwing.buyVol <= liveSwing.totalVol + 1,
          "buy volume exceeds total volume")
-    // 4. A profile row must have positive height.
-    fails += assertFailed(na(liveSwing) or liveSwing.step > 0, "profile row height is zero")
+    // 4. A profile row must have positive height, and never be finer than a tick.
+    fails += assertFailed(
+         na(liveSwing) or liveSwing.step >= syminfo.mintick * 0.999,
+         "profile row is thinner than one tick")
+    // 5. The drawing must never exceed the box budget it was given.
+    fails += assertFailed(boxesUsed <= MAX_ROW_BOXES, "row boxes exceeded the budget")
     failCount += fails
     passCount += TEST_COUNT - fails
 

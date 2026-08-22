@@ -3,6 +3,19 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.2.0] - 2026-08-22
+### Added
+- Price Rows Per Swing now goes to 500, up from 60. Rows are built at the resolution you ask for regardless of how many get drawn, so POC / Max Buy / Max Sell sharpen with every row added.
+- Summary table reports rows actually built and the box budget in use, so the two limits that can bite are visible instead of silent.
+
+### Changed
+- Rows holding no volume no longer consume a box. At high resolution most rows in a swing are empty, and that is what makes a high row count affordable; the drawing also breaks out of the loop once the budget is gone.
+- Swings draw newest first. If the box budget does run out it is now the oldest swing that thins, never the leg price is trading in.
+- Rows are no longer capped by a fixed per-swing budget derived from swing count. Only the drawing is rationed now.
+
+### Fixed
+- A swing spanning fewer ticks than the requested row count had its range inflated to `mintick * rows`, drawing a profile taller than the swing it described. The floor is one tick, and rows are reduced to the tick count the swing actually spans — invisible at 30 rows, wrong at 500.
+
 ## [0.1.0] - 2026-08-22
 ### Added
 - Initial version. A horizontal volume profile built PER SWING rather than over a fixed last-N-bars window, so the profile always describes the leg price is actually in.
