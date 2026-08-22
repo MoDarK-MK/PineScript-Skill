@@ -1,0 +1,551 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © SWINGVP
+
+//@version=6
+indicator(
+     "Swing Volume Profile", shorttitle="SWINGVP", overlay=true,
+     max_boxes_count=500, max_lines_count=500, max_labels_count=500,
+     max_bars_back=1000
+     )
+
+// max_bars_back is REQUIRED, not decorative: every profile scan reads
+// high[i]/low[i]/volume[i] with a LOOP VARIABLE, and Pine cannot infer the
+// buffer depth from a dynamic index. The scan is capped by Max Bars Per Swing
+// so the buffer is always sufficient.
+
+// A horizontal volume profile built PER SWING rather than over a fixed window.
+// Swings are found automatically from pivots, so the profile always describes
+// the leg price is actually in — not an arbitrary last-N-bars box.
+//
+// Each swing gets three marker lines, which is what the profile is for:
+//   • POC      — the price row that traded the most total volume
+//   • Max Buy  — the row with the most estimated BUYING
+//   • Max Sell — the row with the most estimated SELLING
+//
+// Tuned for the 5-minute chart out of the box: Pivot Length 10 (≈50-minute
+// swings), 30 rows, 3 swings. Those are inputs — raise Pivot Length on a lower
+// timeframe, lower it on a higher one.
+//
+// HOW BUY/SELL IS ESTIMATED — the honest part:
+//   Pine exposes no bid/ask, so no script can know which side was the
+//   aggressor. Each bar's volume is split by where it CLOSED inside its own
+//   range: a bar closing at its high counts fully as buying, at its low fully
+//   as selling, in the middle 50/50.
+//
+//     buyShare = (close - low) / (high - low)
+//
+//   That is the standard approximation for a profile of this kind. It is not
+//   order flow. It is right most of the time and wrong on bars that reverse
+//   hard intrabar — which is exactly where you would most want it to be right.
+//
+//   The alternative, request.security_lower_tf(), was deliberately NOT used
+//   here: on a 5-minute chart the finest intrabar resolution available on a
+//   non-Premium plan is 1 minute, which is five sub-bars per candle — barely
+//   better than this and far more expensive. See indicators/volume_pro for the
+//   intrabar approach where it genuinely pays off.
+//
+// PERFORMANCE: a completed swing's profile is computed ONCE, when the swing
+// closes, and then only repositioned. Only the developing swing is recomputed,
+// and that is memoised per bar rather than per tick. See
+// references/performance-guide.md.
+
+// ————— Constants
+color TRANSPARENT_COLOR = #00000000
+string THEME_DARK       = "Dark"
+string THEME_LIGHT      = "Light"
+int    MARKERS_PER_SWING = 3          // POC, max buy, max sell
+
+// ————— Inputs: Swing Detection
+string SW_GROUP = "Swing Detection"
+int  pivotLenInput = input.int(
+     10, "Pivot Length", minval=2, maxval=200, group=SW_GROUP,
+     tooltip="How many bars either side a high/low must lead to count as a swing " +
+     "point. 10 suits a 5-minute chart (~50-minute swings). Raise it for fewer, " +
+     "bigger swings; lower it for more, smaller ones.")
+int  maxSwingsInput = input.int(
+     3, "Swings To Show", minval=1, maxval=6, group=SW_GROUP)
+int  maxSwingBarsInput = input.int(
+     300, "Max Bars Per Swing", minval=20, maxval=900, group=SW_GROUP,
+     tooltip="Safety cap. A swing longer than this is scanned only over its most " +
+     "recent bars, so one runaway leg cannot stall the script.")
+bool showLiveSwingInput = input.bool(
+     true, "Include The Developing Swing", group=SW_GROUP,
+     tooltip="Profiles the leg from the last confirmed pivot to the current bar. " +
+     "It updates as the leg extends, and its shape will keep changing until the " +
+     "next pivot confirms.")
+
+// ————— Inputs: Profile
+string PR_GROUP = "Profile"
+int    rowsInput = input.int(
+     30, "Price Rows Per Swing", minval=5, maxval=60, group=PR_GROUP,
+     tooltip="Each row costs one box against TradingView's 500-box cap. At high " +
+     "swing counts the rows are reduced automatically to fit.")
+string profilePosInput = input.string(
+     "Over Swing", "Profile Position",
+     options=["Over Swing", "Right Of Swing"], group=PR_GROUP)
+int    profileWidthInput = input.int(
+     40, "Width (bars, when right of swing)", minval=5, maxval=200, group=PR_GROUP)
+float  maxWidthPctInput = input.float(
+     70.0, "Max Width (% of swing)", minval=10.0, maxval=100.0, step=5.0, group=PR_GROUP,
+     tooltip="When drawn over the swing, the longest row spans this share of the " +
+     "swing's width, so the profile never buries the candles.")
+int    rowTranspInput = input.int(
+     78, "Row Transparency", minval=40, maxval=97, group=PR_GROUP)
+bool   showSplitInput = input.bool(
+     true, "Split Each Row Into Sell | Buy", group=PR_GROUP,
+     tooltip="Draws the selling share and the buying share of each row as two " +
+     "segments. Off draws one bar coloured by whichever side dominated.")
+
+// ————— Inputs: Marker Lines
+string LN_GROUP = "Marker Lines"
+bool   showPocInput     = input.bool(true, "POC (most total volume)", inline="poc", group=LN_GROUP)
+color  pocColorInput    = input.color(#d98b1f, "", inline="poc", group=LN_GROUP)
+bool   showMaxBuyInput  = input.bool(true, "Max Buy row", inline="mb", group=LN_GROUP)
+color  maxBuyColorInput = input.color(#089981, "", inline="mb", group=LN_GROUP)
+bool   showMaxSellInput = input.bool(true, "Max Sell row", inline="ms", group=LN_GROUP)
+color  maxSellColorInput = input.color(#f23645, "", inline="ms", group=LN_GROUP)
+int    lineWidthInput   = input.int(2, "Line Width", minval=1, maxval=4, group=LN_GROUP)
+string lineStyleInput   = input.string(
+     "Solid", "Line Style", options=["Solid", "Dashed", "Dotted"], group=LN_GROUP)
+bool   extendLinesInput = input.bool(
+     false, "Extend Lines Right", group=LN_GROUP,
+     tooltip="Carries every marker to the right edge. Useful for the most recent " +
+     "swing, cluttered when several swings are shown.")
+bool   showLabelsInput  = input.bool(true, "Label The Lines", group=LN_GROUP)
+
+// ————— Inputs: Appearance
+string themeInput   = input.string(
+     THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
+color  buyColorInput  = input.color(#089981, "Buy Color", group="Appearance")
+color  sellColorInput = input.color(#f23645, "Sell Color", group="Appearance")
+bool   showTableInput = input.bool(true, "Show Summary Table", group="Appearance")
+string tablePosInput  = input.string(
+     "Top Right", "Table Position",
+     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Appearance")
+bool   testModeInput  = input.bool(false, "Test Mode", group="Debug/Test")
+
+// ————— Types
+// One swing's finished profile. Holding the row arrays means a completed swing
+// is scanned once and then only repositioned.
+type SwingProfile
+    int   leftBar
+    int   rightBar
+    float lo
+    float step
+    int   pocIdx
+    int   maxBuyIdx
+    int   maxSellIdx
+    float peakRow
+    float totalVol
+    float buyVol
+    array<float> buyRows
+    array<float> sellRows
+
+// ————— Function declarations
+// @function Primary text color — the value column reads first.
+getTextColor(string theme) =>
+    switch theme
+        THEME_LIGHT => #131722
+        => #d1d4dc
+
+// @function Secondary text color — deliberately lower contrast than the value.
+getMutedColor(string theme) =>
+    switch theme
+        THEME_LIGHT => #4a4e58
+        => #b2b5be
+
+// @function Panel background. Low transparency on purpose: at 80+ the candles
+// behind the panel win and the numbers stop being readable.
+getPanelColor(string theme, int transp) =>
+    color base = theme == THEME_LIGHT ? #ffffff : #131722
+    color.new(base, transp)
+
+// @function Maps a position-name string to the matching position.* constant.
+tablePosFrom(string name) =>
+    switch name
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left"  => position.bottom_left
+        => position.top_right
+
+// @function Maps a style-name string to the matching line.style_* constant.
+lineStyleFrom(string name) =>
+    switch name
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+// @function Compact human-readable volume ("1.24M", "345.6K").
+formatVolume(float v) =>
+    float av = math.abs(nz(v))
+    switch
+        av >= 1000000000 => str.tostring(v / 1000000000, "#.##") + "B"
+        av >= 1000000    => str.tostring(v / 1000000, "#.##") + "M"
+        av >= 1000       => str.tostring(v / 1000, "#.#") + "K"
+        => str.tostring(nz(v), "#.#")
+
+// @function One label/value table row. Both colors are required arguments,
+// which is what stops a cell shipping without text_color — Pine defaults cell
+// text to BLACK, invisible on a dark panel.
+dashRow(table t, int row, string label, string value, color labelCol, color valueCol) =>
+    table.cell(t, 0, row, label, text_color=labelCol, text_size=size.small,
+         text_halign=text.align_left)
+    table.cell(t, 1, row, value, text_color=valueCol, text_size=size.small,
+         text_halign=text.align_right)
+
+// @function Builds the volume profile for the bars between two absolute bar
+// indices. Returns na when the range is unusable, which the caller must handle.
+//
+// Volume is split by where each bar closed inside its own range — see the
+// header. A doji contributes 50/50 rather than being dropped.
+buildProfile(int leftBar, int rightBar, int rows, int scanCap) =>
+    SwingProfile result = na
+    int rightOff = bar_index - rightBar
+    int leftOff  = math.min(bar_index - leftBar, scanCap)
+    if rightOff >= 0 and leftOff > rightOff
+        float hi = high[rightOff]
+        float lo = low[rightOff]
+        for i = rightOff to leftOff
+            hi := math.max(hi, high[i])
+            lo := math.min(lo, low[i])
+        float span = math.max(hi - lo, syminfo.mintick * rows)
+        float step = span / rows
+        array<float> buys  = array.new<float>(rows, 0.0)
+        array<float> sells = array.new<float>(rows, 0.0)
+        float grandTotal = 0.0
+        float grandBuy   = 0.0
+        for i = rightOff to leftOff
+            float barVol = nz(volume[i])
+            if barVol > 0
+                float barRange = high[i] - low[i]
+                float buyShare = barRange > 0 ? (close[i] - low[i]) / barRange : 0.5
+                buyShare := math.max(0.0, math.min(1.0, buyShare))
+                int startIdx = int(math.floor((low[i] - lo) / step))
+                int endIdx   = int(math.floor((high[i] - lo) / step))
+                startIdx := math.max(0, math.min(rows - 1, startIdx))
+                endIdx   := math.max(0, math.min(rows - 1, endIdx))
+                float perRow = barVol / (endIdx - startIdx + 1)
+                for r = startIdx to endIdx
+                    array.set(buys, r, array.get(buys, r) + perRow * buyShare)
+                    array.set(sells, r, array.get(sells, r) + perRow * (1 - buyShare))
+                grandTotal += barVol
+                grandBuy   += barVol * buyShare
+        // Three separate peaks: the row that traded most in total, the row that
+        // absorbed the most buying, and the row that absorbed the most selling.
+        // They are often different rows, and that difference is the signal.
+        float peakTotal = 0.0
+        float peakBuy   = 0.0
+        float peakSell  = 0.0
+        int   pocIdx = 0
+        int   buyIdx = 0
+        int   sellIdx = 0
+        for r = 0 to rows - 1
+            float b = array.get(buys, r)
+            float s = array.get(sells, r)
+            if b + s > peakTotal
+                peakTotal := b + s
+                pocIdx := r
+            if b > peakBuy
+                peakBuy := b
+                buyIdx := r
+            if s > peakSell
+                peakSell := s
+                sellIdx := r
+        if peakTotal > 0
+            result := SwingProfile.new(
+                 leftBar = math.max(leftBar, bar_index - leftOff), rightBar = rightBar,
+                 lo = lo, step = step, pocIdx = pocIdx, maxBuyIdx = buyIdx,
+                 maxSellIdx = sellIdx, peakRow = peakTotal, totalVol = grandTotal,
+                 buyVol = grandBuy, buyRows = buys, sellRows = sells)
+    result
+
+// @function Price at the centre of a profile row.
+rowPrice(SwingProfile p, int idx) =>
+    p.lo + (idx + 0.5) * p.step
+
+// @function Grows a box pool, parking new boxes invisibly.
+ensureBoxPool(array<box> pool, int needed) =>
+    while array.size(pool) < needed
+        array.push(pool, box.new(
+             bar_index, close, bar_index, close, xloc=xloc.bar_index,
+             bgcolor=TRANSPARENT_COLOR, border_color=TRANSPARENT_COLOR))
+
+// @function Grows a line pool.
+ensureLinePool(array<line> pool, int needed) =>
+    while array.size(pool) < needed
+        array.push(pool, line.new(
+             bar_index, close, bar_index, close, xloc=xloc.bar_index,
+             color=TRANSPARENT_COLOR))
+
+// @function Grows a label pool.
+ensureLabelPool(array<label> pool, int needed) =>
+    while array.size(pool) < needed
+        array.push(pool, label.new(
+             bar_index, close, "", xloc=xloc.bar_index,
+             style=label.style_label_left, color=TRANSPARENT_COLOR))
+
+// @function Hides pool boxes from `from` onward so a shrinking draw leaves
+// nothing stale behind.
+hideBoxesFrom(array<box> pool, int from) =>
+    if array.size(pool) > from
+        for i = from to array.size(pool) - 1
+            box.set_bgcolor(array.get(pool, i), TRANSPARENT_COLOR)
+            box.set_border_color(array.get(pool, i), TRANSPARENT_COLOR)
+
+// @function Hides pool lines from `from` onward.
+hideLinesFrom(array<line> pool, int from) =>
+    if array.size(pool) > from
+        for i = from to array.size(pool) - 1
+            line.set_color(array.get(pool, i), TRANSPARENT_COLOR)
+
+// @function Hides pool labels from `from` onward.
+hideLabelsFrom(array<label> pool, int from) =>
+    if array.size(pool) > from
+        for i = from to array.size(pool) - 1
+            label.set_text(array.get(pool, i), "")
+
+// ————— Calculations: budget
+// Boxes are capped at 500 for the whole script. Every swing costs `rows` boxes,
+// doubled when the split view is on. Reducing rows beats hitting the cap and
+// silently losing the oldest drawings.
+int drawableSwings = maxSwingsInput + (showLiveSwingInput ? 1 : 0)
+int boxesPerRow    = showSplitInput ? 2 : 1
+int rowBudget      = int(470 / (drawableSwings * boxesPerRow))
+int profileRows    = math.max(5, math.min(rowsInput, rowBudget))
+
+color textColor  = getTextColor(themeInput)
+color mutedColor = getMutedColor(themeInput)
+string markerStyle = lineStyleFrom(lineStyleInput)
+
+// ————— Calculations: swing detection
+float pivotHigh = ta.pivothigh(high, pivotLenInput, pivotLenInput)
+float pivotLow  = ta.pivotlow(low, pivotLenInput, pivotLenInput)
+bool  newPivot  = not na(pivotHigh) or not na(pivotLow)
+
+// Absolute bar index of every confirmed pivot, newest last. `var` matters: a
+// pivot can appear mid-bar and vanish before the bar closes, and only var's
+// rollback keeps a phantom from being recorded permanently.
+var array<int> pivotBars = array.new<int>()
+var array<SwingProfile> swings = array.new<SwingProfile>()
+
+if newPivot
+    int pivotBar = bar_index - pivotLenInput
+    // Build the profile for the leg that just closed, then keep only the most
+    // recent ones. A completed swing never changes, so this runs once per swing.
+    if array.size(pivotBars) > 0
+        int prevBar = array.get(pivotBars, array.size(pivotBars) - 1)
+        SwingProfile finished = buildProfile(prevBar, pivotBar, profileRows, maxSwingBarsInput)
+        if not na(finished)
+            array.push(swings, finished)
+            while array.size(swings) > maxSwingsInput
+                SwingProfile dropped = array.shift(swings)
+    array.push(pivotBars, pivotBar)
+    while array.size(pivotBars) > maxSwingsInput + 2
+        int droppedBar = array.shift(pivotBars)
+
+// The developing leg: last confirmed pivot to the current bar. Memoised on
+// bar_index so it recomputes once per bar rather than on every realtime tick —
+// its shape cannot meaningfully change within one 5-minute candle.
+var SwingProfile liveSwing = na
+var int liveCachedBar = na
+if showLiveSwingInput and array.size(pivotBars) > 0
+    bool needsRebuild = na(liveCachedBar) or liveCachedBar != bar_index
+    if needsRebuild
+        liveCachedBar := bar_index
+        int lastPivot = array.get(pivotBars, array.size(pivotBars) - 1)
+        liveSwing := buildProfile(lastPivot, bar_index, profileRows, maxSwingBarsInput)
+
+// ————— Visuals: pools
+var array<box>   rowBoxes    = array.new<box>()
+var array<line>  markerLines = array.new<line>()
+var array<label> markerTags  = array.new<label>()
+
+// @function Draws one swing's rows into the box pool starting at `cursor`, and
+// returns how many boxes it used.
+drawRows(SwingProfile p, array<box> pool, int cursor, int rows, int rightEdge, int leftEdge) =>
+    int used = 0
+    int fullWidth = math.max(1, rightEdge - leftEdge)
+    for r = 0 to rows - 1
+        float b = array.get(p.buyRows, r)
+        float s = array.get(p.sellRows, r)
+        float t = b + s
+        float yBot = p.lo + r * p.step
+        if t > 0 and p.peakRow > 0
+            int rowWidth = math.max(1, int(fullWidth * (t / p.peakRow)))
+            if showSplitInput
+                // Sell segment first, then buy — so the split reads left to
+                // right in the same order every time.
+                int sellWidth = math.max(0, int(rowWidth * (t > 0 ? s / t : 0.0)))
+                box sellBox = array.get(pool, cursor + used)
+                box.set_lefttop(sellBox, leftEdge, yBot + p.step)
+                box.set_rightbottom(sellBox, leftEdge + sellWidth, yBot)
+                box.set_bgcolor(sellBox, color.new(sellColorInput, rowTranspInput))
+                box.set_border_color(sellBox, TRANSPARENT_COLOR)
+                used += 1
+                box buyBox = array.get(pool, cursor + used)
+                box.set_lefttop(buyBox, leftEdge + sellWidth, yBot + p.step)
+                box.set_rightbottom(buyBox, leftEdge + rowWidth, yBot)
+                box.set_bgcolor(buyBox, color.new(buyColorInput, rowTranspInput))
+                box.set_border_color(buyBox, TRANSPARENT_COLOR)
+                used += 1
+            else
+                box bx = array.get(pool, cursor + used)
+                box.set_lefttop(bx, leftEdge, yBot + p.step)
+                box.set_rightbottom(bx, leftEdge + rowWidth, yBot)
+                box.set_bgcolor(bx, color.new(b >= s ? buyColorInput : sellColorInput, rowTranspInput))
+                box.set_border_color(bx, TRANSPARENT_COLOR)
+                used += 1
+        else
+            int blanks = showSplitInput ? 2 : 1
+            for k = 0 to blanks - 1
+                box bx = array.get(pool, cursor + used)
+                box.set_bgcolor(bx, TRANSPARENT_COLOR)
+                box.set_border_color(bx, TRANSPARENT_COLOR)
+                used += 1
+    used
+
+// @function Draws one marker line (and optional label), returning 1 if it was
+// used so the caller can advance its cursor.
+drawMarker(bool enabled, float price, string tag, color col, array<line> linePool,
+     array<label> labelPool, int lineCursor, int labelCursor, int leftEdge, int rightEdge) =>
+    int used = 0
+    if enabled and not na(price)
+        line ln = array.get(linePool, lineCursor)
+        line.set_xy1(ln, leftEdge, price)
+        line.set_xy2(ln, rightEdge, price)
+        line.set_color(ln, col)
+        line.set_width(ln, lineWidthInput)
+        line.set_style(ln, markerStyle)
+        line.set_extend(ln, extendLinesInput ? extend.right : extend.none)
+        label lb = array.get(labelPool, labelCursor)
+        if showLabelsInput
+            label.set_xy(lb, rightEdge, price)
+            label.set_text(lb, tag + "  " + str.tostring(price, format.mintick))
+            label.set_textcolor(lb, col)
+            label.set_size(lb, size.small)
+        else
+            label.set_text(lb, "")
+        used := 1
+    used
+
+// ————— Visuals: draw every swing
+if barstate.islast
+    int swingCount = array.size(swings)
+    int liveCount  = na(liveSwing) ? 0 : 1
+    int totalSwings = swingCount + liveCount
+    ensureBoxPool(rowBoxes, math.max(1, totalSwings * profileRows * boxesPerRow))
+    ensureLinePool(markerLines, math.max(1, totalSwings * MARKERS_PER_SWING))
+    ensureLabelPool(markerTags, math.max(1, totalSwings * MARKERS_PER_SWING))
+
+    int boxCursor = 0
+    int lineCursor = 0
+    // The guard is not cosmetic: Pine counts DOWN when a for-loop's end value is
+    // below its start, so `0 to totalSwings - 1` with no swings yet would run
+    // with i = 0 and i = -1 and index an empty array.
+    if totalSwings > 0
+        for i = 0 to totalSwings - 1
+            SwingProfile p = i < swingCount ? array.get(swings, i) : liveSwing
+            if not na(p)
+                int leftEdge = p.leftBar
+                int rightEdge = p.rightBar
+                if profilePosInput == "Right Of Swing"
+                    leftEdge := p.rightBar
+                    rightEdge := p.rightBar + profileWidthInput
+                else
+                    // Cap how far the longest row reaches so the profile never
+                    // buries the candles it is describing.
+                    int swingWidth = math.max(1, p.rightBar - p.leftBar)
+                    rightEdge := p.leftBar + math.max(1, int(swingWidth * maxWidthPctInput / 100))
+                boxCursor += drawRows(p, rowBoxes, boxCursor, profileRows, rightEdge, leftEdge)
+                int markerRight = profilePosInput == "Right Of Swing" ?
+                     p.rightBar + profileWidthInput : p.rightBar
+                lineCursor += drawMarker(
+                     showPocInput, rowPrice(p, p.pocIdx), "POC", pocColorInput,
+                     markerLines, markerTags, lineCursor, lineCursor, p.leftBar, markerRight)
+                lineCursor += drawMarker(
+                     showMaxBuyInput, rowPrice(p, p.maxBuyIdx), "MAX BUY", maxBuyColorInput,
+                     markerLines, markerTags, lineCursor, lineCursor, p.leftBar, markerRight)
+                lineCursor += drawMarker(
+                     showMaxSellInput, rowPrice(p, p.maxSellIdx), "MAX SELL", maxSellColorInput,
+                     markerLines, markerTags, lineCursor, lineCursor, p.leftBar, markerRight)
+    hideBoxesFrom(rowBoxes, boxCursor)
+    hideLinesFrom(markerLines, lineCursor)
+    hideLabelsFrom(markerTags, lineCursor)
+
+// ————— Visuals: summary table
+var table dash = table.new(
+     tablePosFrom(tablePosInput), 2, 7,
+     bgcolor=getPanelColor(themeInput, 15), border_width=1,
+     border_color=getPanelColor(themeInput, 100),
+     frame_color=color.new(mutedColor, 70), frame_width=1)
+
+if showTableInput and barstate.islast
+    SwingProfile shown = na(liveSwing) ?
+         (array.size(swings) > 0 ? array.get(swings, array.size(swings) - 1) : na) : liveSwing
+    bool haveSwing = not na(shown)
+    float buyPct = haveSwing and shown.totalVol > 0 ? shown.buyVol / shown.totalVol * 100 : na
+    string rowNote = profileRows < rowsInput ?
+         str.tostring(profileRows) + " (capped)" : str.tostring(profileRows)
+    table.cell(dash, 0, 0, "SWING PROFILE", text_color=textColor, text_size=size.normal,
+         text_halign=text.align_center)
+    table.cell(dash, 1, 0, "", text_color=textColor)
+    table.merge_cells(dash, 0, 0, 1, 0)
+    dashRow(dash, 1, "Swings drawn",
+         str.tostring(array.size(swings) + (na(liveSwing) ? 0 : 1)), mutedColor, textColor)
+    dashRow(dash, 2, "POC", haveSwing ? str.tostring(rowPrice(shown, shown.pocIdx), format.mintick) : "--",
+         mutedColor, pocColorInput)
+    dashRow(dash, 3, "Max buy", haveSwing ?
+         str.tostring(rowPrice(shown, shown.maxBuyIdx), format.mintick) : "--",
+         mutedColor, maxBuyColorInput)
+    dashRow(dash, 4, "Max sell", haveSwing ?
+         str.tostring(rowPrice(shown, shown.maxSellIdx), format.mintick) : "--",
+         mutedColor, maxSellColorInput)
+    dashRow(dash, 5, "Buy share", na(buyPct) ? "--" : str.tostring(buyPct, "#.#") + "%",
+         mutedColor, nz(buyPct, 50) >= 50 ? buyColorInput : sellColorInput)
+    dashRow(dash, 6, "Rows / swing", rowNote, mutedColor,
+         profileRows < rowsInput ? pocColorInput : textColor)
+
+// ————— Alerts
+alertcondition(newPivot, "New swing confirmed", "A new swing pivot has been confirmed.")
+
+// ————— Debug / Test block (keep testModeInput false when handing off)
+int TEST_COUNT = 4      // keep in sync with the assertFailed() calls below
+var int passCount = 0
+var int failCount = 0
+
+// @function Draws a failure marker and RETURNS 1 on failure, 0 on pass. Pine
+// forbids a function from modifying a global (CE10088), so the counting happens
+// at the call site.
+assertFailed(bool condition, string description) =>
+    if not condition
+        label.new(bar_index, high, "FAIL: " + description, color=sellColorInput,
+             textcolor=color.white, style=label.style_label_down, size=size.small)
+    condition ? 0 : 1
+
+if testModeInput
+    int fails = 0
+    // 1. The stored swings must never exceed the configured cap.
+    fails += assertFailed(array.size(swings) <= maxSwingsInput, "swing list exceeded its cap")
+    // 2. Every marker index must be inside the row range.
+    fails += assertFailed(
+         na(liveSwing) or (liveSwing.pocIdx >= 0 and liveSwing.pocIdx < profileRows and
+         liveSwing.maxBuyIdx >= 0 and liveSwing.maxBuyIdx < profileRows and
+         liveSwing.maxSellIdx >= 0 and liveSwing.maxSellIdx < profileRows),
+         "marker row index out of range")
+    // 3. Buying can never exceed the volume the swing actually traded.
+    fails += assertFailed(
+         na(liveSwing) or liveSwing.buyVol <= liveSwing.totalVol + 1,
+         "buy volume exceeds total volume")
+    // 4. A profile row must have positive height.
+    fails += assertFailed(na(liveSwing) or liveSwing.step > 0, "profile row height is zero")
+    failCount += fails
+    passCount += TEST_COUNT - fails
+
+var table testTable = table.new(
+     position.bottom_left, 2, 2, border_width=1,
+     bgcolor=getPanelColor(themeInput, 15),
+     frame_color=color.new(mutedColor, 70), frame_width=1)
+if testModeInput and barstate.islast
+    dashRow(testTable, 0, "Passed", str.tostring(passCount), mutedColor, buyColorInput)
+    dashRow(testTable, 1, "Failed", str.tostring(failCount), mutedColor,
+         failCount > 0 ? sellColorInput : buyColorInput)
