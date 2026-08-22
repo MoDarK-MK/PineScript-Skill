@@ -3,6 +3,10 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.2.0] - 2026-08-22
+### Added
+- "Color Bars By Delta" tints each candle by whether buying or selling dominated inside it. The CVD and delta plots stay in the data window because their scale is volume, not price — a real CVD pane needs `overlay=false`, which would mean giving up the footprint. Bar colouring is the honest overlay-compatible answer.
+
 ## [0.1.2] - 2026-08-19
 ### Fixed
 - The volume profile never appeared on the chart. The per-bar memoisation guard was `vpCachedBar != bar_index` on a variable starting at `na`, and Pine does not compare reliably against `na` — so the condition was never true, the scan never ran, and the draw block was never entered. Now guarded with `na()`.

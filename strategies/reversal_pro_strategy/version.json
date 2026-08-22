@@ -1,6 +1,6 @@
 {
   "name": "reversal_pro_strategy",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "pine_version": 6,
   "kind": "strategy"
 }

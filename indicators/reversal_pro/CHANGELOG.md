@@ -3,6 +3,10 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [1.1.3] - 2026-08-22
+### Changed
+- The scoring engine shared with `strategies/reversal_pro_strategy` is now delimited by SHARED SCORING ENGINE markers and held byte-identical by `tests/test_shared_engine.py`, so the two copies can no longer drift apart silently.
+
 ## [1.1.2] - 2026-08-19
 ### Fixed
 - The high-volume zone never drew. Its memoisation guard compared `cachedLeft`/`cachedRight` — both starting at `na` — with `!=`, and Pine does not compare reliably against `na`, so the scan never ran. Same bug as the volume profile in Volume Pro, found by the new PINE045 rule.

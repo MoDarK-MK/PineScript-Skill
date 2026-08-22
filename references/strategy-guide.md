@@ -159,6 +159,34 @@ Two mechanical traps:
   100-trade publishing threshold is trivially "met" by a strategy that took 50
   positions. Count positions separately — see §6.
 
+### 4.5 Account guards — the layer most strategies skip
+
+Everything above sizes and manages **one trade**. None of it stops a bad *day*
+from compounding. That is a different layer, and Pine gives it to you directly:
+
+```pinescript
+strategy.risk.max_intraday_loss(maxIntradayLossInput, strategy.percent_of_equity)
+strategy.risk.max_drawdown(maxDrawdownInput, strategy.percent_of_equity)
+strategy.risk.max_cons_loss_days(maxConsLossDaysInput)
+strategy.risk.max_intraday_filled_orders(maxDailyOrdersInput)
+```
+
+**Fixes:** a strategy that is correct per-trade but catastrophic in a regime it
+was never built for. Risking 1% per trade is meaningless if the signal fires
+thirty times in one session.
+**Costs:** a halted strategy misses the recovery too. A drawdown guard that trips
+near the bottom locks in the worst point of the curve. That is usually the right
+trade, but it is a trade.
+
+Two mechanics worth knowing:
+
+- These configure the **engine**, so call them unconditionally at global scope.
+  Do not wrap them in an `if` that makes the configuration differ between bars.
+  To make one optional, pass a value that disables it — 100 for a percent guard,
+  a large count for a counter — rather than skipping the call.
+- `max_intraday_filled_orders` counts **fills**, and a partial exit is a fill.
+  With TP1 partials on, one position can consume three of that budget.
+
 ## 5. Filters
 
 Direction, trend regime, volatility regime, session, and date window are all the

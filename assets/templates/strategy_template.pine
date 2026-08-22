@@ -128,6 +128,32 @@ int    cooldownBarsInput = input.int(0, "Cooldown After Exit (bars)", minval=0, 
 int    maxEntriesInput   = input.int(1, "Max Concurrent Entries", minval=1, group="Trade Management")
 bool   reanchorInput     = input.bool(true, "Re-anchor Plan To Fill Price", group="Trade Management")
 
+// ————— Inputs: Account Risk Guards
+// These are engine-level circuit breakers, not per-trade stops. Per-trade risk
+// is sized above; this is what stops a bad DAY or a bad month from compounding
+// into a blown account, and it is the layer most published strategies omit.
+//
+// Each is disabled by its maximum value rather than by being skipped, so the
+// calls stay unconditional at global scope — the engine expects them to be
+// configured identically on every bar.
+string RISK_GROUP = "Account Risk Guards"
+float maxIntradayLossInput = input.float(
+     100.0, "Halt After Daily Loss Of (% equity)", minval=1.0, maxval=100.0, step=0.5,
+     group=RISK_GROUP,
+     tooltip="Stops all trading for the rest of the day once the day's loss reaches " +
+     "this share of equity. 100 disables it.")
+float maxDrawdownInput = input.float(
+     100.0, "Halt After Drawdown Of (% equity)", minval=1.0, maxval=100.0, step=1.0,
+     group=RISK_GROUP,
+     tooltip="Stops trading permanently once equity falls this far below its peak. " +
+     "100 disables it.")
+int maxConsLossDaysInput = input.int(
+     1000, "Halt After Consecutive Losing Days", minval=1, maxval=1000, group=RISK_GROUP,
+     tooltip="1000 disables it.")
+int maxDailyOrdersInput = input.int(
+     1000, "Max Filled Orders Per Day", minval=1, maxval=1000, group=RISK_GROUP,
+     tooltip="A blunt guard against a signal that starts firing every bar. 1000 disables it.")
+
 // ————— Inputs: Appearance
 string themeInput         = input.string(THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance")
 bool   showDashboardInput = input.bool(true, "Show Dashboard", group="Appearance")
@@ -228,6 +254,15 @@ positionQty(float stopDist, float px) =>
     // trades silently vanish and the backtest is biased toward whichever regime
     // happened to size above one lot.
     qtyStepInput > 0 ? math.floor(raw / qtyStepInput) * qtyStepInput : raw
+
+// ————— Account risk guards
+// Called unconditionally at global scope, which is what the engine expects.
+// A guard is "off" when it holds its maximum value, so there is no branch here
+// and no bar on which the configuration differs.
+strategy.risk.max_intraday_loss(maxIntradayLossInput, strategy.percent_of_equity)
+strategy.risk.max_drawdown(maxDrawdownInput, strategy.percent_of_equity)
+strategy.risk.max_cons_loss_days(maxConsLossDaysInput)
+strategy.risk.max_intraday_filled_orders(maxDailyOrdersInput)
 
 // ————— Calculations
 color bullColor  = getBullColor(themeInput)

@@ -105,6 +105,11 @@ int   footNumBarsInput = input.int(
 string DELTA_GROUP = "Delta & CVD"
 bool showCvdInput  = input.bool(true, "Plot Cumulative Delta", group=DELTA_GROUP)
 bool cvdResetInput = input.bool(true, "Reset CVD Each Day", group=DELTA_GROUP)
+bool colorBarsInput = input.bool(
+     false, "Color Bars By Delta", group=DELTA_GROUP,
+     tooltip="Tints each candle by whether buying or selling dominated inside it. " +
+     "This is the only way to SEE delta on an overlay script — a proper CVD pane " +
+     "needs overlay=false, which would mean giving up the footprint.")
 
 // ————— Inputs: Volume Profile
 string VP_GROUP = "Volume Profile"
@@ -536,6 +541,12 @@ plot(showCvdInput ? cvd : na, "CVD", color=cvd >= 0 ? buyColorInput : sellColorI
      display=display.data_window + display.status_line)
 plot(barDelta, "Bar delta", color=barDelta >= 0 ? buyColorInput : sellColorInput,
      display=display.data_window + display.status_line)
+
+// Candle tint is the overlay-compatible view of delta. The plots above stay in
+// the data window because their scale is volume, not price — drawing them on a
+// price pane would flatten the candles into a line.
+barcolor(colorBarsInput and haveIntrabar ?
+     (barDelta >= 0 ? buyColorInput : sellColorInput) : na, title="Delta bars")
 
 // ————— Visuals: dashboard
 var table dash = table.new(

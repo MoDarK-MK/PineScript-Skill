@@ -3,6 +3,14 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.3.0] - 2026-08-22
+### Added
+- Account Risk Guards: `strategy.risk.max_intraday_loss`, `max_drawdown`, `max_cons_loss_days` and `max_intraday_filled_orders`. Per-trade sizing was already here; nothing stopped a bad DAY from compounding, and the `strategy.risk.*` family was unused across the whole repo.
+- Each guard is disabled by holding its maximum value rather than by being skipped, so the calls stay unconditional at global scope — the engine expects identical configuration on every bar.
+
+### Changed
+- The scoring engine shared with `indicators/reversal_pro` is now delimited by SHARED SCORING ENGINE markers and held byte-identical by `tests/test_shared_engine.py`. A comment asking future readers to keep two copies in sync is not a mechanism; a failing test is.
+
 ## [0.2.1] - 2026-07-27
 - Fix CE10088/CE10235 in the test block
 
