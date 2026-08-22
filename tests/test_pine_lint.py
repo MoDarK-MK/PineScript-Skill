@@ -21,17 +21,17 @@ def codes(result):
 
 
 class TestRuleCatalog(unittest.TestCase):
-    def test_has_44_rules_and_no_pine024(self):
-        self.assertEqual(len(pine_lint.RULES), 44)
+    def test_has_48_rules_and_no_pine024(self):
+        self.assertEqual(len(pine_lint.RULES), 48)
         self.assertNotIn("PINE024", pine_lint.RULES)
         self.assertIn("PINE001", pine_lint.RULES)
-        self.assertIn("PINE045", pine_lint.RULES)
+        self.assertIn("PINE049", pine_lint.RULES)
 
     def test_list_rules_cli(self):
         proc = run_script("pine_lint.py", "--list-rules")
         self.assertEqual(proc.returncode, 0)
         lines = [l for l in proc.stdout.splitlines() if l.strip()]
-        self.assertEqual(len(lines), 44)
+        self.assertEqual(len(lines), 48)
 
 
 class TestCoreRules(unittest.TestCase):
@@ -491,6 +491,84 @@ class TestVisualAndPerfRules(unittest.TestCase):
         )
         self.assertNotIn("PINE045", codes(lint_text(text)))
 
+    # PINE046 — input.*() is global-scope only
+    def test_pine046_input_inside_a_block(self):
+        text = VALID_INDICATOR + (
+            'if close > open\n'
+            '    int lenInside = input.int(14, "Length")\n'
+            '    plot(lenInside, title="Len")\n'
+        )
+        self.assertIn("PINE046", codes(lint_text(text)))
+
+    def test_pine046_input_inside_a_function(self):
+        text = VALID_INDICATOR + (
+            'getLen() =>\n'
+            '    input.int(14, "Length")\n'
+        )
+        self.assertIn("PINE046", codes(lint_text(text)))
+
+    def test_pine046_accepts_global_inputs_including_wrapped_ones(self):
+        text = VALID_INDICATOR + (
+            'int lenInput = input.int(\n'
+            '     14, "Length", minval=1, maxval=100)\n'
+            'plot(lenInput, title="Len")\n'
+        )
+        self.assertNotIn("PINE046", codes(lint_text(text)))
+
+    # PINE047 — the plot family is global-scope only
+    def test_pine047_plot_inside_a_block(self):
+        text = VALID_INDICATOR + (
+            'if close > open\n'
+            '    plot(close, title="C")\n'
+        )
+        self.assertIn("PINE047", codes(lint_text(text)))
+
+    def test_pine047_accepts_the_na_pattern(self):
+        text = VALID_INDICATOR + (
+            'bool showIt = input.bool(true, "Show")\n'
+            'plot(showIt ? close : na, title="C")\n'
+        )
+        self.assertNotIn("PINE047", codes(lint_text(text)))
+
+    def test_pine047_accepts_drawing_calls_inside_blocks(self):
+        # line/label/box are NOT restricted to global scope — only the plot family.
+        text = VALID_INDICATOR + (
+            'if barstate.islast\n'
+            '    label.new(bar_index, high, "x")\n'
+        )
+        self.assertNotIn("PINE047", codes(lint_text(text)))
+
+    # PINE048 — the 40-request cap
+    def test_pine048_flags_too_many_unique_requests(self):
+        lines = [VALID_STRATEGY]
+        for i in range(45):
+            lines.append(
+                f'float r{i} = request.security(syminfo.tickerid, "{i + 1}", close, '
+                f'lookahead=barmerge.lookahead_off)\n')
+        self.assertIn("PINE048", codes(lint_text("".join(lines))))
+
+    def test_pine048_does_not_count_identical_calls_twice(self):
+        call = ('request.security(syminfo.tickerid, "D", close, '
+                'lookahead=barmerge.lookahead_off)')
+        lines = [VALID_INDICATOR]
+        for i in range(45):
+            lines.append(f'float r{i} = {call}\n')
+        # All 45 are the same call, so they share one series and one slot.
+        self.assertNotIn("PINE048", codes(lint_text("".join(lines))))
+
+    # PINE049 — strategy orders cannot live in a function
+    def test_pine049_strategy_call_in_a_function(self):
+        text = VALID_STRATEGY + (
+            'placeIt(bool go) =>\n'
+            '    if go\n'
+            '        strategy.entry("Long", strategy.long)\n'
+            '    0\n'
+        )
+        self.assertIn("PINE049", codes(lint_text(text)))
+
+    def test_pine049_accepts_orders_at_global_scope(self):
+        self.assertNotIn("PINE049", codes(lint_text(VALID_STRATEGY)))
+
     # PINE022 rescoped to the declaration statement
     def test_pine022_ignores_overlay_mentioned_only_in_a_comment(self):
         text = (
@@ -513,6 +591,60 @@ class TestCli(unittest.TestCase):
         self.assertIn("findings", payload)
         self.assertIn("summary", payload)
         self.assertIn("PINE022", {f["code"] for f in payload["findings"]})
+
+    def test_explain_prints_the_rule_documentation(self):
+        proc = run_script("pine_lint.py", "--explain", "PINE042")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("PINE042", proc.stdout)
+        self.assertIn("CE10088", proc.stdout)
+
+    def test_explain_accepts_a_bare_number(self):
+        proc = run_script("pine_lint.py", "--explain", "45")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("PINE045", proc.stdout)
+
+    def test_explain_rejects_an_unknown_rule(self):
+        proc = run_script("pine_lint.py", "--explain", "PINE999")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("unknown rule", proc.stderr)
+
+    def test_explain_covers_every_rule_in_the_catalog(self):
+        """Guards against a rule shipping with no explainable documentation."""
+        for code in sorted(pine_lint.RULES):
+            proc = run_script("pine_lint.py", "--explain", code)
+            self.assertEqual(proc.returncode, 0, f"{code}: {proc.stderr}")
+            self.assertNotIn("no section in references", proc.stdout,
+                             msg=f"{code} has no section in lint-rules.md")
+
+    def test_baseline_round_trip_suppresses_existing_findings(self):
+        with tempfile.TemporaryDirectory() as td:
+            pine = Path(td) / "legacy.pine"
+            pine.write_text('//@version=6\nindicator("Legacy")\nplot(close)\n', encoding="utf-8")
+            baseline = Path(td) / "baseline.txt"
+
+            dirty = run_script("pine_lint.py", pine, "--strict")
+            self.assertEqual(dirty.returncode, 1)
+
+            written = run_script("pine_lint.py", pine, "--write-baseline", baseline)
+            self.assertEqual(written.returncode, 0, written.stderr)
+            self.assertTrue(baseline.exists())
+
+            clean = run_script("pine_lint.py", pine, "--strict", "--baseline", baseline)
+            self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+            self.assertIn("suppressed", clean.stdout)
+
+    def test_baseline_still_reports_a_new_problem(self):
+        with tempfile.TemporaryDirectory() as td:
+            pine = Path(td) / "legacy.pine"
+            pine.write_text('//@version=6\nindicator("Legacy")\nplot(close)\n', encoding="utf-8")
+            baseline = Path(td) / "baseline.txt"
+            run_script("pine_lint.py", pine, "--write-baseline", baseline)
+            # Introduce a defect the baseline does not cover.
+            pine.write_text('//@version=6\nindicator("Legacy")\nplot(close)\n'
+                            'x = math.max(1, 2\n', encoding="utf-8")
+            proc = run_script("pine_lint.py", pine, "--baseline", baseline)
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("PINE003", proc.stdout)
 
     def test_missing_file_exits_1(self):
         proc = run_script("pine_lint.py", "does_not_exist.pine")

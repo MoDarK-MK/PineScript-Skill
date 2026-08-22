@@ -41,6 +41,8 @@ DEFAULT_CONFIG = {
     "max_polyline": 100,
     "max_tables": 9,
     "warn_on_security_lookahead": True,
+    "max_requests": 40,
+    "request_warn_ratio": 0.75,
 }
 
 # ---------------------------------------------------------------------------
@@ -92,6 +94,10 @@ RULES = {
     "PINE043": ("error", "Function's trailing if/else branches return different types (CE10235)"),
     "PINE044": ("info", "Seconds-based timeframe used — requires a Premium TradingView plan"),
     "PINE045": ("warning", "Variable initialised to na compared with ==/!= instead of na()"),
+    "PINE046": ("error", "input.*() called outside global scope (not allowed in Pine)"),
+    "PINE047": ("error", "plot()/plotshape()/bgcolor()/fill() called outside global scope"),
+    "PINE048": ("warning", "Approaching/over the 40 unique request.*() call limit"),
+    "PINE049": ("error", "strategy.*() order call inside a function (not allowed in Pine)"),
 }
 
 STRATEGY_ORDER_FUNCS = [
@@ -1021,6 +1027,103 @@ def check_na_comparison(lines, result):
                 break
 
 
+GLOBAL_ONLY_INPUT_RE = re.compile(r'\binput\s*\.\s*\w+\s*\(|\binput\s*\(')
+GLOBAL_ONLY_PLOT_RE = re.compile(
+    r'\b(plot|plotshape|plotchar|plotarrow|plotbar|plotcandle|bgcolor|barcolor|fill|'
+    r'hline|alertcondition)\s*\('
+)
+STRATEGY_CALL_RE = re.compile(r'\bstrategy\s*\.\s*(entry|order|exit|close|close_all|cancel|cancel_all)\s*\(')
+
+
+def _indented_code_lines(lines, statements):
+    """Yields (index, stripped_text) for lines that are inside SOME indented
+    block — i.e. not at global scope. Continuation lines of a wrapped global
+    statement are excluded, since those are still global scope."""
+    stmt_start = {}
+    for stmt in statements:
+        for ln in range(stmt["start"], stmt["end"] + 1):
+            stmt_start[ln] = stmt["start"]
+    for i, raw in enumerate(lines):
+        text = strip_strings_and_comments(raw)
+        if not text.strip():
+            continue
+        start_line = stmt_start.get(i + 1, i + 1)
+        if indent_width(lines[start_line - 1]) == 0:
+            continue          # statement begins at global scope
+        yield i, text
+
+
+def check_input_scope(lines, statements, result):
+    """PINE046 — input.*() must be called at global scope. Inside a function,
+    an if, or a loop it is a compile error, and the message TradingView gives
+    ("cannot use ... in local scope") does not say which call caused it."""
+    for i, text in _indented_code_lines(lines, statements):
+        if GLOBAL_ONLY_INPUT_RE.search(text):
+            result.add(i + 1, "PINE046",
+                        "input.*() is only allowed at global scope — not inside a function, "
+                        "an if, or a loop. Declare the input at the top level and pass the "
+                        "value in.")
+            return
+
+
+def check_plot_scope(lines, statements, result):
+    """PINE047 — the plot family is global-scope-only too. The usual mistake is
+    putting plot() inside `if showX` instead of passing na through it."""
+    for i, text in _indented_code_lines(lines, statements):
+        m = GLOBAL_ONLY_PLOT_RE.search(text)
+        if m:
+            name = m.group(1)
+            result.add(i + 1, "PINE047",
+                        f"{name}() is only allowed at global scope. To make it conditional, "
+                        f"keep the call at the top level and feed it na — e.g. "
+                        f"plot(showIt ? value : na) — rather than wrapping it in an if.")
+            return
+
+
+def check_strategy_call_scope(lines, result):
+    """PINE049 — strategy order calls cannot live inside a user function."""
+    for _decl_idx, body in iter_function_bodies(lines):
+        for line_idx, text in body:
+            m = STRATEGY_CALL_RE.search(text)
+            if m:
+                result.add(line_idx + 1, "PINE049",
+                            f"strategy.{m.group(1)}() cannot be called from inside a function. "
+                            f"Return the decision from the function and place the order at "
+                            f"global scope.")
+                return
+
+
+def check_request_count(statements, result, cfg):
+    """PINE048 — TradingView caps a script at 40 unique request.*() calls (64 on
+    Ultimate). Identical calls reuse one series, so this counts DISTINCT
+    argument lists, which is what actually consumes the budget."""
+    seen = set()
+    last_line = 0
+    for stmt in statements:
+        for m in re.finditer(r'\brequest\.\w+\s*\(', stmt["stripped"]):
+            flat = strip_comments_only_multi(stmt["raw_nc"])
+            func = m.group(0)
+            args = call_arg_text(flat, func)
+            key = (func, re.sub(r'\s+', '', args or str(stmt["start"])))
+            seen.add(key)
+            last_line = max(last_line, stmt["start"])
+    if not seen:
+        return
+    cap = cfg.get("max_requests", 40)
+    ratio = cfg.get("request_warn_ratio", 0.75)
+    count = len(seen)
+    if count > cap:
+        result.add(last_line, "PINE048",
+                    f"{count} unique request.*() calls found, over the {cap}-call limit "
+                    f"(64 on the Ultimate plan). Merge calls that share a symbol and "
+                    f"timeframe into one tuple request.")
+    elif count > cap * ratio:
+        result.add(last_line, "PINE048",
+                    f"{count} unique request.*() calls found, approaching the {cap}-call "
+                    f"limit. Identical calls reuse one series, but each distinct argument "
+                    f"list costs a slot.")
+
+
 def check_transp_removed(statements, result):
     for stmt in statements:
         if any(f in stmt["stripped"] for f in TRANSP_FUNCS) and re.search(r'\btransp\s*=', stmt["stripped"]):
@@ -1346,6 +1449,10 @@ def lint_file(path, cfg):
     check_function_branch_types(lines, result)
     check_seconds_timeframe(lines, result)
     check_na_comparison(lines, result)
+    check_input_scope(lines, statements, result)
+    check_plot_scope(lines, statements, result)
+    check_strategy_call_scope(lines, result)
+    check_request_count(statements, result, cfg)
     check_transp_removed(statements, result)
     check_linewidth_minimum(statements, result)
     check_switch_default(lines, result)
@@ -1399,13 +1506,93 @@ def print_json(args, result):
     print(json.dumps(payload, indent=2))
 
 
+RULES_DOC = Path(__file__).resolve().parent.parent / "references" / "lint-rules.md"
+
+
+def explain_rule(code):
+    """Prints the rule's section from references/lint-rules.md, so you never have
+    to go hunting through the catalog after seeing a code in the output."""
+    code = code.upper()
+    if not code.startswith("PINE"):
+        code = "PINE" + code.zfill(3)
+    if code not in RULES:
+        print(f"error: unknown rule {code}. Run --list-rules to see the catalog.",
+              file=sys.stderr)
+        return 1
+    sev, summary = RULES[code]
+    print(f"{code}  [{sev}]  {summary}\n")
+    if not RULES_DOC.exists():
+        print(f"(no catalog found at {RULES_DOC})")
+        return 0
+    lines = RULES_DOC.read_text(encoding="utf-8").splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if line.startswith(f"### {code} "):
+            start = i
+            break
+    if start is None:
+        print("(this rule has no section in references/lint-rules.md yet)")
+        return 0
+    for line in lines[start + 1:]:
+        if line.startswith("### ") or line.startswith("## "):
+            break
+        print(line)
+    return 0
+
+
+def parse_baseline(path):
+    """Reads a baseline file of `relative/path:CODE` lines. Anything listed is
+    treated as pre-existing and not reported, which is how an inherited script
+    can adopt the linter without fixing everything in one go."""
+    accepted = set()
+    if not path or not Path(path).exists():
+        return accepted
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if ":" in line:
+            _, code = line.rsplit(":", 1)
+            accepted.add(code.strip())
+    return accepted
+
+
+def write_baseline(path, file_name, result):
+    lines = [
+        "# pine_lint baseline — findings recorded as pre-existing and suppressed.",
+        "# Delete a line once you have fixed it; the linter will start reporting it again.",
+        "",
+    ]
+    for f in sorted(result.findings, key=lambda x: (x.line, x.code)):
+        lines.append(f"{file_name}:{f.code}    # line {f.line}: {f.msg[:70]}")
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def make_output_encoding_safe():
+    """The rule messages and the docs use en-dashes, arrows and box glyphs. On a
+    Windows console (cp1252) printing those raises UnicodeEncodeError and takes
+    the whole run down — a linter must never crash on its own output."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass          # already fine, or not a reconfigurable stream
+
+
 def main():
+    make_output_encoding_safe()
     parser = argparse.ArgumentParser(description="Rule-based offline linter for Pine Script.")
     parser.add_argument("file", nargs="?", help="Path to a .pine file")
     parser.add_argument("--config", default=None, help="Path to a .pine-lint.json config override")
     parser.add_argument("--json", action="store_true", help="Emit findings as JSON")
     parser.add_argument("--strict", action="store_true", help="Treat warnings as failures (exit 1)")
     parser.add_argument("--list-rules", action="store_true", help="Print the full rule catalog and exit")
+    parser.add_argument("--explain", metavar="CODE",
+                        help="Print the full documentation for one rule and exit")
+    parser.add_argument("--baseline", metavar="FILE",
+                        help="Suppress the rule codes recorded in FILE")
+    parser.add_argument("--write-baseline", metavar="FILE",
+                        help="Record the current findings to FILE and exit 0")
     args = parser.parse_args()
 
     if args.list_rules:
@@ -1414,8 +1601,12 @@ def main():
             print(f"{code}\t{sev:8s}\t{summary}")
         sys.exit(0)
 
+    if args.explain:
+        sys.exit(explain_rule(args.explain))
+
     if not args.file:
-        parser.error("the following arguments are required: file (unless --list-rules)")
+        parser.error("the following arguments are required: file "
+                     "(unless --list-rules or --explain)")
 
     if not Path(args.file).exists():
         print(f"error: file not found: {args.file}", file=sys.stderr)
@@ -1423,6 +1614,19 @@ def main():
 
     cfg = load_config(args.config or str(Path(args.file).parent / ".pine-lint.json"))
     result = lint_file(args.file, cfg)
+
+    if args.write_baseline:
+        write_baseline(args.write_baseline, Path(args.file).name, result)
+        print(f"Wrote {len(result.findings)} finding(s) to {args.write_baseline}")
+        sys.exit(0)
+
+    if args.baseline:
+        accepted = parse_baseline(args.baseline)
+        before = len(result.findings)
+        result.findings = [f for f in result.findings if f.code not in accepted]
+        suppressed = before - len(result.findings)
+        if suppressed and not args.json:
+            print(f"({suppressed} finding(s) suppressed by {args.baseline})\n")
 
     if args.json:
         print_json(args, result)

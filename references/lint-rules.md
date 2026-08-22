@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 44 rules spanning codes PINE001–PINE045. The code
+Note on numbering: there are 48 rules spanning codes PINE001–PINE049. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -26,6 +26,30 @@ Design-level guidance for the patterns they enforce is in
 
 PINE036–PINE041 cover visual quality and runtime cost. The reasoning behind them
 is in `references/design-system.md` and `references/performance-guide.md`.
+
+PINE042–PINE049 cover Pine's scope rules and platform limits — the ones that end
+a paste with a compiler error rather than a bad-looking chart.
+
+## When TradingView gives you an error code
+
+The linter is not a compiler, so this table is the bridge: look up the code
+TradingView printed and see whether a rule already covers it. Every row here was
+added *after* the error was hit in real use.
+
+| TradingView error | Rule | What it means |
+|---|---|---|
+| `CE10088` Cannot modify global variable "x" in function | **PINE042** | A function assigned to a global |
+| `CE10235` Return type of one of the if/switch blocks is not compatible | **PINE043** | Trailing if/else branches disagree on type |
+| "This script uses seconds-based timeframes, which are only available to users with Premium…" | **PINE044** | A seconds resolution reached a non-Premium plan |
+| *(no error — the feature is silently absent)* | **PINE045** | A guard compared against `na` and never matched |
+| "Cannot use 'input' in local scope" | **PINE046** | `input.*()` called inside a function/if/loop |
+| "Cannot use 'plot' in local scope" | **PINE047** | plot family called inside a function/if/loop |
+| "The 'request' calls limit was exceeded" | **PINE048** | More than 40 unique `request.*()` calls |
+| "Cannot use 'strategy.entry' in local scope" | **PINE049** | An order call inside a function |
+| `Pine cannot determine the referencing length…` | *(none yet)* | A dynamic history index without `max_bars_back` |
+
+If you hit a code that is not in this table, that is a genuine gap — the fix is
+to add a rule, not just to patch the script.
 
 ---
 
@@ -500,3 +524,58 @@ if barstate.islast and needsRebuild
 Fires only for variables declared `var x = na` and never passed to `na()`
 anywhere in the file — if the file guards the variable properly even once, the
 rule stays quiet.
+
+---
+
+## Scope and platform limits (PINE046–PINE049)
+
+Pine restricts several call families to global scope. The compiler messages name
+the function but not the line that caused it, which is why these are worth
+catching locally.
+
+### PINE046 — error — `input.*()` outside global scope
+```pinescript
+// bad — "Cannot use 'input' in local scope"
+getLength() =>
+    input.int(14, "Length")
+```
+```pinescript
+// good — declare at the top level, pass the value in
+int lengthInput = input.int(14, "Length")
+getLength(int n) => n
+```
+
+### PINE047 — error — plot family outside global scope
+Covers `plot`, `plotshape`, `plotchar`, `plotarrow`, `plotbar`, `plotcandle`,
+`bgcolor`, `barcolor`, `fill`, `hline` and `alertcondition`.
+```pinescript
+// bad — the usual mistake: making a plot conditional by wrapping it
+if showMa
+    plot(maValue, "MA")
+```
+```pinescript
+// good — keep the call global and feed it na
+plot(showMa ? maValue : na, "MA")
+```
+Note that `line.new`, `label.new` and `box.new` are NOT restricted this way and
+are perfectly fine inside an `if` — the rule does not flag them.
+
+### PINE048 — warning — Approaching/over the 40 `request.*()` limit
+TradingView caps a script at **40 unique** `request.*()` calls (64 on Ultimate).
+Identical calls reuse one series, so this counts *distinct argument lists*,
+which is what actually consumes the budget. Configurable via `.pine-lint.json`'s
+`max_requests` and `request_warn_ratio`.
+
+### PINE049 — error — `strategy.*()` order call inside a function
+```pinescript
+// bad — "Cannot use 'strategy.entry' in local scope"
+tryEnter(bool go) =>
+    if go
+        strategy.entry("Long", strategy.long)
+```
+```pinescript
+// good — decide in the function, order at global scope
+shouldEnter(bool go) => go and barstate.isconfirmed
+if shouldEnter(signal)
+    strategy.entry("Long", strategy.long)
+```
