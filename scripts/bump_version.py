@@ -9,14 +9,21 @@ Usage:
     python3 bump_version.py path/to/project --bump minor --note "Added smoothing input"
     python3 bump_version.py path/to/project --bump major --note "Changed default alert format"
 
+It also creates an annotated git tag, `<project>/vX.Y.Z`. One namespace per
+project, because several share this repo and a bare `v1.1.4` would be ambiguous
+the moment two of them reach it. Tagging failure is reported, never fatal — a
+bump that succeeded must not be undone because git was unavailable.
+
 Advanced:
     python3 bump_version.py path/to/project --dry-run --bump patch
     python3 bump_version.py path/to/project --json --bump minor
+    python3 bump_version.py path/to/project --bump patch --no-tag
 """
 import argparse
 import datetime
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -40,6 +47,40 @@ def bump(version_str, part):
 
 
 EMPTY_UNRELEASED = "- (nothing yet)"
+
+
+def tag_name(project_name, version):
+    """One namespace per project, because several projects share this repo and
+    a bare `v1.1.4` would be ambiguous the moment two of them reach it."""
+    return f"{project_name}/v{version}"
+
+
+def create_git_tag(project_dir, project_name, version, note):
+    """Creates an annotated tag for this release. Returns (created, message).
+
+    Version history lived only inside CHANGELOG.md — readable, but not
+    something git itself could check out, diff between, or hand to a release
+    page. Failure here is reported and never fatal: a bump that succeeded must
+    not be undone because tagging did not.
+    """
+    tag = tag_name(project_name, version)
+    try:
+        existing = subprocess.run(
+            ["git", "tag", "--list", tag], cwd=str(project_dir),
+            capture_output=True, text=True, check=False)
+        if existing.returncode != 0:
+            return False, "not a git repository (or git unavailable) — no tag created"
+        if existing.stdout.strip():
+            return False, f"tag {tag} already exists — left untouched"
+        message = f"{project_name} {version}" + (f"\n\n{note}" if note else "")
+        created = subprocess.run(
+            ["git", "tag", "-a", tag, "-m", message], cwd=str(project_dir),
+            capture_output=True, text=True, check=False)
+        if created.returncode != 0:
+            return False, f"git tag failed: {created.stderr.strip()}"
+        return True, tag
+    except OSError as exc:
+        return False, f"git unavailable: {exc}"
 
 
 def update_changelog(changelog_path, new_version, note):
@@ -87,6 +128,8 @@ def main():
     parser.add_argument("--note", default="", help="One-line changelog note for this release")
     parser.add_argument("--dry-run", action="store_true", help="Print what would change without modifying files")
     parser.add_argument("--json", action="store_true", help="Emit result as JSON instead of human-readable text")
+    parser.add_argument("--no-tag", action="store_true",
+                        help="Skip creating the annotated git tag for this release")
     args = parser.parse_args()
 
     project_dir = Path(args.project_dir)
@@ -129,12 +172,24 @@ def main():
     note_used = update_changelog(changelog_path, new_version, args.note)
     result["note_used"] = note_used
 
+    if args.no_tag:
+        tagged, tag_msg = False, "skipped (--no-tag)"
+    else:
+        tagged, tag_msg = create_git_tag(
+            project_dir, data.get("name", project_dir.name), new_version, args.note)
+    result["tagged"] = tagged
+    result["tag"] = tag_msg
+
     if args.json:
         result["updated_files"] = [str(version_path), str(changelog_path)]
         print(json.dumps(result, indent=2))
     else:
         print(f"Bumped {data.get('name', project_dir.name)}: {old_version} -> {new_version}")
         print(f"Updated {changelog_path}")
+        if tagged:
+            print(f"Tagged {tag_msg}")
+        else:
+            print(f"No tag: {tag_msg}")
         if args.note and not note_used:
             print("note: --note was ignored — the Unreleased section already had "
                   "entries, and appending would have duplicated them.")

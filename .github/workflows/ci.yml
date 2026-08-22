@@ -29,3 +29,32 @@ jobs:
           python-version: "3.12"
       - name: Lint every source .pine file in the repo
         run: python scripts/lint_all.py
+
+      - name: Check formatting
+        run: python scripts/pine_fmt.py $(git ls-files '*.pine' | grep -v tests/fixtures) --check
+
+  generated-docs:
+    name: Generated docs are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Project registry and file tree match the repo
+        run: python scripts/build_index.py --check
+
+  mutation:
+    name: Every lint rule is protected by a test
+    runs-on: ubuntu-latest
+    # Roughly eight minutes: it runs the lint test modules once per rule. Too
+    # slow for every push, and pointless there anyway — what it guards against
+    # is a rule quietly losing its test over time, not a single commit.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Disable each rule in turn and confirm the suite notices
+        run: python scripts/mutate_check.py

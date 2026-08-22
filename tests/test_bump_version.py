@@ -1,4 +1,5 @@
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -127,6 +128,80 @@ class TestCli(unittest.TestCase):
             proc = run_script("bump_version.py", td, "--bump", "patch")
             self.assertEqual(proc.returncode, 1)
             self.assertIn("not found", proc.stderr)
+
+
+class TestGitTagging(unittest.TestCase):
+    """Version history lived only inside CHANGELOG.md — readable, but not
+    something git could check out, diff between, or hand to a release page."""
+
+    def git(self, cwd, *args):
+        return subprocess.run(["git", *args], cwd=str(cwd),
+                              capture_output=True, text=True)
+
+    def make_repo(self, td):
+        repo = Path(td)
+        self.git(repo, "init", "-q", ".")
+        self.git(repo, "config", "user.email", "t@example.com")
+        self.git(repo, "config", "user.name", "Test")
+        project = make_project(td)
+        self.git(repo, "add", "-A")
+        self.git(repo, "commit", "-qm", "init")
+        return repo, project
+
+    def test_a_bump_creates_an_annotated_tag(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, project = self.make_repo(td)
+            proc = run_script("bump_version.py", project, "--bump", "minor",
+                              "--note", "A demo release")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            tags = self.git(repo, "tag", "-l").stdout.split()
+            self.assertIn("proj/v0.2.0", tags)
+
+    def test_the_tag_is_namespaced_per_project(self):
+        """Several projects share this repo, so a bare v1.1.4 would be
+        ambiguous the moment two of them reach it."""
+        with tempfile.TemporaryDirectory() as td:
+            repo, project = self.make_repo(td)
+            run_script("bump_version.py", project, "--bump", "patch")
+            tags = self.git(repo, "tag", "-l").stdout.split()
+            self.assertTrue(all("/" in tag for tag in tags), tags)
+
+    def test_the_note_becomes_the_tag_message(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, project = self.make_repo(td)
+            run_script("bump_version.py", project, "--bump", "patch",
+                       "--note", "Distinctive release note")
+            shown = self.git(repo, "tag", "-n9", "-l", "proj/v0.1.1").stdout
+            self.assertIn("Distinctive release note", shown)
+
+    def test_no_tag_skips_it(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, project = self.make_repo(td)
+            proc = run_script("bump_version.py", project, "--bump", "patch", "--no-tag")
+            self.assertEqual(proc.returncode, 0)
+            self.assertEqual("", self.git(repo, "tag", "-l").stdout.strip())
+            self.assertIn("--no-tag", proc.stdout)
+
+    def test_bump_still_succeeds_outside_a_git_repository(self):
+        """Tagging is a convenience. A bump that already rewrote version.json
+        and the changelog must not report failure because git was unavailable."""
+        with tempfile.TemporaryDirectory() as td:
+            project = make_project(td)
+            proc = run_script("bump_version.py", project, "--bump", "patch")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("No tag:", proc.stdout)
+            data = json.loads((project / "version.json").read_text(encoding="utf-8"))
+            self.assertEqual("0.1.1", data["version"])
+
+    def test_an_existing_tag_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, project = self.make_repo(td)
+            self.git(repo, "tag", "-a", "proj/v0.1.1", "-m", "pre-existing")
+            proc = run_script("bump_version.py", project, "--bump", "patch")
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn("already exists", proc.stdout)
+            shown = self.git(repo, "tag", "-n9", "-l", "proj/v0.1.1").stdout
+            self.assertIn("pre-existing", shown)
 
 
 if __name__ == "__main__":

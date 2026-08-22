@@ -32,6 +32,7 @@ TradingView's servers.
 | `references/strategy-guide.md` | Building strategies: signal design, position sizing math, the four risk modules, filters, overfitting, walk-forward, v6 strategy pitfalls |
 | `references/publishing-guide.md` | TradingView House Rules condensed: privacy/visibility, strategy realism, description format |
 | `references/repo-structure.md` | Folder layout, `version.json`, `CHANGELOG.md` format, optional pre-commit hook |
+| `references/performance-guide.md` | Work tiering, memoization, buffer reuse, drawing pools, `var` vs `varip` |
 | `references/snippets/` | Copy-paste Pine fragments for the parts a library cannot hold: `table_helpers.pine`, `glyphs.pine`, `live_update.pine`, `palette.pine`. Pine has no local imports, so stateful helpers are pasted |
 | `libraries/pine_toolkit/` | The pure helpers as a real Pine `library()`: theme palette, `formatVolume`, `glyphMeter`, `clamp`/`safeDiv`/`positionBetween`/`buyShare`, constant mappers. Publish it once, then `import` instead of pasting |
 
