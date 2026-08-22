@@ -1,0 +1,19 @@
+// FIXTURE — must be caught by PINE054
+// TradingView says: No error at all — the array just accumulates entries for conditions that never finished.
+// Shipped twice: swing_volume_profile recorded phantom pivots and reversal_pro recorded phantom order blocks.
+//
+// This file is DELIBERATELY broken. It is never scaffolded, published or
+// linted by CI — tests/test_compile_error_corpus.py asserts PINE054 still
+// fires on it, so the incident can never silently regress.
+//@version=6
+indicator("Fixture", overlay=true, max_lines_count=500)
+
+var array<float> levels = array.new<float>()
+
+// ta.pivothigh's window includes the bar still forming, so this can be true on
+// one tick and false on the next. The push survives either way.
+float ph = ta.pivothigh(high, 5, 5)
+if not na(ph)
+    array.push(levels, ph)
+
+plot(array.size(levels) > 0 ? array.get(levels, array.size(levels) - 1) : na, title="Last level")

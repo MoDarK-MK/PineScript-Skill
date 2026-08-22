@@ -570,9 +570,15 @@ float pivotHigh = ta.pivothigh(high, pivotLenInput, pivotLenInput)
 float pivotLow  = ta.pivotlow(low, pivotLenInput, pivotLenInput)
 bool  newPivot  = not na(pivotHigh) or not na(pivotLow)
 
-// Absolute bar index of every confirmed pivot, newest last. `var` matters: a
-// pivot can appear mid-bar and vanish before the bar closes, and only var's
-// rollback keeps a phantom from being recorded permanently.
+// Absolute bar index of every confirmed pivot, newest last.
+//
+// Recorded ON BAR CLOSE, and that is not a detail. ta.pivothigh's window
+// includes the bar still forming, so a pivot can confirm on one tick and be
+// invalidated by a higher high on the next. `var` does NOT protect against
+// that: it restores the variable on a realtime rollback, never the contents of
+// the array the variable points at, so a push that happened on a tick is
+// permanent whether or not the pivot survived. Earlier versions of this file
+// claimed otherwise in a comment right here, and were wrong.
 var array<int> pivotBars = array.new<int>()
 var array<SwingProfile> swings = array.new<SwingProfile>()
 
@@ -581,7 +587,7 @@ var array<SwingProfile> swings = array.new<SwingProfile>()
 // same tick leaves the count identical and the picture wrong.
 var int profileGen = 0
 
-if newPivot
+if newPivot and barstate.isconfirmed
     int pivotBar = bar_index - pivotLenInput
     // Build the profile for the leg that just closed, then keep only the most
     // recent ones. A completed swing never changes, so this runs once per swing.

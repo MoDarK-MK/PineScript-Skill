@@ -456,7 +456,12 @@ bool bearBreak = showObInput and displaced and not na(lastPL) and close < lastPL
 bool newBullOb = false
 bool newBearOb = false
 
-if bullBreak
+// Registered ON BAR CLOSE. The break conditions above read `close`, which moves
+// for the whole life of a realtime bar — a break can happen on one tick and
+// un-happen on the next. `var` restores the variable on a rollback but never
+// the contents of the array it points at, so an unguarded push leaves a block
+// standing for a break that never finished.
+if bullBreak and barstate.isconfirmed
     int off = findOriginOffset(true)
     if not na(off)
         OrderBlock ob = OrderBlock.new(
@@ -468,7 +473,7 @@ if bullBreak
         lastBullObTop := ob.top
         newBullOb := true
 
-if bearBreak
+if bearBreak and barstate.isconfirmed
     int off = findOriginOffset(false)
     if not na(off)
         OrderBlock ob = OrderBlock.new(

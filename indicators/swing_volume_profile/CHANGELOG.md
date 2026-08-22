@@ -3,6 +3,10 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.3.1] - 2026-08-22
+### Fixed
+- Pivots were recorded on any tick where `ta.pivothigh`/`ta.pivotlow` returned a value, but their window includes the bar still forming — a pivot can confirm on one tick and be invalidated by a higher high on the next. The comment at that spot claimed `var` protected against exactly this. It does not: `var` restores the variable on a realtime rollback, never the contents of the array it points at, so the phantom swing stayed recorded. Pivots are now recorded on `barstate.isconfirmed`. Found by the new PINE054 rule.
+
 ## [0.3.0] - 2026-08-22
 ### Added
 - **Entry level.** One line marking the strongest volume IMBALANCE on the tradeable side of price: for a buy, the row below price where buying most outweighed selling; for a sell, the row above price where selling most outweighed buying. Scored as `(buy - sell) / busiest row`, one number carrying both how lopsided the row was and how much volume it held — a row where buyers barely won on tiny volume scores near zero, and so does a huge row that was evenly matched. Neither is a level.

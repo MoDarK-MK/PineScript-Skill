@@ -3,6 +3,11 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [1.1.5] - 2026-08-22
+### Fixed
+- Order blocks were registered on any tick where the break condition held, but the break conditions read `close`, which moves for the whole life of a realtime bar. A break could happen on one tick and un-happen on the next, and `var` does not undo it: it restores the variable on a rollback, never the contents of the array the variable points at. The block stayed. Registration is now gated on `barstate.isconfirmed`, so a block appears when the bar that made it closes. Found by the new PINE054 rule.
+- Consequence worth knowing: the "alert on unconfirmed bars" option no longer produces early order-block alerts, because there is no longer such a thing as an unconfirmed order block. Reversal alerts are unaffected.
+
 ## [1.1.4] - 2026-08-22
 ### Added
 - Test-block assertion 8: a bearish order block registered this bar must sit at or below the break bar's high — the mirror of assertion 7, which had only ever checked the bull side. Found by the new PINE051 rule, which noticed `lastBearObBottom` was written on every bear block and never read by anything.

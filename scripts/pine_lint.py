@@ -105,6 +105,7 @@ RULES = {
     "PINE051": ("info", "Variable declared but never read (dead, or write-only)"),
     "PINE052": ("warning", "Drawing created inside a loop without the matching max_*_count"),
     "PINE053": ("warning", "Loop nest's worst-case iteration count is over budget"),
+    "PINE054": ("warning", "var collection grown inside a price-dependent branch with no bar-confirmation guard"),
 }
 
 # Rules --fix can repair mechanically. Every one of these has exactly one
@@ -1829,6 +1830,81 @@ def run_fix(path, dry_run):
     return 0
 
 
+# @rule PINE054
+VAR_COLLECTION_RE = re.compile(
+    r'^\s*var(?:ip)?\s+(?:array|matrix|map)\s*<[^>]*>\s*([A-Za-z_]\w*)\s*=')
+GROW_CALL_RE = re.compile(
+    r'(?:array|matrix|map)\s*\.\s*(push|unshift|insert|put)\s*\(\s*([A-Za-z_]\w*)')
+# Growing a DRAWING pool is the one legitimate unguarded case: the pool loop is
+# bounded by array.size(), so it converges instead of accumulating.
+DRAWING_CTOR_RE = re.compile(r'\b(?:box|line|label|polyline|table|linefill)\s*\.\s*new\s*\(')
+CONFIRM_GUARD_RE = re.compile(
+    r'barstate\s*\.\s*(isconfirmed|isnew|ishistory|isfirst)|not\s+barstate\s*\.\s*isrealtime')
+
+
+def check_var_collection_realtime_growth(lines, result):
+    """PINE054 — `var` restores the variable on a realtime rollback, not the
+    contents of the array it points to. A push that happened on one tick stays
+    pushed even when the condition that caused it is false on the next.
+
+    This bit twice in this repo: a pivot that appears mid-bar and vanishes
+    before the close still left its swing recorded, and an order block whose
+    break condition un-broke still left the block. There is no error message —
+    the chart just accumulates things that never really happened."""
+    collections = set()
+    for raw in lines:
+        m = VAR_COLLECTION_RE.match(strip_strings_and_comments(raw))
+        if m:
+            collections.add(m.group(1))
+    if not collections:
+        return
+
+    stripped = [strip_strings_and_comments(l) for l in lines]
+    reported = set()
+    for i, text in enumerate(stripped):
+        m = GROW_CALL_RE.search(text)
+        if not m or m.group(2) not in collections or m.group(2) in reported:
+            continue
+        if DRAWING_CTOR_RE.search(text):
+            continue          # a pool grow, bounded by its own size check
+        indent = indent_width(lines[i])
+        if indent == 0:
+            continue          # unconditional at global scope: runs every bar anyway
+        # Walk out through the enclosing blocks looking for a guard.
+        guarded = False
+        inside_pool_loop = False
+        depth = indent
+        for j in range(i - 1, -1, -1):
+            if not stripped[j].strip():
+                continue
+            j_indent = indent_width(lines[j])
+            if j_indent >= depth:
+                continue
+            depth = j_indent
+            head = stripped[j].strip()
+            if CONFIRM_GUARD_RE.search(head):
+                guarded = True
+                break
+            if head.startswith("while ") and "array.size" in head:
+                inside_pool_loop = True
+                break
+            if head.startswith("if ") or head.startswith("for ") or head.startswith("while "):
+                continue
+            break             # a function body or an unindented statement
+        if guarded or inside_pool_loop:
+            continue
+        reported.add(m.group(2))
+        result.add(i + 1, "PINE054",
+                   "'%s' is a var collection grown inside a conditional block with no "
+                   "barstate.isconfirmed guard. On a realtime bar `var` restores the "
+                   "VARIABLE on each tick, never the contents of the array it points "
+                   "at — so this %s() is permanent even if the condition that caused "
+                   "it is false on the next tick. Conditions built on ta.pivothigh, a "
+                   "break of a level, or anything else reading the forming bar do "
+                   "exactly that. Guard the mutation with barstate.isconfirmed."
+                   % (m.group(2), m.group(1)))
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -1902,6 +1978,7 @@ def lint_file(path, cfg):
     check_unused_variable(lines, result)
     check_drawing_in_loop_budget(lines, statements, result)
     check_loop_cost(lines, statements, result, cfg)
+    check_var_collection_realtime_growth(lines, result)
 
     file_wide, next_line, same_line = parse_suppressions(lines)
     filtered = []

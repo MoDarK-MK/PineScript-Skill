@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 52 rules spanning codes PINE001–PINE053. The code
+Note on numbering: there are 53 rules spanning codes PINE001–PINE054. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -58,6 +58,7 @@ added *after* the error was hit in real use.
 | `Undeclared identifier 'x'` | **PINE050** | `:=` to a name that was never declared |
 | *(no error — the drawings just vanish)* | **PINE052** | Drawings made in a loop with no `max_*_count` |
 | "Loop takes too long to execute" / script timeout | **PINE053** | A loop nest whose worst case is unbounded |
+| *(no error — the array just accumulates)* | **PINE054** | A `var` collection grown on a tick with no confirmation guard |
 | `Pine cannot determine the referencing length…` | *(none yet)* | A dynamic history index without `max_bars_back` |
 
 If you hit a code that is not in this table, that is a genuine gap — the fix is
@@ -674,3 +675,30 @@ for i = 0 to lookback
 Sibling loops are additive, not multiplicative, so only the heaviest nested
 chain multiplies the outer bound.
 
+### PINE054 — warning — `var` collection grown with no bar-confirmation guard
+`var` restores the VARIABLE on a realtime rollback. It never restores the
+contents of the object that variable points at. So a `push` onto a `var` array,
+made on a tick, is permanent — even when the condition that caused it turns out
+to be false later in the same bar.
+
+The conditions this bites are the common ones: `ta.pivothigh`'s window includes
+the bar still forming, and any "close broke the level" test reads a `close` that
+moves all bar. There is no error message. The array just accumulates entries for
+things that never finished.
+```pinescript
+// bad — a pivot that appears mid-bar and vanishes still leaves its entry
+var array<float> levels = array.new<float>()
+float ph = ta.pivothigh(high, 5, 5)
+if not na(ph)
+    array.push(levels, ph)
+```
+```pinescript
+// good — record when the bar that confirms it actually closes
+var array<float> levels = array.new<float>()
+float ph = ta.pivothigh(high, 5, 5)
+if not na(ph) and barstate.isconfirmed
+    array.push(levels, ph)
+```
+Growing a DRAWING pool is exempt: `while array.size(pool) < needed` converges
+instead of accumulating, so an unguarded `array.push(pool, box.new(...))` is
+correct and the rule does not fire on it.

@@ -11,13 +11,13 @@ Transform your TradingView Pine Script ideas into **production-ready indicators 
 
 Most Pine Script traders treat each indicator as a one-off script. Pine Script Skill treats them like **real projects**:
 
-- 🔍 **52-Rule Linter** — v6 compile errors, repainting traps, scope violations, performance costs, invisible dashboard text. Five rules repair themselves with `--fix`
+- 🔍 **53-Rule Linter** — v6 compile errors, repainting traps, scope violations, performance costs, invisible dashboard text. Five rules repair themselves with `--fix`
 - 🧠 **Real Static Analysis** — A symbol table catches `:=` to an undeclared name (TradingView's `Undeclared identifier`) and variables written but never read. Loop nests are costed at their worst case against Pine's 500 ms limit
 - 🎨 **Formatter** — `pine_fmt.py --check` in CI. It never touches block indentation, because in Pine that is structure, not style
 - 📋 **Professional Templates** — Scaffold indicators/strategies with theme-aware dashboards, test blocks, and best-practice structure
 - 🛡️ **Strategy Risk Modules** — Risk-% sizing, ATR stops, breakeven + trailing, TP1/TP2 partials, session and date-window filters, account-level guards — wired together and ready to use
 - ✅ **In-Script Testing** — Assertions inside your Pine code; results show in a test-mode table
-- 🧬 **Tests That Are Themselves Tested** — `mutate_check.py` disables each lint rule and confirms the suite goes red. Its first run found 16 of 52 rules with no test at all
+- 🧬 **Tests That Are Themselves Tested** — `mutate_check.py` disables each lint rule and confirms the suite goes red. Its first run found 16 of 53 rules with no test at all
 - 📦 **Automated Releases** — Lint report, version bump, changelog, git tag, publish description, and a generated table of every setting
 - ⚡ **Live & Fast** — Work-tiering and memoization so a dashboard tracks price tick-by-tick without re-running heavy scans
 - 📚 **12 Reference Guides** — including a multi-timeframe guide, a symptom-first troubleshooting index, and a decision record
@@ -93,8 +93,8 @@ Paste the `.pine` file into the Pine Editor, use the generated description, publ
 <!-- BEGIN GENERATED: projects -->
 | Project | Kind | Version | Lines | Lint | What it is |
 |---|---|---|---|---|---|
-| [`reversal_pro`](indicators/reversal_pro/) | indicator | `1.1.4` | 921 | clean | Test-block assertion 8: a bearish order block registered this bar must sit at or below … |
-| [`swing_volume_profile`](indicators/swing_volume_profile/) | indicator | `0.3.0` | 1051 | clean | **Entry level.** One line marking the strongest volume IMBALANCE on the tradeable side … |
+| [`reversal_pro`](indicators/reversal_pro/) | indicator | `1.1.5` | 926 | clean | Order blocks were registered on any tick where the break condition held, but the break … |
+| [`swing_volume_profile`](indicators/swing_volume_profile/) | indicator | `0.3.1` | 1057 | clean | Pivots were recorded on any tick where `ta.pivothigh`/`ta.pivotlow` returned a value, b… |
 | [`volume_pro`](indicators/volume_pro/) | indicator | `0.2.1` | 646 | clean (1 note) | The footprint-history trim no longer assigns the shifted bar to a variable nothing read… |
 | [`reversal_pro_strategy`](strategies/reversal_pro_strategy/) | strategy | `0.3.0` | 691 | clean | Account Risk Guards: `strategy.risk.max_intraday_loss`, `max_drawdown`, `max_cons_loss_… |
 | [`pine_toolkit`](libraries/pine_toolkit/) | library | `0.1.0` | 193 | clean | Initial version of PineToolkit, the shared helper library. |
@@ -111,8 +111,8 @@ Paste the `.pine` file into the Pine Editor, use the generated description, publ
 <!-- BEGIN GENERATED: tree -->
 ```
 PineScript-Skill/
-├── indicators/reversal_pro/           # v1.1.4 (indicator)
-├── indicators/swing_volume_profile/   # v0.3.0 (indicator)
+├── indicators/reversal_pro/           # v1.1.5 (indicator)
+├── indicators/swing_volume_profile/   # v0.3.1 (indicator)
 ├── indicators/volume_pro/             # v0.2.1 (indicator)
 ├── strategies/reversal_pro_strategy/  # v0.3.0 (strategy)
 ├── libraries/pine_toolkit/            # v0.1.0 (library)
@@ -190,7 +190,7 @@ python3 scripts/pine_lint.py indicators/my_rsi_bands/src/my_rsi_bands.pine --jso
 # Strict mode: warnings also fail
 python3 scripts/pine_lint.py indicators/my_rsi_bands/src/my_rsi_bands.pine --strict
 
-# List all 52 rules (rules marked [--fix] can be repaired automatically)
+# List all 53 rules (rules marked [--fix] can be repaired automatically)
 python3 scripts/pine_lint.py --list-rules
 
 # Explain one rule in full
@@ -275,7 +275,7 @@ python3 scripts/mutate_check.py --only PINE045
 
 Disables one lint rule at a time and re-runs the suite. A rule whose absence
 changes nothing has no test that can detect it breaking. The first run found 16
-of 52 rules in exactly that state.
+of 53 rules in exactly that state.
 
 ### **strategy_to_indicator.py** — Alert-Only View of a Strategy
 ```bash
@@ -317,7 +317,7 @@ Every script benefits from these docs; required reading before shipping:
 | **[decisions.md](references/decisions.md)** | Decision record — what was decided, why, and what would change our mind |
 | **[pine-v6-guide.md](references/pine-v6-guide.md)** | v5→v6 breaking changes, platform limits, dynamic requests, repainting traps, `var`/`varip` semantics |
 | **[style-guide.md](references/style-guide.md)** | Official naming conventions (camelCase/SNAKE_CASE), section order, spacing, line wrapping |
-| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 52 lint rules (codes PINE001–PINE053; PINE024 unassigned) with examples and rationale |
+| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 53 lint rules (codes PINE001–PINE054; PINE024 unassigned) with examples and rationale |
 | **[performance-guide.md](references/performance-guide.md)** | Keeping a script fast AND live: work tiering, memoization, buffer reuse, drawing updates, var vs varip |
 | **[strategy-guide.md](references/strategy-guide.md)** | Building strategies: signal design, position sizing math, the four risk modules, filters, overfitting, walk-forward |
 | **[design-system.md](references/design-system.md)** | Theming, gradients, multi-color palettes, watermarks, dashboard patterns |
@@ -394,12 +394,12 @@ multiple ±25% and see whether the result degrades gracefully or collapses.
 
 | | |
 |---|---|
-| **52 lint rules** | PINE001–PINE053 (PINE024 vacant), fact-checked against TradingView's docs; 5 auto-fixable |
+| **53 lint rules** | PINE001–PINE054 (PINE024 vacant), fact-checked against TradingView's docs; 5 auto-fixable |
 | **Symbol table** | Undeclared `:=` targets, unused and write-only variables |
 | **Cost analysis** | Loop nests costed at their inputs' `maxval`; drawings made in loops checked against `max_*_count` |
 | **Formatter** | `--check` gate in CI; never re-indents, never collapses alignment columns |
 | **230 tests** | stdlib `unittest`, zero dependencies |
-| **Mutation-checked** | 52/52 rules verified to have a test that fails when the rule is disabled |
+| **Mutation-checked** | 53/53 rules verified to have a test that fails when the rule is disabled |
 | **Strategy risk modules** | Risk-% sizing, ATR stops, breakeven, trailing, partials, filters, `strategy.risk.*` account guards |
 | **Backtest realism gate** | Blocks lookahead bias, synthetic chart types, zero-cost backtests |
 | **In-script testing** | Assertion counter inside the Pine file; no external runner |
@@ -431,7 +431,7 @@ and — on pushes to `main` only — the mutation run.
 they would fail if the thing they test broke, and a test that cannot fail is
 worth nothing. `mutate_check.py` disables one lint rule at a time and re-runs
 the suite; a rule whose absence changes nothing is one the next refactor can
-delete silently. The first run found **16 of 52 rules in exactly that state** —
+delete silently. The first run found **16 of 53 rules in exactly that state** —
 nearly a third of the catalog, invisible while everything reported OK.
 
 **Adding a lint rule.** `scripts/new_rule.py` scaffolds the catalog entry, the

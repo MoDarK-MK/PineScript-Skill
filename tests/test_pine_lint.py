@@ -13,7 +13,7 @@ class TestRuleCatalog(unittest.TestCase):
     def test_catalog_endpoints_and_pine024(self):
         self.assertNotIn("PINE024", pine_lint.RULES)
         self.assertIn("PINE001", pine_lint.RULES)
-        self.assertIn("PINE053", pine_lint.RULES)
+        self.assertIn("PINE054", pine_lint.RULES)
 
     def test_list_rules_cli_prints_every_rule(self):
         # Derived from the catalog on purpose: a hand-maintained count here was
@@ -849,3 +849,61 @@ class TestAutoFix(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestVarCollectionRealtimeGrowth(unittest.TestCase):
+    """PINE054. The negative cases matter more than the positive one here: the
+    drawing-pool idiom is everywhere in this repo and must never be flagged."""
+
+    def test_unguarded_push_is_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+var array<float> levels = array.new<float>()
+float ph = ta.pivothigh(high, 5, 5)
+if not na(ph)
+    array.push(levels, ph)
+plot(close, title="C")
+"""
+        self.assertIn("PINE054", codes(lint_text(src)))
+
+    def test_confirmed_guard_clears_it(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+var array<float> levels = array.new<float>()
+float ph = ta.pivothigh(high, 5, 5)
+if not na(ph) and barstate.isconfirmed
+    array.push(levels, ph)
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE054", codes(lint_text(src)))
+
+    def test_outer_guard_counts(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+var array<float> levels = array.new<float>()
+if barstate.isconfirmed
+    if close > open
+        array.push(levels, close)
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE054", codes(lint_text(src)))
+
+    def test_drawing_pool_growth_is_exempt(self):
+        src = """//@version=6
+indicator("T", overlay=true, max_boxes_count=500)
+var array<box> pool = array.new<box>()
+if barstate.islast
+    while array.size(pool) < 10
+        array.push(pool, box.new(bar_index, close, bar_index, close))
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE054", codes(lint_text(src)))
+
+    def test_unconditional_global_push_is_exempt(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+var array<float> closes = array.new<float>()
+array.push(closes, close)
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE054", codes(lint_text(src)))
+
