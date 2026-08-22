@@ -1,0 +1,14 @@
+// FIXTURE — must be caught by PINE047
+// TradingView says: Cannot use 'plot' in local scope.
+// The usual mistake: making a plot conditional by wrapping it in an if instead of feeding it na.
+//
+// This file is DELIBERATELY broken. It is never scaffolded, published or
+// linted by CI — tests/test_compile_error_corpus.py asserts PINE047 still
+// fires on it, so the incident can never silently regress.
+//@version=6
+indicator("Fixture", overlay=true)
+
+bool showIt = input.bool(true, "Show")
+
+if showIt
+    plot(close, title="Close")

@@ -1,0 +1,18 @@
+// FIXTURE — must be caught by PINE043
+// TradingView says: CE10235 — Return type of one of the if/switch blocks is not compatible with return type of other block(s) (series int; series label).
+// Same incident as PINE042: the if/else was the function's last statement, so its branches had to agree on a type and did not.
+//
+// This file is DELIBERATELY broken. It is never scaffolded, published or
+// linted by CI — tests/test_compile_error_corpus.py asserts PINE043 still
+// fires on it, so the incident can never silently regress.
+//@version=6
+indicator("Fixture", overlay=true)
+
+record(bool ok, string msg) =>
+    int n = 0
+    if ok
+        n := n + 1
+    else
+        label.new(bar_index, high, msg)
+
+plot(close, title="Close")

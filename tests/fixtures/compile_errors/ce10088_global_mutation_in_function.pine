@@ -1,0 +1,18 @@
+// FIXTURE — must be caught by PINE042
+// TradingView says: CE10088 — Cannot modify global variable "passCount" in function.
+// Hit 2026-07-27 when the assertion helper shipped in five files at once.
+//
+// This file is DELIBERATELY broken. It is never scaffolded, published or
+// linted by CI — tests/test_compile_error_corpus.py asserts PINE042 still
+// fires on it, so the incident can never silently regress.
+//@version=6
+indicator("Fixture", overlay=true)
+
+var int passCount = 0
+
+recordAssertion(bool condition) =>
+    if condition
+        passCount += 1
+    0
+
+plot(passCount, title="Passes")

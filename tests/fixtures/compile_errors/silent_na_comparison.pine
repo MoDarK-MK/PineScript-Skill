@@ -1,0 +1,18 @@
+// FIXTURE — must be caught by PINE045
+// TradingView says: No error at all — the guarded work simply never runs.
+// Shipped twice: the volume profile and the high-volume zone both never drew because a var initialised to na was tested with !=.
+//
+// This file is DELIBERATELY broken. It is never scaffolded, published or
+// linted by CI — tests/test_compile_error_corpus.py asserts PINE045 still
+// fires on it, so the incident can never silently regress.
+//@version=6
+indicator("Fixture", overlay=true)
+
+var int cachedBar = na
+var float cachedValue = na
+
+if barstate.islast and cachedBar != bar_index
+    cachedBar := bar_index
+    cachedValue := ta.sma(close, 20)
+
+plot(cachedValue, title="Cached")

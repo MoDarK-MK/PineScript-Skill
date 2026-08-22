@@ -1,0 +1,19 @@
+// FIXTURE — must be caught by PINE049
+// TradingView says: Cannot use 'strategy.entry' in local scope.
+// Order calls must be at global scope; return the decision instead.
+//
+// This file is DELIBERATELY broken. It is never scaffolded, published or
+// linted by CI — tests/test_compile_error_corpus.py asserts PINE049 still
+// fires on it, so the incident can never silently regress.
+//@version=6
+strategy("Fixture", overlay=true,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+     initial_capital=10000, commission_type=strategy.commission.percent,
+     commission_value=0.05, slippage=1)
+
+tryEnter(bool go) =>
+    if go
+        strategy.entry("Long", strategy.long)
+    0
+
+plot(close, title="Close")

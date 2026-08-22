@@ -1,0 +1,13 @@
+// FIXTURE — must be caught by PINE044
+// TradingView says: This script uses seconds-based timeframes, which are only available to users with Premium and higher-tier plans.
+// Hit when Auto mode picked 1S on a low timeframe. Fails the WHOLE script, not just the call.
+//
+// This file is DELIBERATELY broken. It is never scaffolded, published or
+// linted by CI — tests/test_compile_error_corpus.py asserts PINE044 still
+// fires on it, so the incident can never silently regress.
+//@version=6
+indicator("Fixture", overlay=true)
+
+[o, c, v] = request.security_lower_tf(syminfo.tickerid, "1S", [open, close, volume])
+
+plot(array.size(v), title="Intrabars")

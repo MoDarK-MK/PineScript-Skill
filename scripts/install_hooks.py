@@ -24,6 +24,11 @@ MARKER = "# pine-script-cicd pre-commit hook"
 HOOK_BODY = f'''#!/bin/sh
 {MARKER}
 # Lints every staged .pine file with --strict. Bypass once with --no-verify.
+#
+# tests/fixtures/ is skipped on purpose: the compile-error corpus there is
+# DELIBERATELY broken — each file reproduces a TradingView failure so a lint
+# rule can be held in place. Linting it would block every commit that touches
+# it. Same reasoning as CI pruning release/.
 
 set -e
 repo_root=$(git rev-parse --show-toplevel)
@@ -34,6 +39,9 @@ staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.pine')
 status=0
 for f in $staged; do
     [ -f "$repo_root/$f" ] || continue
+    case "$f" in
+        tests/fixtures/*) continue ;;
+    esac
     if ! python "$repo_root/scripts/pine_lint.py" "$repo_root/$f" --strict; then
         status=1
     fi

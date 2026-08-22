@@ -1,0 +1,14 @@
+// FIXTURE — must be caught by PINE046
+// TradingView says: Cannot use 'input' in local scope.
+// input.*() is only legal at global scope.
+//
+// This file is DELIBERATELY broken. It is never scaffolded, published or
+// linted by CI — tests/test_compile_error_corpus.py asserts PINE046 still
+// fires on it, so the incident can never silently regress.
+//@version=6
+indicator("Fixture", overlay=true)
+
+getLength() =>
+    input.int(14, "Length")
+
+plot(ta.sma(close, 14), title="SMA")
