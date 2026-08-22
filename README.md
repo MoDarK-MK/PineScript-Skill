@@ -94,7 +94,7 @@ Paste the `.pine` file into the Pine Editor, use the generated description, publ
 | Project | Kind | Version | Lines | Lint | What it is |
 |---|---|---|---|---|---|
 | [`reversal_pro`](indicators/reversal_pro/) | indicator | `1.1.5` | 931 | clean | Order blocks were registered on any tick where the break condition held, but the break … |
-| [`swing_volume_profile`](indicators/swing_volume_profile/) | indicator | `0.4.0` | 1455 | clean | **Measured hit rate.** Every level the indicator would draw is recorded when its swing … |
+| [`swing_volume_profile`](indicators/swing_volume_profile/) | indicator | `0.5.0` | 1680 | clean | **Intrabar volume distribution** (`request.security_lower_tf`, on by default at 1 minut… |
 | [`volume_pro`](indicators/volume_pro/) | indicator | `0.2.1` | 646 | clean (1 note) | The footprint-history trim no longer assigns the shifted bar to a variable nothing read… |
 | [`reversal_pro_strategy`](strategies/reversal_pro_strategy/) | strategy | `0.3.0` | 691 | clean | Account Risk Guards: `strategy.risk.max_intraday_loss`, `max_drawdown`, `max_cons_loss_… |
 | [`pine_toolkit`](libraries/pine_toolkit/) | library | `0.1.0` | 192 | clean | Initial version of PineToolkit, the shared helper library. |
@@ -112,7 +112,7 @@ Paste the `.pine` file into the Pine Editor, use the generated description, publ
 ```
 PineScript-Skill/
 ├── indicators/reversal_pro/           # v1.1.5 (indicator)
-├── indicators/swing_volume_profile/   # v0.4.0 (indicator)
+├── indicators/swing_volume_profile/   # v0.5.0 (indicator)
 ├── indicators/volume_pro/             # v0.2.1 (indicator)
 ├── strategies/reversal_pro_strategy/  # v0.3.0 (strategy)
 ├── libraries/pine_toolkit/            # v0.1.0 (library)

@@ -105,7 +105,29 @@ indicator(
 //   the other side was there to take it. Both halves are required — a new low
 //   on rising selling is just a downtrend.
 //
-// ACCURACY: two models, both adjustable, neither pretending to be order flow.
+// ACCURACY: intrabar first, models only where intrabar cannot reach.
+//   Use Intrabar Data is the largest single gain available here. Without it, a
+//   bar's volume must be SPREAD across every price it touched using a guess
+//   about where inside the bar the trading happened. With it, each sub-bar is
+//   placed at its own narrow range carrying its own close position, so the
+//   profile is largely measured. The table's Data row says what share of the
+//   shown swing was built that way; TradingView's intrabar budget is finite and
+//   older history falls back to the model, per bar, with nothing breaking.
+//
+//   SECONDS TIMEFRAMES NEED PREMIUM. A seconds value in Intrabar Timeframe
+//   fails the WHOLE script on a lower plan, not just this feature. The default
+//   is one minute for that reason.
+//
+// LOW VOLUME NODES: the rows almost nothing traded in, tinted separately. They
+//   are the opposite of the POC and just as informative — price accelerates
+//   through them because there is nothing there to trade against, which makes
+//   them poor targets and poor places to stand. They cost no extra drawings.
+//
+// NAKED POC: the most-agreed price of a finished leg that price has not come
+//   back to. VALUE MIGRATION: where the POC went from one finished leg to the
+//   next, which is the cheapest read of control there is.
+//
+// Below the intrabar path, two models, neither pretending to be order flow.
 //   Distribution — a bar's volume is spread across the rows it spans. Even
 //     gives a wick the same volume per row as the body, which is wrong in an
 //     obvious way: a wick is a price the market REJECTED and traded through
@@ -237,6 +259,14 @@ string entryModeInput = input.string(
      "profile actually argues for. Both Sides draws the buy level below price and " +
      "the sell level above it at the same time — useful for framing a range, " +
      "cluttered when you only want one decision.")
+float  entryMinVolumeInput = input.float(
+     30.0, "Minimum Row Volume (%)", minval=0.0, maxval=90.0, step=5.0, group=EN_GROUP,
+     tooltip="An entry row must hold at least this share of the busiest row's " +
+     "volume. Without it a level can land on a thin shelf that happened to be " +
+     "one-sided — lopsided because almost nothing traded there, not because one " +
+     "side was overwhelmed. Price does not defend a price nobody was at." +
+     "\n\nThis is a floor on SIZE; Minimum Strength below is a floor on how " +
+     "one-sided it was. A level needs both.")
 float  entryMinStrengthInput = input.float(
      15.0, "Minimum Strength (%)", minval=1.0, maxval=100.0, step=1.0, group=EN_GROUP,
      tooltip="How lopsided a row must be before it counts, as a percentage of the " +
@@ -275,6 +305,20 @@ bool   entryAlertInput = input.bool(
 
 // ————— Inputs: Confluence
 string CF_GROUP = "Confluence"
+bool   showLvnInput = input.bool(
+     true, "Highlight Low Volume Nodes", group=PR_GROUP,
+     tooltip="Tints the rows almost nothing traded in. They are the opposite of " +
+     "the POC and just as informative: price accelerates THROUGH a low volume " +
+     "node because there is nothing there to trade against, so they make poor " +
+     "targets and poor places to stand." +
+     "\n\nCosts no extra drawings — the rows are already being drawn, this only " +
+     "changes their colour.")
+float  lvnPctInput = input.float(
+     15.0, "Low Volume Node Below (%)", minval=2.0, maxval=50.0, step=1.0, group=PR_GROUP,
+     tooltip="A row counts as a low volume node when it holds less than this " +
+     "share of the busiest row's volume.")
+color  lvnColorInput = input.color(#787b86, "Low Volume Node Color", group=PR_GROUP)
+
 bool   showConfluenceInput = input.bool(
      true, "Merge Overlapping Levels Into Zones", group=CF_GROUP,
      tooltip="When the POC of one swing, the value-area edge of another and the " +
@@ -306,6 +350,27 @@ color  vaColorInput = input.color(#787b86, "Value Area Color", group=VA_GROUP)
 
 // ————— Inputs: Accuracy
 string AC_GROUP = "Accuracy"
+bool   useIntrabarInput = input.bool(
+     true, "Use Intrabar Data", group=AC_GROUP,
+     tooltip="The largest accuracy gain available to this script, and the one " +
+     "that makes the two models below matter less." +
+     "\n\nWithout it, a bar's volume has to be SPREAD across every price it " +
+     "touched, using a guess about where inside the bar the trading happened. " +
+     "With it, each sub-bar is placed at its own narrow price range and carries " +
+     "its own close position — so the profile is largely measured rather than " +
+     "modelled, and the buy/sell split gets one estimate per sub-bar instead of " +
+     "one per candle." +
+     "\n\nIt falls back to the bar-level model, per bar, wherever TradingView " +
+     "returns no intrabar data — which it will for older history, since the " +
+     "intrabar budget is finite. Nothing breaks; the older part of the chart is " +
+     "simply modelled the old way.")
+string intrabarTfInput = input.timeframe(
+     "1", "Intrabar Timeframe", group=AC_GROUP,
+     tooltip="Must be LOWER than your chart timeframe or it is ignored. On a " +
+     "5-minute chart, 1 minute gives five sub-bars per candle." +
+     "\n\nSECONDS TIMEFRAMES REQUIRE A PREMIUM PLAN. Typing 15S here on a lower " +
+     "plan makes the whole script fail to load, not just this feature. Leave it " +
+     "on a minute value unless you know you have Premium.")
 string distModeInput = input.string(
      DIST_BODY, "Volume Distribution", options=[DIST_BODY, DIST_EVEN], group=AC_GROUP,
      tooltip="How one bar's volume is spread across the price rows it spans. Even " +
@@ -321,6 +386,11 @@ string splitModeInput = input.string(
      "on trending bars and hurts on choppy ones. Neither is verifiably better " +
      "everywhere, which is why the default is left on the plain, well-understood " +
      "one rather than quietly changed under you.")
+bool   pocAlertInput = input.bool(
+     true, "Alert When Price Reaches A Naked POC", group=AC_GROUP,
+     tooltip="A naked POC is a point of control price has not returned to since " +
+     "the swing that built it ended. It is the single most-agreed price of that " +
+     "leg, still unvisited.")
 bool   showAbsorptionInput = input.bool(
      true, "Detect Absorption", group=AC_GROUP,
      tooltip="Flags the classic volume-analysis reversal shape: a swing that makes " +
@@ -400,6 +470,10 @@ type SwingProfile
     float buyVol
     array<float> buyRows
     array<float> sellRows
+    // What share of this swing's bars were built from real intrabar data
+    // rather than the bar-level model. Carried per swing because it varies:
+    // TradingView's intrabar budget runs out on older history.
+    int   intrabarPct
     // The price range covered SINCE this swing ended. A row outside it has not
     // been revisited, which is what "untested" means here. na while the swing
     // is still developing, because price is inside it by definition.
@@ -480,6 +554,19 @@ entryAlertPayload(bool isBuy, float price, float power, string format) =>
          ',"close":' + str.tostring(close, format.mintick) +
          ',"bar_time":' + str.tostring(time) + '}'
 
+// @function The alert payload for a reference level being reached.
+levelAlertPayload(string kind, float price, string format) =>
+    format == "Text" ?
+         "Price reached the " + kind + " at " + str.tostring(price, format.mintick) +
+         " on " + syminfo.ticker :
+         '{"source":"swing_volume_profile"' +
+         ',"symbol":"' + syminfo.ticker + '"' +
+         ',"timeframe":"' + timeframe.period + '"' +
+         ',"event":"' + kind + '"' +
+         ',"price":' + str.tostring(price, format.mintick) +
+         ',"close":' + str.tostring(close, format.mintick) +
+         ',"bar_time":' + str.tostring(time) + '}'
+
 // @function One label/value table row. Both colors are required arguments,
 // which is what stops a cell shipping without text_color — Pine defaults cell
 // text to BLACK, invisible on a dark panel.
@@ -517,9 +604,44 @@ buildProfile(int leftBar, int rightBar, int rows, int scanCap) =>
         array<float> sells = array.new<float>(useRows, 0.0)
         float grandTotal = 0.0
         float grandBuy   = 0.0
+        int intrabarBars = 0
         for i = rightOff to leftOff
             float barVol = nz(volume[i])
-            if barVol > 0
+            // Intrabar path. Each sub-bar is placed at its own narrow range with
+            // its own close position, so neither the spread nor the buy/sell
+            // split is being modelled for this candle.
+            array<float> subVol = intrabarUsable ? ltfVolume[i] : na
+            array<float> subHigh  = intrabarUsable ? ltfHigh[i] : na
+            array<float> subLow   = intrabarUsable ? ltfLow[i] : na
+            array<float> subClose = intrabarUsable ? ltfClose[i] : na
+            // The shortest array wins. They come from one request and should
+            // always match, but iterating past the end of any of them would be
+            // a runtime error on a user's chart, not on mine.
+            int subCount = na(subVol) or na(subHigh) or na(subLow) or na(subClose) ? 0 :
+                 int(math.min(math.min(array.size(subVol), array.size(subHigh)),
+                 math.min(array.size(subLow), array.size(subClose))))
+            if subCount > 0
+                intrabarBars += 1
+                for s = 0 to subCount - 1
+                    float sv = nz(array.get(subVol, s))
+                    if sv > 0
+                        float sh = array.get(subHigh, s)
+                        float sl = array.get(subLow, s)
+                        float sc = array.get(subClose, s)
+                        float sRange = sh - sl
+                        float sBuy = sRange > 0 ? (sc - sl) / sRange : 0.5
+                        sBuy := math.max(0.0, math.min(1.0, sBuy))
+                        int sStart = math.max(0, math.min(useRows - 1,
+                             int(math.floor((sl - lo) / step))))
+                        int sEnd = math.max(0, math.min(useRows - 1,
+                             int(math.floor((sh - lo) / step))))
+                        float sPerRow = sv / (sEnd - sStart + 1)
+                        for r = sStart to sEnd
+                            array.set(buys, r, array.get(buys, r) + sPerRow * sBuy)
+                            array.set(sells, r, array.get(sells, r) + sPerRow * (1 - sBuy))
+                        grandTotal += sv
+                        grandBuy   += sv * sBuy
+            else if barVol > 0
                 float barRange = high[i] - low[i]
                 float rangePos = barRange > 0 ? (close[i] - low[i]) / barRange : 0.5
                 float buyShare = rangePos
@@ -566,6 +688,11 @@ buildProfile(int leftBar, int rightBar, int rows, int scanCap) =>
                     array.set(sells, r, array.get(sells, r) + rowVol * (1 - buyShare))
                 grandTotal += barVol
                 grandBuy   += barVol * buyShare
+        // Recorded so the table can say how much of the profile is measured and
+        // how much is modelled. A number whose provenance is invisible invites
+        // more trust than it has earned.
+        int scanned = leftOff - rightOff + 1
+        int intrabarPct = scanned > 0 ? int(intrabarBars * 100 / scanned) : 0
         // Three separate peaks: the row that traded most in total, the row that
         // absorbed the most buying, and the row that absorbed the most selling.
         // They are often different rows, and that difference is the signal.
@@ -617,7 +744,7 @@ buildProfile(int leftBar, int rightBar, int rows, int scanCap) =>
                  maxSellIdx = sellIdx, vaTopIdx = vaTop, vaBotIdx = vaBot,
                  peakRow = peakTotal, totalVol = grandTotal,
                  buyVol = grandBuy, buyRows = buys, sellRows = sells,
-                 postLo = na, postHi = na)
+                 postLo = na, postHi = na, intrabarPct = intrabarPct)
     result
 
 // @function Price at the centre of a profile row.
@@ -646,15 +773,23 @@ bestEntry(SwingProfile p, float price, float minStrength) =>
     // A developing swing has no "since" to test against, so it is never
     // filtered — na(postLo) is the signal for that, not a missing value.
     bool canFilter = preferUntestedInput and not na(p.postLo) and not na(p.postHi)
+    float volFloor = p.peakRow * entryMinVolumeInput / 100
     if p.peakRow > 0 and rows > 0
         for r = 0 to rows - 1
             float rowMid = p.lo + (r + 0.5) * p.step
             bool untested = not canFilter or rowMid > p.postHi or rowMid < p.postLo
-            float imbalance = (array.get(p.buyRows, r) - array.get(p.sellRows, r)) / p.peakRow
-            if untested and rowMid < price and imbalance > buyBest
+            float rowBuy = array.get(p.buyRows, r)
+            float rowSell = array.get(p.sellRows, r)
+            // Two independent floors. Strength says how one-sided the row was;
+            // this says whether enough traded there for one-sidedness to mean
+            // anything. A thin shelf can be 90% buying and still be nothing —
+            // price does not defend a price nobody was at.
+            bool bigEnough = rowBuy + rowSell >= volFloor
+            float imbalance = (rowBuy - rowSell) / p.peakRow
+            if untested and bigEnough and rowMid < price and imbalance > buyBest
                 buyBest := imbalance
                 buyIdx := r
-            if untested and rowMid > price and -imbalance > sellBest
+            if untested and bigEnough and rowMid > price and -imbalance > sellBest
                 sellBest := -imbalance
                 sellIdx := r
     [buyIdx, buyIdx >= 0 ? buyBest : 0.0, sellIdx, sellIdx >= 0 ? sellBest : 0.0]
@@ -717,6 +852,30 @@ int profileRows    = rowsInput
 color textColor  = getTextColor(themeInput)
 color mutedColor = getMutedColor(themeInput)
 string markerStyle = lineStyleFrom(lineStyleInput)
+
+// ————— Calculations: intrabar series
+//
+// request.security_lower_tf() has to live at global scope, so the arrays are
+// fetched here and indexed by history offset inside buildProfile().
+//
+// The request itself is unconditional — Pine requires request.* calls at global
+// scope and they cannot be skipped. What the guard changes is the ARGUMENT and
+// whether the result is USED. A timeframe that is not lower than the chart's
+// returns nothing usable, and every consumer below treats an empty result as
+// "fall back to the bar model", so the two cases converge safely.
+float chartSecondsForLtf = math.max(timeframe.in_seconds(timeframe.period), 1)
+bool  intrabarUsable = useIntrabarInput and
+     timeframe.in_seconds(intrabarTfInput) > 0 and
+     timeframe.in_seconds(intrabarTfInput) < chartSecondsForLtf
+string intrabarTf = intrabarUsable ? intrabarTfInput : timeframe.period
+
+// ONE tuple request, not four separate ones. Four calls could in principle
+// return arrays of differing length, and indexing them in lockstep would then
+// read one sub-bar's price against another's volume — a corruption that would
+// look like noise rather than a bug. One call cannot do that, and it costs one
+// slot against the 40-request cap instead of four.
+[ltfHigh, ltfLow, ltfClose, ltfVolume] = request.security_lower_tf(
+     syminfo.tickerid, intrabarTf, [high, low, close, volume])
 
 // ————— Calculations: segment detection
 //
@@ -905,6 +1064,37 @@ if showAbsorptionInput and array.size(swings) >= 2
         else if found == "none"
             absorptionState := "none"
 
+// ————— Calculations: naked POC and value migration
+//
+// A naked POC is the most-agreed price of a finished leg that price has NOT
+// come back to. The postLo/postHi range each swing already maintains makes this
+// a comparison rather than a search.
+//
+// Value migration is where the POC went from one finished swing to the next.
+// It is the cheapest read of control there is: value moving up means each leg
+// is finding agreement higher than the last.
+float nakedPocPrice = na
+string valueMigration = "--"
+if array.size(swings) > 0
+    float nearest = na
+    for i = 0 to array.size(swings) - 1
+        SwingProfile sp = array.get(swings, i)
+        float pocP = rowPrice(sp, sp.pocIdx)
+        // na postLo means the swing has no "since" yet, so nothing can be naked.
+        if not na(sp.postLo) and not na(sp.postHi) and (pocP > sp.postHi or pocP < sp.postLo)
+            if na(nearest) or math.abs(pocP - close) < nearest
+                nearest := math.abs(pocP - close)
+                nakedPocPrice := pocP
+    if array.size(swings) >= 2
+        SwingProfile newest = array.get(swings, array.size(swings) - 1)
+        SwingProfile prior  = array.get(swings, array.size(swings) - 2)
+        float pocNew = rowPrice(newest, newest.pocIdx)
+        float pocOld = rowPrice(prior, prior.pocIdx)
+        // A tick of movement is not migration; it is rounding.
+        float migrationFloor = math.max(syminfo.mintick, newest.step)
+        valueMigration := pocNew > pocOld + migrationFloor ? "UP" :
+             pocNew < pocOld - migrationFloor ? "DOWN" : "FLAT"
+
 // ————— Visuals: pools
 var array<box>   rowBoxes    = array.new<box>()
 var int          boxesUsed   = 0
@@ -972,7 +1162,12 @@ drawRows(SwingProfile p, array<box> pool, int cursor, int limit, int rightEdge, 
                 box bx = array.get(pool, cursor + used)
                 box.set_lefttop(bx, leftEdge, yBot + p.step)
                 box.set_rightbottom(bx, leftEdge + rowWidth, yBot)
-                box.set_bgcolor(bx, color.new(b >= s ? buyColorInput : sellColorInput, rowTranspInput))
+                // A low volume node is worth seeing precisely because it is
+                // almost invisible at this width — price runs through it.
+                bool isLvn = showLvnInput and t < p.peakRow * lvnPctInput / 100
+                box.set_bgcolor(bx, color.new(
+                     isLvn ? lvnColorInput : b >= s ? buyColorInput : sellColorInput,
+                     rowTranspInput))
                 box.set_border_color(bx, TRANSPARENT_COLOR)
                 used += 1
     used
@@ -1270,7 +1465,7 @@ if barstate.islast
 
 // ————— Visuals: summary table
 var table dash = table.new(
-     tablePosFrom(tablePosInput), 2, 15,
+     tablePosFrom(tablePosInput), 2, 18,
      bgcolor=getPanelColor(themeInput, 15), border_width=1,
      border_color=getPanelColor(themeInput, 100),
      frame_color=color.new(mutedColor, 70), frame_width=1)
@@ -1333,25 +1528,39 @@ if showTableInput and barstate.islast
     dashRow(dash, 6, "Confluence zones",
          showConfluenceInput ? str.tostring(zoneCount) : "off", mutedColor,
          zoneCount > 0 ? confluenceColorInput : mutedColor)
-    dashRow(dash, 7, "Swing volume", haveSwing ? formatVolume(shown.totalVol) : "--",
+    dashRow(dash, 7, "Naked POC", na(nakedPocPrice) ? "none" :
+         str.tostring(nakedPocPrice, format.mintick), mutedColor,
+         na(nakedPocPrice) ? mutedColor : pocColorInput)
+    dashRow(dash, 8, "Value migration", valueMigration, mutedColor,
+         valueMigration == "UP" ? buyColorInput :
+         valueMigration == "DOWN" ? sellColorInput : mutedColor)
+    dashRow(dash, 9, "Swing volume", haveSwing ? formatVolume(shown.totalVol) : "--",
          mutedColor, textColor)
-    dashRow(dash, 8, "Buy share", na(buyPct) ? "--" : str.tostring(buyPct, "#.#") + "%",
+    dashRow(dash, 10, "Buy share", na(buyPct) ? "--" : str.tostring(buyPct, "#.#") + "%",
          mutedColor, nz(buyPct, 50) >= 50 ? buyColorInput : sellColorInput)
-    dashRow(dash, 9, "POC", haveSwing ? str.tostring(rowPrice(shown, shown.pocIdx), format.mintick) : "--",
+    dashRow(dash, 11, "POC", haveSwing ? str.tostring(rowPrice(shown, shown.pocIdx), format.mintick) : "--",
          mutedColor, pocColorInput)
-    dashRow(dash, 10, "Value area", haveSwing ?
+    dashRow(dash, 12, "Value area", haveSwing ?
          str.tostring(rowPrice(shown, shown.vaBotIdx), format.mintick) + " - " +
          str.tostring(rowPrice(shown, shown.vaTopIdx), format.mintick) : "--",
          mutedColor, vaColorInput)
-    dashRow(dash, 11, "Max buy", haveSwing ?
+    dashRow(dash, 13, "Max buy", haveSwing ?
          str.tostring(rowPrice(shown, shown.maxBuyIdx), format.mintick) : "--",
          mutedColor, maxBuyColorInput)
-    dashRow(dash, 12, "Max sell", haveSwing ?
+    dashRow(dash, 14, "Max sell", haveSwing ?
          str.tostring(rowPrice(shown, shown.maxSellIdx), format.mintick) : "--",
          mutedColor, maxSellColorInput)
-    dashRow(dash, 13, "Rows / swing", rowNote, mutedColor,
+    dashRow(dash, 15, "Rows / swing", rowNote, mutedColor,
          shownRows < rowsInput ? pocColorInput : textColor)
-    dashRow(dash, 14, "Boxes used",
+    // Provenance. A number whose source is invisible invites more trust than
+    // it has earned, and "measured" and "modelled" are not the same claim.
+    dashRow(dash, 16, "Data", not haveSwing ? "--" :
+         not intrabarUsable ? "bar model" :
+         str.tostring(shown.intrabarPct) + "% intrabar", mutedColor,
+         not haveSwing or not intrabarUsable ? mutedColor :
+         shown.intrabarPct >= 80 ? buyColorInput :
+         shown.intrabarPct >= 30 ? pocColorInput : mutedColor)
+    dashRow(dash, 17, "Boxes used",
          str.tostring(boxesUsed) + " / " + str.tostring(MAX_ROW_BOXES), mutedColor,
          boxesUsed >= MAX_ROW_BOXES ? pocColorInput : textColor)
 
@@ -1367,6 +1576,11 @@ alertcondition(newSegment, "New swing confirmed",
 
 // Gated on bar close, deliberately. Mid-bar a touch can un-happen, and an alert
 // for something that never finished is worse than no alert at all.
+if pocAlertInput and barstate.islast and barstate.isconfirmed and not na(nakedPocPrice)
+    if low <= nakedPocPrice and high >= nakedPocPrice
+        alert(levelAlertPayload("naked_poc", nakedPocPrice, alertFormatInput),
+             alert.freq_once_per_bar_close)
+
 if entryAlertInput and barstate.islast and barstate.isconfirmed
     if not na(entryBuyPrice) and low <= entryBuyPrice and high >= entryBuyPrice
         alert(entryAlertPayload(true, entryBuyPrice, entryBuyPower, alertFormatInput),
@@ -1376,7 +1590,7 @@ if entryAlertInput and barstate.islast and barstate.isconfirmed
              alert.freq_once_per_bar_close)
 
 // ————— Debug / Test block (keep testModeInput false when handing off)
-int TEST_COUNT = 11     // keep in sync with the assertFailed() calls below
+int TEST_COUNT = 13     // keep in sync with the assertFailed() calls below
 var int passCount = 0
 var int failCount = 0
 
@@ -1442,6 +1656,17 @@ if testModeInput
     fails += assertFailed(
          absorptionState == "none" or absorptionState == "bullish" or
          absorptionState == "bearish", "absorption state is not a known value")
+    // 12. Provenance is a percentage, and a percentage over 100 would mean the
+    //     intrabar counter is counting bars that were not scanned.
+    fails += assertFailed(
+         na(liveSwing) or (liveSwing.intrabarPct >= 0 and liveSwing.intrabarPct <= 100),
+         "intrabar coverage is not a valid percentage")
+    // 13. Value migration is a closed set; anything else is a typo rendering as
+    //     an empty cell.
+    fails += assertFailed(
+         valueMigration == "--" or valueMigration == "UP" or
+         valueMigration == "DOWN" or valueMigration == "FLAT",
+         "value migration is not a known value")
     failCount += fails
     passCount += TEST_COUNT - fails
 

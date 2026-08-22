@@ -3,6 +3,20 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.5.0] - 2026-08-23
+### Added
+- **Intrabar volume distribution** (`request.security_lower_tf`, on by default at 1 minute). This is the largest accuracy gain available to the script. Without it a bar's volume has to be SPREAD across every price it touched using a guess about where inside the bar the trading happened; with it each sub-bar is placed at its own narrow range carrying its own close position, so the profile is largely measured rather than modelled and the buy/sell split gets one estimate per sub-bar instead of one per candle.
+- Falls back to the bar-level model **per bar**, wherever TradingView returns no intrabar data — its intrabar budget is finite and older history runs out. Nothing breaks; that part of the chart is simply modelled the old way.
+- New table row **Data** reports what share of the shown swing was built from real intrabar data. A number whose provenance is invisible invites more trust than it has earned.
+- Fetched as ONE tuple request rather than four separate ones: four calls could return arrays of differing length, and indexing them in lockstep would read one sub-bar's price against another's volume — a corruption that would look like noise rather than a bug. It also costs one slot against the 40-request cap instead of four.
+- **Low Volume Nodes** are tinted separately in the profile. They are the opposite of the POC and just as informative: price accelerates through them because there is nothing there to trade against, which makes them poor targets and poor places to stand. Costs no extra drawings — the rows were already being drawn.
+- **Naked POC**: the most-agreed price of a finished leg that price has not returned to, with its own table row and alert. Built from the post-swing range each swing already maintains, so it is a comparison rather than a search.
+- **Value migration**: whether the POC moved up, down or stayed flat between the last two finished legs — the cheapest read of control there is. A move smaller than one row is FLAT, because that is rounding, not migration.
+
+### Changed
+- Entry levels now need **two** independent floors: Minimum Strength (how one-sided the row was) and the new Minimum Row Volume (whether enough traded there for one-sidedness to mean anything). A thin shelf can be 90% buying and still be nothing — price does not defend a price nobody was at.
+- Seconds timeframes are called out in the Intrabar Timeframe tooltip: on a non-Premium plan a seconds value fails the WHOLE script, not just the feature. The default is one minute for that reason.
+
 ## [0.4.0] - 2026-08-22
 ### Added
 - **Measured hit rate.** Every level the indicator would draw is recorded when its swing closes and then followed: when price reaches it, did the move that followed travel the target distance in the level's favour before travelling the same distance against? The table reports the share that did, with the sample size, greyed under 20 samples. It measures the levels actually drawn, not an easier proxy — a statistic about something else would look like evidence for the line on screen while being about a different thing.
