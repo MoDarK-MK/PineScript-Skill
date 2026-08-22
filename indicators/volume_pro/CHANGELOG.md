@@ -3,6 +3,10 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.2.1] - 2026-08-22
+### Changed
+- The footprint-history trim no longer assigns the shifted bar to a variable nothing reads. The `array.shift()` call still runs; only the pretence that its result mattered is gone. Found by PINE051.
+
 ## [0.2.0] - 2026-08-22
 ### Added
 - "Color Bars By Delta" tints each candle by whether buying or selling dominated inside it. The CVD and delta plots stay in the data window because their scale is volume, not price — a real CVD pane needs `overlay=false`, which would mean giving up the footprint. Bar colouring is the honest overlay-compatible answer.

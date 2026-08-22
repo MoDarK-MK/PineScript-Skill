@@ -358,7 +358,7 @@ if showFootInput and haveIntrabar
 if barstate.isconfirmed and not na(currentFoot)
     array.push(footHistory, currentFoot)
     while array.size(footHistory) > footBarsInput
-        FootBar dropped = array.shift(footHistory)
+        array.shift(footHistory)
 
 // ————— Calculations: delta and CVD
 float barDelta = na(currentFoot) ? 0.0 : currentFoot.delta

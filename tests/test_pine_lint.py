@@ -21,17 +21,23 @@ def codes(result):
 
 
 class TestRuleCatalog(unittest.TestCase):
-    def test_has_48_rules_and_no_pine024(self):
-        self.assertEqual(len(pine_lint.RULES), 48)
+    def test_catalog_endpoints_and_pine024(self):
         self.assertNotIn("PINE024", pine_lint.RULES)
         self.assertIn("PINE001", pine_lint.RULES)
-        self.assertIn("PINE049", pine_lint.RULES)
+        self.assertIn("PINE053", pine_lint.RULES)
 
-    def test_list_rules_cli(self):
+    def test_list_rules_cli_prints_every_rule(self):
+        # Derived from the catalog on purpose: a hand-maintained count here was
+        # one more place to forget, and test_docs_consistency already pins the
+        # catalog against the documentation.
         proc = run_script("pine_lint.py", "--list-rules")
         self.assertEqual(proc.returncode, 0)
         lines = [l for l in proc.stdout.splitlines() if l.strip()]
-        self.assertEqual(len(lines), 48)
+        self.assertEqual(len(lines), len(pine_lint.RULES))
+
+    def test_fixable_rules_all_exist(self):
+        unknown = sorted(pine_lint.FIXABLE - set(pine_lint.RULES))
+        self.assertEqual([], unknown)
 
 
 class TestCoreRules(unittest.TestCase):
@@ -650,6 +656,206 @@ class TestCli(unittest.TestCase):
         proc = run_script("pine_lint.py", "does_not_exist.pine")
         self.assertEqual(proc.returncode, 1)
         self.assertIn("not found", proc.stderr)
+
+
+class TestSymbolTableRules(unittest.TestCase):
+    """PINE050/PINE051 — the two rules backed by the symbol table."""
+
+    def test_pine050_flags_assignment_to_undeclared_name(self):
+        text = VALID_INDICATOR + (
+            "atrLen = 14\n"
+            "if timeframe.isdaily\n"
+            "    atrLenght := 21\n"
+            "plot(atrLen, title=\"L\")\n")
+        self.assertIn("PINE050", codes(lint_text(text)))
+
+    def test_pine050_accepts_a_correctly_declared_name(self):
+        text = VALID_INDICATOR + (
+            "var atrLen = 14\n"
+            "if timeframe.isdaily\n"
+            "    atrLen := 21\n"
+            "plot(atrLen, title=\"L\")\n")
+        self.assertNotIn("PINE050", codes(lint_text(text)))
+
+    def test_pine050_accepts_a_function_parameter(self):
+        text = VALID_INDICATOR + (
+            "bump(int n) =>\n"
+            "    n := n + 1\n"
+            "    n\n"
+            "plot(bump(1), title=\"B\")\n")
+        self.assertNotIn("PINE050", codes(lint_text(text)))
+
+    def test_pine050_accepts_a_loop_variable(self):
+        text = VALID_INDICATOR + (
+            "var float acc = 0.0\n"
+            "for i = 0 to 3\n"
+            "    i := i\n"
+            "    acc := acc + 1\n"
+            "plot(acc, title=\"A\")\n")
+        self.assertNotIn("PINE050", codes(lint_text(text)))
+
+    def test_pine050_ignores_member_assignment(self):
+        text = VALID_INDICATOR + (
+            "type Holder\n"
+            "    float value\n"
+            "var Holder h = Holder.new(0.0)\n"
+            "h.value := close\n"
+            "plot(h.value, title=\"V\")\n")
+        self.assertNotIn("PINE050", codes(lint_text(text)))
+
+    def test_pine051_flags_a_write_only_variable(self):
+        text = VALID_INDICATOR + "unusedThing = ta.atr(14)\n"
+        self.assertIn("PINE051", codes(lint_text(text)))
+
+    def test_pine051_exempts_underscore_names(self):
+        text = VALID_INDICATOR + "_discarded = ta.atr(14)\n"
+        self.assertNotIn("PINE051", codes(lint_text(text)))
+
+    def test_pine051_does_not_flag_a_used_variable(self):
+        text = VALID_INDICATOR + "atr14 = ta.atr(14)\nplot(atr14, title=\"ATR\")\n"
+        self.assertNotIn("PINE051", codes(lint_text(text)))
+
+    def test_pine051_counts_a_read_inside_a_call(self):
+        text = VALID_INDICATOR + (
+            "lenIn = 14\n"
+            "plot(ta.sma(close, lenIn), title=\"SMA\")\n")
+        self.assertNotIn("PINE051", codes(lint_text(text)))
+
+    def test_pine051_is_only_a_note(self):
+        text = VALID_INDICATOR + "unusedThing = ta.atr(14)\n"
+        result = lint_text(text)
+        self.assertTrue(result.ok(strict=True), msg=[f.msg for f in result.findings])
+
+
+class TestDrawingBudgetRule(unittest.TestCase):
+    """PINE052 — the failure mode here is silence, which is why it is a rule."""
+
+    LOOP_BODY = (
+        "var array<box> pool = array.new<box>()\n"
+        "for i = 0 to 99\n"
+        "    array.push(pool, box.new(bar_index, close, bar_index, close))\n"
+        "plot(close, title=\"C\")\n")
+
+    def test_flags_box_new_in_a_loop_without_max_boxes_count(self):
+        text = ('// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/\n'
+                '//@version=6\n'
+                'indicator("Pool", "P", overlay=true)\n' + self.LOOP_BODY)
+        self.assertIn("PINE052", codes(lint_text(text)))
+
+    def test_accepts_a_declared_max_boxes_count(self):
+        text = ('// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/\n'
+                '//@version=6\n'
+                'indicator("Pool", "P", overlay=true, max_boxes_count=500)\n' + self.LOOP_BODY)
+        self.assertNotIn("PINE052", codes(lint_text(text)))
+
+    def test_does_not_flag_a_drawing_outside_a_loop(self):
+        text = VALID_INDICATOR + 'box.new(bar_index, close, bar_index, close)\n'
+        self.assertNotIn("PINE052", codes(lint_text(text)))
+
+
+class TestLoopCostRule(unittest.TestCase):
+    """PINE053 — worst case, resolved from input maxvals, never guessed."""
+
+    def test_flags_a_nest_that_multiplies_past_the_budget(self):
+        text = VALID_INDICATOR + (
+            "lookback = input.int(300, \"Bars\", maxval=5000)\n"
+            "rows = input.int(30, \"Rows\", maxval=500)\n"
+            "var array<float> buf = array.new<float>(500, 0.0)\n"
+            "for i = 0 to lookback\n"
+            "    for r = 0 to rows\n"
+            "        array.set(buf, r, array.get(buf, r) + volume[i])\n")
+        self.assertIn("PINE053", codes(lint_text(text)))
+
+    def test_accepts_a_single_loop_within_budget(self):
+        text = VALID_INDICATOR + (
+            "lookback = input.int(300, \"Bars\", maxval=5000)\n"
+            "var float acc = 0.0\n"
+            "for i = 0 to lookback\n"
+            "    acc := acc + volume[i]\n"
+            "plot(acc, title=\"A\")\n")
+        self.assertNotIn("PINE053", codes(lint_text(text)))
+
+    def test_stays_silent_when_a_bound_cannot_be_resolved(self):
+        # The inner bound is computed at runtime. Guessing a number here would
+        # be a lie, so the rule must say nothing at all.
+        text = VALID_INDICATOR + (
+            "lookback = input.int(300, \"Bars\", maxval=5000)\n"
+            "var array<float> buf = array.new<float>(500, 0.0)\n"
+            "for i = 0 to lookback\n"
+            "    for r = startIdx to endIdx\n"
+            "        array.set(buf, r, 1.0)\n")
+        self.assertNotIn("PINE053", codes(lint_text(text)))
+
+    def test_sibling_loops_are_additive_not_multiplicative(self):
+        text = VALID_INDICATOR + (
+            "outer = input.int(300, \"Outer\", maxval=400)\n"
+            "a = input.int(30, \"A\", maxval=200)\n"
+            "b = input.int(30, \"B\", maxval=200)\n"
+            "var float acc = 0.0\n"
+            "for i = 0 to outer\n"
+            "    for x = 0 to a\n"
+            "        acc := acc + 1\n"
+            "    for y = 0 to b\n"
+            "        acc := acc + 1\n"
+            "plot(acc, title=\"A\")\n")
+        # 400 x 201 = 80,400 — under budget. Multiplying the siblings together
+        # would give 16 million and a warning nobody should act on.
+        self.assertNotIn("PINE053", codes(lint_text(text)))
+
+
+class TestAutoFix(unittest.TestCase):
+    BROKEN = (
+        'study("X", overlay=true)\n'
+        'plot(security(syminfo.tickerid, "D", close), title="D", linewidth=0)\n'
+        'label.new(bar_index, close, "note // not a comment", size=size.large)\n')
+
+    def test_fix_rewrites_every_mechanical_defect(self):
+        with tempfile.TemporaryDirectory() as td:
+            pine = Path(td) / "legacy.pine"
+            pine.write_text(self.BROKEN, encoding="utf-8")
+            proc = run_script("pine_lint.py", pine, "--fix")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            after = pine.read_text(encoding="utf-8")
+            self.assertIn("indicator(", after)
+            self.assertIn("request.security(", after)
+            self.assertIn("linewidth=1", after)
+            self.assertIn("size.normal", after)
+            self.assertNotIn("study(", after)
+
+    def test_fix_leaves_string_contents_alone(self):
+        with tempfile.TemporaryDirectory() as td:
+            pine = Path(td) / "legacy.pine"
+            pine.write_text(self.BROKEN, encoding="utf-8")
+            run_script("pine_lint.py", pine, "--fix")
+            # The "// not a comment" text lives inside a string literal; treating
+            # it as a comment would silently truncate the line.
+            self.assertIn('"note // not a comment"', pine.read_text(encoding="utf-8"))
+
+    def test_dry_run_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            pine = Path(td) / "legacy.pine"
+            pine.write_text(self.BROKEN, encoding="utf-8")
+            proc = run_script("pine_lint.py", pine, "--fix", "--dry-run")
+            self.assertEqual(proc.returncode, 0)
+            self.assertEqual(self.BROKEN, pine.read_text(encoding="utf-8"))
+            self.assertIn("Re-run without --dry-run", proc.stdout)
+
+    def test_fix_converts_leading_tabs(self):
+        with tempfile.TemporaryDirectory() as td:
+            pine = Path(td) / "tabs.pine"
+            pine.write_text('//@version=6\nindicator("T", overlay=true)\n'
+                            'if close > open\n\tx = 1\nplot(close, title="C")\n',
+                            encoding="utf-8")
+            run_script("pine_lint.py", pine, "--fix")
+            self.assertNotIn("\t", pine.read_text(encoding="utf-8"))
+
+    def test_fix_reports_when_there_is_nothing_to_do(self):
+        with tempfile.TemporaryDirectory() as td:
+            pine = Path(td) / "clean.pine"
+            pine.write_text(VALID_INDICATOR, encoding="utf-8")
+            proc = run_script("pine_lint.py", pine, "--fix")
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn("nothing to fix", proc.stdout)
 
 
 if __name__ == "__main__":

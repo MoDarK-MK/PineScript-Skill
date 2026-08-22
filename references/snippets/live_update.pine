@@ -10,7 +10,9 @@
 // See references/performance-guide.md for the reasoning and the budget numbers.
 //
 // This is a fragment, not a standalone script:
-// pine-lint-disable PINE001,PINE002,PINE027
+// PINE051 too: every constant here is declared FOR the reader to copy,
+// so nothing in this file reads them.
+// pine-lint-disable PINE001,PINE002,PINE027,PINE051
 
 // ————— Pattern 1: recompute only when the inputs actually changed
 //

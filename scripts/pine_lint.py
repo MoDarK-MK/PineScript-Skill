@@ -11,6 +11,7 @@ guide) as of mid-2026.
 Usage:
     python3 pine_lint.py path/to/script.pine [--config .pine-lint.json]
                                               [--json] [--strict] [--list-rules]
+                                              [--fix [--dry-run]]
 
 Exit codes:
     0 = no errors (warnings/info may still print; --strict also fails on warnings)
@@ -43,6 +44,7 @@ DEFAULT_CONFIG = {
     "warn_on_security_lookahead": True,
     "max_requests": 40,
     "request_warn_ratio": 0.75,
+    "max_loop_iterations": 100000,
 }
 
 # ---------------------------------------------------------------------------
@@ -98,7 +100,15 @@ RULES = {
     "PINE047": ("error", "plot()/plotshape()/bgcolor()/fill() called outside global scope"),
     "PINE048": ("warning", "Approaching/over the 40 unique request.*() call limit"),
     "PINE049": ("error", "strategy.*() order call inside a function (not allowed in Pine)"),
+    "PINE050": ("error", "Reassignment with := to a name that is never declared"),
+    "PINE051": ("info", "Variable declared but never read (dead, or write-only)"),
+    "PINE052": ("warning", "Drawing created inside a loop without the matching max_*_count"),
+    "PINE053": ("warning", "Loop nest's worst-case iteration count is over budget"),
 }
+
+# Rules --fix can repair mechanically. Every one of these has exactly one
+# correct rewrite; anything needing intent stays out.
+FIXABLE = {"PINE004", "PINE012", "PINE019", "PINE026", "PINE041"}
 
 STRATEGY_ORDER_FUNCS = [
     "strategy.entry(", "strategy.order(", "strategy.exit(", "strategy.close(",
@@ -1401,6 +1411,396 @@ def check_plot_and_drawing_limits(text, lines, result, cfg):
 
 
 # ---------------------------------------------------------------------------
+# Symbol table — the closest this linter gets to actually parsing Pine.
+#
+# It is deliberately permissive about what counts as a DECLARATION and strict
+# about what counts as a READ. That asymmetry is the safety margin: over-
+# collecting declarations only costs detection power, while under-collecting
+# them would invent false "undeclared" findings on correct code.
+# ---------------------------------------------------------------------------
+IDENT_ASSIGN_RE = re.compile(r'([A-Za-z_]\w*)\s*(:=|=)(?!=)')
+TUPLE_DECL_RE = re.compile(r'^\s*\[([^\]]+)\]\s*=(?!=)')
+FOR_IN_RE = re.compile(r'^\s*for\s+(?:\[([^\]]+)\]|([A-Za-z_]\w*))\s+in\b')
+TYPE_BLOCK_RE = re.compile(r'^\s*type\s+[A-Za-z_]\w*\s*$')
+# FUNC_DECL_RE has no capture group; this one names the function.
+FUNC_NAME_RE = re.compile(r'^([a-zA-Z_]\w*)\s*\([^)]*\)\s*=>')
+
+
+def _lines_with_depths(lines):
+    """Yields (index, stripped_text, [paren_depth_before_each_char]).
+
+    Depth carries across physical lines, so an argument sitting on its own line
+    inside a wrapped call is still seen as depth > 0 — which is what keeps a
+    named argument (`title=`) from being mistaken for a declaration."""
+    depth = 0
+    for i, raw in enumerate(lines):
+        text = strip_strings_and_comments(raw)
+        depths = []
+        for ch in text:
+            depths.append(depth)
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth = max(0, depth - 1)
+        yield i, text, depths
+
+
+def collect_symbols(lines):
+    """Returns (symbols, writes).
+
+    symbols maps a declared name to {"line", "reads", "kind"}; writes is every
+    (line_no, name) reassigned with := or +=. Only assignments at paren depth 0
+    are declarations. Function parameters and loop variables are collected too,
+    because a := to one of those is legal and must not be called undeclared."""
+    symbols = {}
+    writes = []
+    assign_positions = set()
+    in_type_block = False
+
+    def declare(name, idx, kind):
+        if name and re.fullmatch(r'[A-Za-z_]\w*', name) and name not in symbols:
+            symbols[name] = {"line": idx + 1, "reads": 0, "kind": kind}
+
+    for i, text, depths in _lines_with_depths(lines):
+        if not text.strip():
+            continue
+        # A `type` block's fields are members, not variables — they are only
+        # ever touched as obj.field, so collecting them would be noise.
+        if TYPE_BLOCK_RE.match(text):
+            in_type_block = True
+            continue
+        if in_type_block:
+            if indent_width(lines[i]) > 0:
+                continue
+            in_type_block = False
+
+        m_tuple = TUPLE_DECL_RE.match(text)
+        if m_tuple:
+            for part in m_tuple.group(1).split(","):
+                declare(part.strip().split()[-1] if part.strip() else "", i, "var")
+            continue
+
+        m_for = FOR_IN_RE.match(text)
+        if m_for:
+            group = m_for.group(1) or m_for.group(2) or ""
+            for part in group.split(","):
+                declare(part.strip(), i, "loop")
+            continue
+
+        m_func = FUNC_NAME_RE.match(text.strip())
+        if m_func and indent_width(lines[i]) == 0:
+            declare(m_func.group(1), i, "func")
+            params = call_arg_text(text, m_func.group(1) + "(")
+            for part in split_top_level_args(params or ""):
+                bare = part.split("=")[0].strip().split()
+                if bare:
+                    declare(bare[-1], i, "param")
+            continue
+
+        is_for = text.lstrip().startswith("for ")
+        for m in IDENT_ASSIGN_RE.finditer(text):
+            if depths[m.start()] != 0:
+                continue
+            if m.start() > 0 and text[m.start() - 1] == '.':
+                continue
+            name, op = m.group(1), m.group(2)
+            assign_positions.add((i, m.start()))
+            if op == "=":
+                declare(name, i, "loop" if is_for else "var")
+            else:
+                writes.append((i + 1, name))
+
+    # Reads. Anything that is not an assignment target and not a member access
+    # counts, which is why a write-only variable still reports zero.
+    for i, text, _depths in _lines_with_depths(lines):
+        for m in re.finditer(r'[A-Za-z_]\w*', text):
+            name = m.group(0)
+            if name not in symbols:
+                continue
+            if (i, m.start()) in assign_positions:
+                continue
+            if m.start() > 0 and text[m.start() - 1] == '.':
+                continue
+            if symbols[name]["line"] == i + 1 and symbols[name]["kind"] in ("var", "loop"):
+                continue          # a declaration is not a read of its own name
+            symbols[name]["reads"] += 1
+    return symbols, writes
+
+
+def check_undeclared_assignment(lines, result):
+    """PINE050 — `x := 1` where x was never declared is "Undeclared identifier"
+    on TradingView. It is the most common typo class in Pine, and one a purely
+    regex-based linter could not see before this file had a symbol table."""
+    symbols, writes = collect_symbols(lines)
+    reported = set()
+    for line_no, name in writes:
+        if name in symbols or name in reported:
+            continue
+        reported.add(name)
+        result.add(line_no, "PINE050",
+                   "'%s' is reassigned with := but never declared anywhere in the file. "
+                   "Pine rejects that as an undeclared identifier — declare it first "
+                   "(`%s = ...`, or `var %s = ...` to persist across bars). If this is a "
+                   "typo, the declared name is the one to use." % (name, name, name))
+
+
+def check_unused_variable(lines, result):
+    """PINE051 — declared and never read. Two different defects share this
+    shape: a leftover from a deleted feature, and a variable that is only ever
+    written to. This repo has shipped both."""
+    symbols, _writes = collect_symbols(lines)
+    for name, info in sorted(symbols.items(), key=lambda kv: kv[1]["line"]):
+        if info["kind"] != "var" or info["reads"] > 0 or name.startswith("_"):
+            continue
+        result.add(info["line"], "PINE051",
+                   "'%s' is declared here and never read afterwards. Either it is left "
+                   "over from code that was removed, or the value is write-only — in "
+                   "which case the call producing it can stand on its own line without "
+                   "the assignment." % name)
+
+
+def _loop_bodies(lines):
+    """Yields (index, indent, header_text, [(index, text)]) for each for/while
+    header and the block indented under it."""
+    stripped = [strip_strings_and_comments(l) for l in lines]
+    out = []
+    for i, text in enumerate(stripped):
+        head = text.strip()
+        if not (head.startswith("for ") or head.startswith("while ")):
+            continue
+        indent = indent_width(lines[i])
+        body = []
+        j = i + 1
+        while j < len(lines):
+            if not stripped[j].strip():
+                j += 1
+                continue
+            if indent_width(lines[j]) <= indent:
+                break
+            body.append((j, stripped[j]))
+            j += 1
+        out.append((i, indent, text, body))
+    return out
+
+
+def check_drawing_in_loop_budget(lines, statements, result):
+    """PINE052 — PINE025 counts call SITES, which is the wrong unit once the
+    drawings are created in a loop: one box.new() inside a pool loop can
+    allocate hundreds. Without max_boxes_count the declaration defaults to 50,
+    and TradingView drops the older ones with no error at all."""
+    decl = find_declaration_statement(statements)
+    decl_text = decl["stripped"] if decl else ""
+    seen = set()
+    for _i, _indent, _head, body in _loop_bodies(lines):
+        for idx, text in body:
+            for func, (param, label) in DRAWING_FUNCS.items():
+                if func not in text or param in decl_text or func in seen:
+                    continue
+                seen.add(func)
+                result.add(idx + 1, "PINE052",
+                           "%s is called inside a loop, so the script can create far more "
+                           "%ss than its call sites suggest, but the declaration does not "
+                           "set %s. The default is 50 and TradingView silently keeps only "
+                           "the newest — no error, just a chart missing its older "
+                           "drawings. Set %s (max 500)."
+                           % (func[:-1], label, param, param))
+
+
+def _resolve_input_maxvals(statements):
+    """Maps a variable name to the maxval of the input.int() assigned to it, so
+    a loop bound written as an input can be costed at its worst case."""
+    bounds = {}
+    for stmt in statements:
+        text = strip_comments_only_multi(stmt["raw_nc"])
+        m = re.search(r'([A-Za-z_]\w*)\s*=\s*input\s*\.\s*int\s*\(', text)
+        if not m:
+            continue
+        args = split_top_level_args(call_arg_text(text, "input.int(") or "")
+        maxval = named_arg(args, "maxval")
+        if maxval and re.fullmatch(r'\d+', maxval.strip()):
+            bounds[m.group(1)] = int(maxval)
+    return bounds
+
+
+def _loop_worst_case(header, bounds):
+    """Worst-case iteration count for ONE loop header, or None when the bound
+    cannot be resolved. Unknown stays silent — a guess here would be a lie."""
+    m = re.search(r'\bfor\s+[A-Za-z_]\w*\s*=\s*(\S+)\s+to\s+([A-Za-z_]\w*|\d+)', header)
+    if not m:
+        return None
+    start_txt, end_txt = m.group(1), m.group(2)
+    if not re.fullmatch(r'\d+', start_txt):
+        return None
+    if re.fullmatch(r'\d+', end_txt):
+        end = int(end_txt)
+    elif end_txt in bounds:
+        end = bounds[end_txt]
+    else:
+        return None
+    return max(0, end - int(start_txt) + 1)
+
+
+def _nest_cost(loop, loops, bounds):
+    """Worst case for a loop INCLUDING its nested loops. Sibling loops are
+    additive, not multiplicative, so only the heaviest child multiplies —
+    overstating that would produce warnings nobody should act on."""
+    i, indent, header, body = loop
+    own = _loop_worst_case(header, bounds)
+    if own is None:
+        return None, []
+    body_idx = {idx for idx, _txt in body}
+    children = [l for l in loops if l[0] in body_idx]
+    direct = [c for c in children
+              if not any(c[0] in {idx for idx, _t in o[3]} for o in children if o is not c)]
+    best, best_chain = 1, []
+    for child in direct:
+        cost, chain = _nest_cost(child, loops, bounds)
+        if cost is None:
+            return None, []
+        if cost > best:
+            best, best_chain = cost, chain
+    return own * best, [own] + best_chain
+
+
+def check_loop_cost(lines, statements, result, cfg):
+    """PINE053 — Pine aborts a loop running longer than 500ms and a script
+    running longer than 20s. Both limits are reached by multiplication: an outer
+    bound and an inner bound that are each perfectly reasonable alone."""
+    budget = cfg.get("max_loop_iterations", 100000)
+    bounds = _resolve_input_maxvals(statements)
+    loops = _loop_bodies(lines)
+    nested = set()
+    for _i, _ind, _h, body in loops:
+        nested |= {idx for idx, _t in body}
+    for loop in loops:
+        if loop[0] in nested:
+            continue          # only report the outermost loop of a nest
+        worst, chain = _nest_cost(loop, loops, bounds)
+        if worst is None or worst <= budget:
+            continue
+        result.add(loop[0] + 1, "PINE053",
+                   "This loop nest can run %s = %s iterations in the worst case, over "
+                   "the %s budget. Pine aborts a loop that exceeds 500ms and a script "
+                   "that exceeds 20s, and the worst case is what a user reaches by "
+                   "turning an input up — not a hypothetical. Lower a maxval, or hoist "
+                   "work out of the inner loop."
+                   % (" x ".join(str(c) for c in chain), format(worst, ","), format(budget, ",")))
+
+
+# ---------------------------------------------------------------------------
+# --fix — mechanical repairs
+#
+# A rule qualifies only when there is exactly ONE correct rewrite. Anything
+# needing intent (which title? which overlay setting? how to split a long line?)
+# stays a finding, because a linter that guesses is worse than one that nags.
+# ---------------------------------------------------------------------------
+def _replace_outside_strings(line, pattern, repl):
+    """Applies a regex to the code part of a line only, leaving string literals
+    and the trailing comment untouched. Returns (new_line, n_changes)."""
+    out = []
+    changes = 0
+    in_str = None
+    i = 0
+    buf = []
+
+    def flush():
+        nonlocal changes
+        if not buf:
+            return ""
+        text = "".join(buf)
+        new, n = pattern.subn(repl, text)
+        changes += n
+        buf.clear()
+        return new
+
+    while i < len(line):
+        ch = line[i]
+        if in_str:
+            out.append(ch)
+            if ch == '\\' and i + 1 < len(line):
+                out.append(line[i + 1])
+                i += 2
+                continue
+            if ch == in_str:
+                in_str = None
+            i += 1
+            continue
+        if ch in ('"', "'"):
+            out.append(flush())
+            in_str = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '/' and i + 1 < len(line) and line[i + 1] == '/':
+            out.append(flush())
+            out.append(line[i:])
+            return "".join(out), changes
+        buf.append(ch)
+        i += 1
+    out.append(flush())
+    return "".join(out), changes
+
+
+STUDY_RE = re.compile(r'(?<![.\w])study\s*\(')
+BARE_SECURITY_RE = re.compile(r'(?<![.\w])security\s*\(')
+LINEWIDTH_ZERO_RE = re.compile(r'\blinewidth\s*=\s*(?:0|-\d+)\b')
+OVERSIZED_RE = re.compile(r'\bsize\.(large|huge)\b')
+
+
+def apply_fixes(lines):
+    """Returns (new_lines, [(line_no, code, description)]).
+
+    Line-based on purpose: every fix here is a substitution inside one line, so
+    line numbers never shift and a fixed file can be re-linted meaningfully."""
+    fixed = []
+    log = []
+    for i, raw in enumerate(lines):
+        line = raw
+        line, n = _replace_outside_strings(line, STUDY_RE, "indicator(")
+        if n:
+            log.append((i + 1, "PINE004", "study() -> indicator()"))
+        line, n = _replace_outside_strings(line, BARE_SECURITY_RE, "request.security(")
+        if n:
+            log.append((i + 1, "PINE004", "security() -> request.security()"))
+        line, n = _replace_outside_strings(line, LINEWIDTH_ZERO_RE, "linewidth=1")
+        if n:
+            log.append((i + 1, "PINE012", "linewidth below the v6 minimum -> linewidth=1"))
+        line, n = _replace_outside_strings(line, OVERSIZED_RE, "size.normal")
+        if n:
+            log.append((i + 1, "PINE041", "size.large/size.huge -> size.normal"))
+        # Leading tabs last, so the column maths above is done on the original.
+        stripped_lead = len(line) - len(line.lstrip("\t"))
+        if stripped_lead:
+            line = "    " * stripped_lead + line[stripped_lead:]
+            log.append((i + 1, "PINE019", "leading tab indentation -> 4 spaces"))
+        fixed.append(line)
+    return fixed, log
+
+
+def run_fix(path, dry_run):
+    """Applies every mechanical fix to `path`. Prints what changed and returns
+    an exit code. With dry_run nothing is written."""
+    original = Path(path).read_text(encoding="utf-8")
+    lines = original.splitlines()
+    fixed, log = apply_fixes(lines)
+    if not log:
+        print(f"{path}: nothing to fix ({len(FIXABLE)} rules are mechanically fixable: "
+              f"{', '.join(sorted(FIXABLE))}).")
+        return 0
+    for line_no, code, what in log:
+        print(f"{path}:{line_no}: [{code}] {what}")
+    print()
+    if dry_run:
+        print(f"{len(log)} fix(es) available. Re-run without --dry-run to apply them.")
+        return 0
+    ending = "\r\n" if "\r\n" in original else "\n"
+    trailing = ending if original.endswith(("\n", "\r")) else ""
+    Path(path).write_text(ending.join(fixed) + trailing, encoding="utf-8")
+    print(f"Applied {len(log)} fix(es) to {path}.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 def load_config(config_path):
@@ -1469,6 +1869,10 @@ def lint_file(path, cfg):
     check_block_headers_have_bodies(lines, statements, result)
     check_int_division_literals(lines, result)
     check_plot_and_drawing_limits(text, lines, result, cfg)
+    check_undeclared_assignment(lines, result)
+    check_unused_variable(lines, result)
+    check_drawing_in_loop_budget(lines, statements, result)
+    check_loop_cost(lines, statements, result, cfg)
 
     file_wide, next_line, same_line = parse_suppressions(lines)
     filtered = []
@@ -1524,7 +1928,8 @@ def explain_rule(code):
               file=sys.stderr)
         return 1
     sev, summary = RULES[code]
-    print(f"{code}  [{sev}]  {summary}\n")
+    fixable = "  (--fix can repair this automatically)" if code in FIXABLE else ""
+    print(f"{code}  [{sev}]  {summary}{fixable}\n")
     if not RULES_DOC.exists():
         print(f"(no catalog found at {RULES_DOC})")
         return 0
@@ -1597,12 +2002,17 @@ def main():
                         help="Suppress the rule codes recorded in FILE")
     parser.add_argument("--write-baseline", metavar="FILE",
                         help="Record the current findings to FILE and exit 0")
+    parser.add_argument("--fix", action="store_true",
+                        help="Apply the mechanical fixes (" + ", ".join(sorted(FIXABLE)) + ")")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="With --fix: show what would change without writing")
     args = parser.parse_args()
 
     if args.list_rules:
         for code in sorted(RULES):
             sev, summary = RULES[code]
-            print(f"{code}\t{sev:8s}\t{summary}")
+            mark = "  [--fix]" if code in FIXABLE else ""
+            print(f"{code}\t{sev:8s}\t{summary}{mark}")
         sys.exit(0)
 
     if args.explain:
@@ -1615,6 +2025,9 @@ def main():
     if not Path(args.file).exists():
         print(f"error: file not found: {args.file}", file=sys.stderr)
         sys.exit(1)
+
+    if args.fix:
+        sys.exit(run_fix(args.file, args.dry_run))
 
     cfg = load_config(args.config or str(Path(args.file).parent / ".pine-lint.json"))
     result = lint_file(args.file, cfg)

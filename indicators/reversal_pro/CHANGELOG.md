@@ -3,6 +3,10 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [1.1.4] - 2026-08-22
+### Added
+- Test-block assertion 8: a bearish order block registered this bar must sit at or below the break bar's high — the mirror of assertion 7, which had only ever checked the bull side. Found by the new PINE051 rule, which noticed `lastBearObBottom` was written on every bear block and never read by anything.
+
 ## [1.1.3] - 2026-08-22
 ### Changed
 - The scoring engine shared with `strategies/reversal_pro_strategy` is now delimited by SHARED SCORING ENGINE markers and held byte-identical by `tests/test_shared_engine.py`, so the two copies can no longer drift apart silently.

@@ -823,7 +823,7 @@ alertcondition(newBullOb and alertOk, "New Bullish Order Block", "New bullish or
 alertcondition(newBearOb and alertOk, "New Bearish Order Block", "New bearish order block formed.")
 
 // ————— Debug / Test block (keep testModeInput false when handing off)
-int TEST_COUNT = 7
+int TEST_COUNT = 8
 var int passCount = 0
 var int failCount = 0
 
@@ -868,6 +868,11 @@ if testModeInput
     fails += assertFailed(
          not newBullOb or na(lastBullObTop) or lastBullObTop >= low,
          "bullish order block sits below the break bar")
+    // 8. The same invariant on the bear side. Its absence is how
+    //    lastBearObBottom became a write-only variable.
+    fails += assertFailed(
+         not newBearOb or na(lastBearObBottom) or lastBearObBottom <= high,
+         "bearish order block sits above the break bar")
     failCount += fails
     passCount += TEST_COUNT - fails
 

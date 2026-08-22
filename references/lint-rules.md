@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 48 rules spanning codes PINE001–PINE049. The code
+Note on numbering: there are 52 rules spanning codes PINE001–PINE053. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -29,6 +29,15 @@ is in `references/design-system.md` and `references/performance-guide.md`.
 
 PINE042–PINE049 cover Pine's scope rules and platform limits — the ones that end
 a paste with a compiler error rather than a bad-looking chart.
+
+PINE050–PINE053 are the rules that needed more than pattern matching: the first
+two are backed by a symbol table (what is declared, what is actually read), and
+the last two cost a loop's worst case rather than counting its call sites.
+
+Rules marked `[--fix]` by `--list-rules` can be repaired automatically with
+`pine_lint.py FILE --fix` (add `--dry-run` to preview). A rule qualifies only
+when there is exactly one correct rewrite — anything needing intent stays a
+finding, because a linter that guesses is worse than one that nags.
 
 ## When TradingView gives you an error code
 
@@ -46,6 +55,9 @@ added *after* the error was hit in real use.
 | "Cannot use 'plot' in local scope" | **PINE047** | plot family called inside a function/if/loop |
 | "The 'request' calls limit was exceeded" | **PINE048** | More than 40 unique `request.*()` calls |
 | "Cannot use 'strategy.entry' in local scope" | **PINE049** | An order call inside a function |
+| `Undeclared identifier 'x'` | **PINE050** | `:=` to a name that was never declared |
+| *(no error — the drawings just vanish)* | **PINE052** | Drawings made in a loop with no `max_*_count` |
+| "Loop takes too long to execute" / script timeout | **PINE053** | A loop nest whose worst case is unbounded |
 | `Pine cannot determine the referencing length…` | *(none yet)* | A dynamic history index without `max_bars_back` |
 
 If you hit a code that is not in this table, that is a genuine gap — the fix is
@@ -579,3 +591,86 @@ shouldEnter(bool go) => go and barstate.isconfirmed
 if shouldEnter(signal)
     strategy.entry("Long", strategy.long)
 ```
+
+---
+
+## Symbol-table and cost rules (PINE050–PINE053)
+
+### PINE050 — error — Reassignment with `:=` to a name that is never declared
+Pine answers this with `Undeclared identifier`. It is almost always a typo in
+the target name, which is exactly the case a text-matching linter cannot see:
+the misspelled name looks like perfectly ordinary code on its own line.
+```pinescript
+// bad — declared as `atrLen`, assigned as `atrLenght`
+atrLen = 14
+if timeframe.isdaily
+    atrLenght := 21
+```
+```pinescript
+// good
+var atrLen = 14
+if timeframe.isdaily
+    atrLen := 21
+```
+Names declared anywhere in the file count, including function parameters and
+loop variables, so the rule fires only when nothing plausible was declared at
+all.
+
+### PINE051 — info — Variable declared but never read
+Two different defects share this shape. One is a leftover from a feature that
+was deleted around it. The other is a **write-only** variable: something is
+computed and stored on every bar and nothing ever looks at it, which costs
+runtime and misleads the next reader into thinking it matters.
+```pinescript
+// bad — the value is produced and immediately abandoned
+dropped = array.shift(swings)
+```
+```pinescript
+// good — the call still runs, without pretending the result is used
+array.shift(swings)
+```
+Names starting with `_` are exempt, that being the conventional way to say "I
+know, I am discarding this". Reference snippets that exist to be copied out of
+can suppress the rule file-wide.
+
+### PINE052 — warning — Drawing created inside a loop without the matching `max_*_count`
+PINE025 counts call *sites*, which is the wrong unit as soon as the drawings are
+created in a loop: one `box.new()` inside a pool loop can allocate hundreds.
+Without `max_boxes_count` the declaration defaults to **50**, and TradingView
+keeps only the newest 50 with no error at all — the chart is simply missing its
+older drawings.
+```pinescript
+// bad — pool of up to 300 boxes, declared limit is the default 50
+indicator("VP", overlay = true)
+for i = 0 to rowsInput - 1
+    array.push(pool, box.new(bar_index, close, bar_index, close))
+```
+```pinescript
+// good
+indicator("VP", overlay = true, max_boxes_count = 500)
+```
+
+### PINE053 — warning — Loop nest's worst-case iteration count is over budget
+Pine aborts a loop that runs longer than 500 ms and a script that runs longer
+than 20 s. Both limits are reached by multiplication: an outer bound and an
+inner bound that are each perfectly reasonable alone. The worst case is what a
+user reaches by turning an input up to its `maxval`, so that is what gets
+costed — a bound the linter cannot resolve is reported as nothing at all rather
+than guessed at.
+```pinescript
+// bad — 5000 x 500 = 2,500,000 iterations at the inputs' maximums
+lookback = input.int(300, "Bars", maxval = 5000)
+rows     = input.int(30,  "Rows", maxval = 500)
+for i = 0 to lookback
+    for r = 0 to rows
+        array.set(buf, r, array.get(buf, r) + volume[i])
+```
+```pinescript
+// good — the inner loop only touches the rows the bar actually spans
+for i = 0 to lookback
+    for r = startIdx to endIdx
+        array.set(buf, r, array.get(buf, r) + perRow
+```
+Sibling loops are additive, not multiplicative, so only the heaviest nested
+chain multiplies the outer bound.
+
