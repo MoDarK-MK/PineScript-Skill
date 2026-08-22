@@ -52,10 +52,45 @@ class TestCli(unittest.TestCase):
             self.assertEqual(data["version"], "0.2.0")
             changelog = (project / "CHANGELOG.md").read_text(encoding="utf-8")
             self.assertIn("## [0.2.0]", changelog)
-            self.assertIn("- New feature", changelog)
+            # The author's own Unreleased entry is what ships. --note is only a
+            # fallback for an empty section — see the dedicated tests below.
             self.assertIn("- Added a new smoothing input", changelog)
             # Fresh empty Unreleased section re-inserted at the top
             self.assertLess(changelog.index("## [Unreleased]"), changelog.index("## [0.2.0]"))
+
+    def test_note_is_not_appended_to_an_already_written_section(self):
+        """Regression: --note used to be appended under the author's own entries,
+        producing a duplicate one-line summary in every release."""
+        with tempfile.TemporaryDirectory() as td:
+            project = make_project(td)
+            proc = run_script("bump_version.py", project, "--bump", "minor",
+                              "--note", "Redundant summary line")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            changelog = (project / "CHANGELOG.md").read_text(encoding="utf-8")
+            self.assertIn("- Added a new smoothing input", changelog)
+            self.assertNotIn("Redundant summary line", changelog)
+            self.assertIn("--note was ignored", proc.stdout)
+
+    def test_note_is_used_when_the_section_is_empty(self):
+        with tempfile.TemporaryDirectory() as td:
+            project = make_project(td)
+            (project / "CHANGELOG.md").write_text(
+                "# Changelog\n\n## [Unreleased]\n- (nothing yet)\n\n"
+                "## [0.1.0] - 2026-01-01\n- Initial scaffold\n", encoding="utf-8")
+            proc = run_script("bump_version.py", project, "--bump", "patch",
+                              "--note", "The only note")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            changelog = (project / "CHANGELOG.md").read_text(encoding="utf-8")
+            self.assertIn("- The only note", changelog)
+            self.assertNotIn("--note was ignored", proc.stdout)
+
+    def test_json_reports_whether_the_note_was_used(self):
+        with tempfile.TemporaryDirectory() as td:
+            project = make_project(td)
+            proc = run_script("bump_version.py", project, "--bump", "patch",
+                              "--note", "Ignored", "--json")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertFalse(json.loads(proc.stdout)["note_used"])
 
     def test_dry_run_changes_nothing(self):
         with tempfile.TemporaryDirectory() as td:

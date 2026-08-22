@@ -39,15 +39,20 @@ def bump(version_str, part):
     return f"{major}.{minor}.{patch}"
 
 
+EMPTY_UNRELEASED = "- (nothing yet)"
+
+
 def update_changelog(changelog_path, new_version, note):
+    """Stamps the Unreleased section as a dated release. Returns True when
+    `note` was actually used, False when an already-written Unreleased section
+    made it redundant."""
     today = datetime.date.today().isoformat()
     text = changelog_path.read_text(encoding="utf-8")
 
     if "## [Unreleased]" not in text:
         # No unreleased section — just prepend a new one under the H1 title.
-        text = re.sub(r"(^# .*\n)", rf"\1\n## [Unreleased]\n- (nothing yet)\n\n", text, count=1)
+        text = re.sub(r"(^# .*\n)", rf"\1\n## [Unreleased]\n{EMPTY_UNRELEASED}\n\n", text, count=1)
 
-    note_line = f"- {note}" if note else "- (no notes provided)"
     new_section_header = f"## [{new_version}] - {today}"
 
     # Replace the Unreleased section: move its bullet(s) under the new version
@@ -58,14 +63,21 @@ def update_changelog(changelog_path, new_version, note):
         raise RuntimeError("Could not locate '## [Unreleased]' section in changelog.")
 
     existing_notes = m.group(1).strip()
-    if existing_notes and existing_notes != "- (nothing yet)":
-        released_body = existing_notes + "\n" + note_line
-    else:
-        released_body = note_line
+    has_real_notes = bool(existing_notes) and existing_notes != EMPTY_UNRELEASED
 
-    replacement = f"## [Unreleased]\n- (nothing yet)\n\n{new_section_header}\n{released_body}\n"
+    # When the Unreleased section is already written, --note is redundant:
+    # appending it produces a duplicate one-line summary under the detailed
+    # entries the author just wrote. Prefer what the author wrote.
+    note_used = not has_real_notes
+    if has_real_notes:
+        released_body = existing_notes
+    else:
+        released_body = f"- {note}" if note else f"- {EMPTY_UNRELEASED[2:]}"
+
+    replacement = f"## [Unreleased]\n{EMPTY_UNRELEASED}\n\n{new_section_header}\n{released_body}\n"
     text = text[:m.start()] + replacement + text[m.end():]
     changelog_path.write_text(text, encoding="utf-8")
+    return note_used
 
 
 def main():
@@ -114,7 +126,8 @@ def main():
     data["version"] = new_version
     version_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
-    update_changelog(changelog_path, new_version, args.note)
+    note_used = update_changelog(changelog_path, new_version, args.note)
+    result["note_used"] = note_used
 
     if args.json:
         result["updated_files"] = [str(version_path), str(changelog_path)]
@@ -122,6 +135,9 @@ def main():
     else:
         print(f"Bumped {data.get('name', project_dir.name)}: {old_version} -> {new_version}")
         print(f"Updated {changelog_path}")
+        if args.note and not note_used:
+            print("note: --note was ignored — the Unreleased section already had "
+                  "entries, and appending would have duplicated them.")
     return 0
 
 
