@@ -11,6 +11,12 @@
 //
 // This is a fragment, not a standalone script:
 // pine-lint-disable PINE001,PINE002,PINE027
+//
+// pine-lint-disable PINE056
+// (Every helper below is uncalled BY DESIGN — this file exists to be
+// copied from, not run. PINE056 is right about every other file and
+// wrong about this one, which is exactly what a file-wide suppression
+// with a reason is for.)
 
 // @function A title row spanning the whole table. Call table.merge_cells after
 // filling the first cell, not before — merging an empty cell drops the text.

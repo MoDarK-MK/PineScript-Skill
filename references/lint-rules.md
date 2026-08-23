@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 54 rules spanning codes PINE001–PINE055. The code
+Note on numbering: there are 56 rules spanning codes PINE001–PINE057. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -732,3 +732,40 @@ sumIntrabar(int barsBack) =>
 ```
 Parameters, loop variables and anything the function declares itself are not
 forward references and are never flagged.
+
+### PINE056 — info — Function declared but never called
+Pine has no dead-code warning of its own, so an orphaned helper survives every
+refactor that meant to remove it — and goes on being read, maintained and kept
+compiling for nothing.
+```pinescript
+// bad — nothing calls this any more
+formatOldLabel(float v) =>
+    str.tostring(v, "#.##") + " units"
+```
+`export`ed library functions are exempt: being uncalled inside the library is
+the normal case for them. A file of reference snippets can opt out file-wide
+with `// pine-lint-disable PINE056`, which is what this repo's
+`references/snippets/` do.
+
+### PINE057 — warning — Condition is constant
+A condition whose value cannot change. All three shapes below compile, none is
+reported by TradingView, and each silently disables or permanently enables the
+block under it.
+```pinescript
+// bad — a debug switch someone forgot
+if true
+    label.new(bar_index, high, "debug")
+
+// bad — a half-finished edit
+if 2 > 1
+    doSomething()
+
+// bad — almost always a typo for a different variable, and NOT an na check
+if value == value
+    doSomething()
+```
+```pinescript
+// good — and if you meant "is this na", say so
+if na(value)
+    doSomething()
+```

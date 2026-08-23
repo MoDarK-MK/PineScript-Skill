@@ -10,6 +10,7 @@ can silently pass is worse than none.
 Two directories are excluded on purpose:
     release/          generated bundles; gitignored, so they exist only locally
     tests/fixtures/   the compile-error corpus, which is deliberately broken
+    src/parts/        build inputs for build_pine.py, not standalone scripts
 
 Usage:
     python3 scripts/lint_all.py              # errors and warnings fail (exit 1)
@@ -26,7 +27,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import pine_lint  # noqa: E402
 
 SOURCE_ROOTS = ["assets", "references", "indicators", "strategies", "libraries"]
-EXCLUDED_DIRS = {"release", "fixtures"}
+# "parts" holds build INPUTS, not scripts. A part is a fragment — no version
+# pragma, no declaration — so linting one as a whole script produces nothing but
+# noise. The file built FROM them is what gets checked.
+EXCLUDED_DIRS = {"release", "fixtures", "parts"}
 
 
 def source_files():

@@ -27,6 +27,7 @@ import argparse
 import datetime
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -70,6 +71,35 @@ def looks_like_debug_toggle(name):
     return False
 
 
+def check_input_compatibility(project_dir):
+    """Warns when inputs changed in a way that resets users' saved settings.
+
+    A WARNING, not a blocker. Renaming an input is a legitimate thing to do —
+    what is not legitimate is doing it without noticing, because the author's
+    own chart keeps its settings and shows them nothing."""
+    script = Path(__file__).resolve().parent / "check_inputs_compat.py"
+    if not script.exists():
+        return []
+    proc = subprocess.run(
+        [sys.executable, str(script), str(project_dir), "--json"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode not in (0, 1) or not proc.stdout.strip():
+        return []
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return []
+    if data.get("status") == "no-baseline":
+        return []
+    out = []
+    for title in data.get("removed_or_renamed", []):
+        out.append(f"BREAKING: input '{title}' was removed or renamed — every existing "
+                   f"user loses that setting. This is a MAJOR version change.")
+    for title, was, now in data.get("type_changed", []):
+        out.append(f"BREAKING: input '{title}' changed type {was} -> {now}.")
+    return out
+
+
 def check_test_mode_default(text):
     """Returns a list of human-readable warnings for any test-mode-looking
     input that defaults to true — that would ship debug labels/dashboards
@@ -87,7 +117,12 @@ def check_test_mode_default(text):
 
 
 def ensure_license_header(text):
-    if "License" in text.split("\n", 1)[0] or "license" in text[:300].lower():
+    """A fixed 300-character window was the wrong unit. A generated-file banner
+    is longer than that, and the licence sitting just past it read as absent —
+    so the bundler prepended a SECOND copy. Lines are the honest unit: a header
+    is a header wherever it sits in the first few of them."""
+    head = "\n".join(text.split("\n")[:25]).lower()
+    if "license" in head:
         return text, False
     return LICENSE_HEADER + text, True
 
@@ -315,6 +350,7 @@ def main():
     lint_ok = lint_result.ok(strict=args.strict)
 
     test_mode_warnings = check_test_mode_default(text)
+    compat = check_input_compatibility(project_dir)
     text_with_license, license_added = ensure_license_header(text)
 
     strategy_blocking, strategy_advisory = ([], [])
@@ -358,6 +394,13 @@ def main():
         else:
             summary_lines.append("Strategy realism checks: none found. OK.")
         summary_lines.append("")
+
+    if compat:
+        summary_lines.append("Input compatibility:")
+        for w in compat:
+            summary_lines.append(f"  {w}")
+        summary_lines.append("")
+
     if test_mode_warnings:
         summary_lines.append("Test-mode defaults:")
         for w in test_mode_warnings:

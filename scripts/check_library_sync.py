@@ -78,7 +78,7 @@ def source_files():
         base = ROOT / rel
         if base.is_dir():
             for path in sorted(base.rglob("*.pine")):
-                if "release" in path.parts or "fixtures" in path.parts:
+                if {"release", "fixtures", "parts"} & set(path.parts):
                     continue
                 yield path
 

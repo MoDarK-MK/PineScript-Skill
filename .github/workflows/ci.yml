@@ -33,6 +33,12 @@ jobs:
       - name: Check formatting
         run: python scripts/pine_fmt.py $(git ls-files '*.pine' | grep -v tests/fixtures) --check
 
+      - name: Complexity thresholds
+        run: python scripts/complexity.py --check
+
+      - name: Declared resource budgets
+        run: python scripts/check_budget.py
+
   generated-docs:
     name: Generated docs are current
     runs-on: ubuntu-latest
@@ -46,6 +52,9 @@ jobs:
 
       - name: Inlined library helpers have not drifted
         run: python scripts/check_library_sync.py
+
+      - name: Persian rule reference matches the catalog
+        run: python scripts/build_fa_reference.py --check
 
   mutation:
     name: Every lint rule is protected by a test

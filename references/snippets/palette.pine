@@ -11,6 +11,12 @@
 // PINE051 too: every constant here is declared FOR the reader to copy,
 // so nothing in this file reads them.
 // pine-lint-disable PINE001,PINE002,PINE027,PINE051
+//
+// pine-lint-disable PINE056
+// (Every helper below is uncalled BY DESIGN — this file exists to be
+// copied from, not run. PINE056 is right about every other file and
+// wrong about this one, which is exactly what a file-wide suppression
+// with a reason is for.)
 
 // ————— Accents (TradingView's own chart colours)
 color BULL_DARK  = #089981   // green on dark backgrounds

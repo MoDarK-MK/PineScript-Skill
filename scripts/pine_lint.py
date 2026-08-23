@@ -48,6 +48,23 @@ DEFAULT_CONFIG = {
     "max_loop_iterations": 100000,
 }
 
+# Profiles exist because the same findings are not equally useful at every
+# moment. Mid-edit you want the things that stop a paste from compiling and
+# nothing else; before publishing you want everything, including the cosmetic
+# rules that would be noise while you are still moving code around.
+#
+# A profile only ever CHANGES SEVERITY OR HIDES — it never invents a finding, so
+# nothing can be caught by `dev` and missed by `publish`.
+PROFILES = {
+    # Everything, warnings fatal. What CI and the release bundler use.
+    "publish": {"min_severity": "info", "strict": True},
+    # Errors only, non-fatal warnings hidden. For the edit loop.
+    "dev": {"min_severity": "error", "strict": False},
+    # Everything, nothing fatal. The default when no profile is named.
+    "all": {"min_severity": "info", "strict": False},
+}
+SEVERITY_ORDER = {"info": 0, "warning": 1, "error": 2}
+
 # ---------------------------------------------------------------------------
 # Rule catalog — single source of truth for severities + summaries.
 # Keep in sync with references/lint-rules.md (run --list-rules to check).
@@ -107,21 +124,35 @@ RULES = {
     "PINE053": ("warning", "Loop nest's worst-case iteration count is over budget"),
     "PINE054": ("warning", "var collection grown inside a price-dependent branch with no bar-confirmation guard"),
     "PINE055": ("error", "Function references a global declared later in the file"),
+    "PINE056": ("info", "Function declared but never called"),
+    "PINE057": ("warning", "Condition is constant — always true or always false"),
 }
 
 # Rules --fix can repair mechanically. Every one of these has exactly one
 # correct rewrite; anything needing intent stays out.
-FIXABLE = {"PINE004", "PINE012", "PINE019", "PINE026", "PINE041"}
+FIXABLE = {"PINE004", "PINE012", "PINE019", "PINE023", "PINE026", "PINE041"}
 
 STRATEGY_ORDER_FUNCS = [
     "strategy.entry(", "strategy.order(", "strategy.exit(", "strategy.close(",
     "strategy.close_all(", "strategy.cancel(", "strategy.cancel_all(",
 ]
 TRANSP_FUNCS = ["bgcolor(", "fill(", "plot(", "plotarrow(", "plotchar(", "plotshape("]
-PLOT_COUNT_FUNCS = [
-    "plot(", "plotarrow(", "plotbar(", "plotcandle(", "plotchar(", "plotshape(",
-    "alertcondition(", "bgcolor(", "barcolor(", "fill(",
-]
+# Weighted, because they are not worth one slot each. plotcandle() and plotbar()
+# each draw FOUR series, and counting them as one is how a script that looks
+# comfortably under the limit turns out to be over it.
+PLOT_COUNT_WEIGHTS = {
+    "plot(": 1,
+    "plotarrow(": 1,
+    "plotchar(": 1,
+    "plotshape(": 1,
+    "plotbar(": 4,
+    "plotcandle(": 4,
+    "alertcondition(": 1,
+    "bgcolor(": 1,
+    "barcolor(": 1,
+    "fill(": 1,
+}
+PLOT_COUNT_FUNCS = list(PLOT_COUNT_WEIGHTS)
 DRAWING_FUNCS = {
     "line.new(": ("max_lines_count", "line"),
     "box.new(": ("max_boxes_count", "box"),
@@ -1398,7 +1429,7 @@ def check_int_division_literals(lines, result):
 
 
 def check_plot_and_drawing_limits(text, lines, result, cfg):
-    plot_count = sum(text.count(f) for f in PLOT_COUNT_FUNCS)
+    plot_count = sum(text.count(f) * w for f, w in PLOT_COUNT_WEIGHTS.items())
     max_plots = cfg.get("max_plot_calls", 64)
     warn_ratio = cfg.get("plot_calls_warn_ratio", 0.75)
     if plot_count > max_plots:
@@ -1778,6 +1809,9 @@ LINEWIDTH_ZERO_RE = re.compile(r'\blinewidth\s*=\s*(?:0|-\d+)\b')
 OVERSIZED_RE = re.compile(r'\bsize\.(large|huge)\b')
 
 
+INT_DIV_LITERAL_RE = re.compile(r'(?<![.\w])(\d+)\s*/\s*(\d+)(?![.\d])')
+
+
 def apply_fixes(lines):
     """Returns (new_lines, [(line_no, code, description)]).
 
@@ -1799,6 +1833,12 @@ def apply_fixes(lines):
         line, n = _replace_outside_strings(line, OVERSIZED_RE, "size.normal")
         if n:
             log.append((i + 1, "PINE041", "size.large/size.huge -> size.normal"))
+        # `2 / 3` between int literals reads as integer division to anyone who
+        # learned Pine on v5. Spelling one side as a float states the intent and
+        # changes nothing about what v6 already does.
+        line, n = _replace_outside_strings(line, INT_DIV_LITERAL_RE, r"\g<1>.0 / \g<2>")
+        if n:
+            log.append((i + 1, "PINE023", "int/int literal division -> explicit float"))
         # Leading tabs last, so the column maths above is done on the original.
         stripped_lead = len(line) - len(line.lstrip("\t"))
         if stripped_lead:
@@ -2015,6 +2055,95 @@ def check_forward_global_reference(lines, result):
                            % (name, declared[name]))
 
 
+# @rule PINE056
+def check_unused_function(lines, result):
+    """PINE056 — a function declared at global scope and never called.
+
+    Pine has no dead-code elimination worth relying on and no warning of its
+    own, so an orphaned helper survives every refactor that was supposed to
+    remove it. `export`ed library functions are exempt: being uncalled inside
+    the library is the normal case for them."""
+    declared = {}
+    for i, raw in enumerate(lines):
+        text = strip_strings_and_comments(raw)
+        if indent_width(raw) != 0 or text.lstrip().startswith("export "):
+            continue
+        m = FUNC_NAME_RE.match(text.strip())
+        if m:
+            declared.setdefault(m.group(1), i + 1)
+    if not declared:
+        return
+    uses = {name: 0 for name in declared}
+    for i, raw in enumerate(lines):
+        text = strip_strings_and_comments(raw)
+        for m in re.finditer(r'[A-Za-z_]\w*', text):
+            name = m.group(0)
+            if name not in uses:
+                continue
+            if declared[name] == i + 1 and m.start() == len(text) - len(text.lstrip()):
+                continue          # the declaration itself
+            if m.start() > 0 and text[m.start() - 1] == '.':
+                continue
+            uses[name] += 1
+    for name, line_no in sorted(declared.items(), key=lambda kv: kv[1]):
+        if uses[name] == 0:
+            result.add(line_no, "PINE056",
+                       "'%s()' is declared here and never called. Pine gives no warning "
+                       "of its own for this, so an orphaned helper survives every "
+                       "refactor that meant to remove it — and keeps being maintained, "
+                       "read and kept compiling for nothing." % name)
+
+
+# @rule PINE057
+CONST_COMPARE_RE = re.compile(
+    r'\b(?:if|while)\s+(-?\d+(?:\.\d+)?)\s*(==|!=|<=|>=|<|>)\s*(-?\d+(?:\.\d+)?)\s*$')
+CONST_LITERAL_RE = re.compile(r'\b(?:if|while)\s+(true|false)\s*$')
+SELF_COMPARE_RE = re.compile(r'\b(?:if|while)\s+([A-Za-z_]\w*)\s*(==|!=)\s*\1\s*$')
+
+
+def _const_verdict(lhs, op, rhs):
+    a, b = float(lhs), float(rhs)
+    return {"==": a == b, "!=": a != b, "<": a < b,
+            ">": a > b, "<=": a <= b, ">=": a >= b}[op]
+
+
+def check_constant_condition(lines, result):
+    """PINE057 — a condition whose value cannot change.
+
+    `if true` is usually a debug switch someone forgot, `if 2 > 1` is usually a
+    half-finished edit, and `x == x` is usually a typo for a different variable.
+    All three compile, none is ever reported, and each silently disables or
+    permanently enables the block under it."""
+    for i, raw in enumerate(lines):
+        text = strip_strings_and_comments(raw).rstrip()
+        if not text.strip():
+            continue
+        m = CONST_COMPARE_RE.search(text)
+        if m:
+            verdict = _const_verdict(m.group(1), m.group(2), m.group(3))
+            result.add(i + 1, "PINE057",
+                       "`%s %s %s` is always %s — both sides are literals, so this "
+                       "condition can never change. The block under it is either dead "
+                       "code or permanently on."
+                       % (m.group(1), m.group(2), m.group(3), str(verdict).lower()))
+            continue
+        m = CONST_LITERAL_RE.search(text)
+        if m:
+            result.add(i + 1, "PINE057",
+                       "Condition is the literal `%s`. Usually a debug switch left "
+                       "behind: the block under it is permanently %s."
+                       % (m.group(1), "on" if m.group(1) == "true" else "dead"))
+            continue
+        m = SELF_COMPARE_RE.search(text)
+        if m:
+            result.add(i + 1, "PINE057",
+                       "`%s` is compared with itself, which is always %s. This is "
+                       "almost always a typo for a different variable — and note that "
+                       "it does NOT work as an na check either; use na(%s)."
+                       % (m.group(1), "true" if m.group(2) == "==" else "false",
+                          m.group(1)))
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -2090,6 +2219,8 @@ def lint_file(path, cfg):
     check_loop_cost(lines, statements, result, cfg)
     check_var_collection_realtime_growth(lines, result)
     check_forward_global_reference(lines, result)
+    check_unused_function(lines, result)
+    check_constant_condition(lines, result)
 
     file_wide, next_line, same_line = parse_suppressions(lines)
     filtered = []
@@ -2113,6 +2244,27 @@ def print_human(args, result):
     n_warn = len(result.by_severity("warning"))
     n_info = len(result.by_severity("info"))
     print(f"{n_err} error(s), {n_warn} warning(s), {n_info} note(s).")
+
+
+def print_editor(args, result):
+    """`path:line:col: severity: message (CODE)` — the shape every editor's
+    problem matcher already understands. Column is always 1: these rules match
+    lines, not spans, and inventing a column would put the squiggle somewhere
+    the finding is not."""
+    for f in sorted(result.findings, key=lambda x: (x.line, x.code)):
+        print(f"{args.file}:{max(f.line, 1)}:1: {f.severity}: {f.msg} ({f.code})")
+
+
+def print_github(args, result):
+    """GitHub Actions annotations, so CI findings land on the diff itself
+    instead of inside a log nobody opens."""
+    level = {"error": "error", "warning": "warning", "info": "notice"}
+    for f in sorted(result.findings, key=lambda x: (x.line, x.code)):
+        # An annotation is one line: a raw newline truncates it at the break,
+        # and a bare % is read as the start of an escape sequence.
+        msg = " ".join(f.msg.split()).replace("%", "%25")
+        print(f"::{level[f.severity]} file={args.file},line={max(f.line, 1)},"
+              f"title={f.code}::{msg}")
 
 
 def print_json(args, result):
@@ -2194,6 +2346,44 @@ def write_baseline(path, file_name, result):
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def apply_profile(result, profile):
+    """Drops findings below the profile's floor. Filtering, never adding — a
+    profile that could introduce a finding would mean `dev` and `publish`
+    disagreed about what is true, rather than about what is worth showing."""
+    floor = SEVERITY_ORDER[profile["min_severity"]]
+    result.findings = [f for f in result.findings
+                       if SEVERITY_ORDER[f.severity] >= floor]
+
+
+def run_watch(args, cfg, profile, strict):
+    """Re-lints on every change to the file until interrupted.
+
+    Polls mtime rather than using a filesystem-watch library, because this repo
+    has no third-party dependencies and is not going to acquire one for this."""
+    import time
+    print(f"watching {args.file} — Ctrl+C to stop\n")
+    last = None
+    try:
+        while True:
+            try:
+                stamp = Path(args.file).stat().st_mtime
+            except OSError:
+                time.sleep(0.5)
+                continue
+            if stamp != last:
+                last = stamp
+                result = lint_file(args.file, cfg)
+                apply_profile(result, profile)
+                print("\033[2J\033[H", end="")      # clear, so only the current state shows
+                print(f"{args.file}  ({time.strftime('%H:%M:%S')})\n")
+                print_human(args, result)
+                print("\nOK" if result.ok(strict=strict) else "\nFAILING")
+            time.sleep(0.4)
+    except KeyboardInterrupt:
+        print("\nstopped")
+        return 0
+
+
 def make_output_encoding_safe():
     """The rule messages and the docs use en-dashes, arrows and box glyphs. On a
     Windows console (cp1252) printing those raises UnicodeEncodeError and takes
@@ -2206,12 +2396,22 @@ def make_output_encoding_safe():
 
 
 def main():
+    """Returns an exit code, or None when it exits via sys.exit()."""
     make_output_encoding_safe()
     parser = argparse.ArgumentParser(description="Rule-based offline linter for Pine Script.")
     parser.add_argument("file", nargs="?", help="Path to a .pine file")
     parser.add_argument("--config", default=None, help="Path to a .pine-lint.json config override")
     parser.add_argument("--json", action="store_true", help="Emit findings as JSON")
+    parser.add_argument("--format", choices=("human", "json", "editor", "github"),
+                        default=None,
+                        help="human (default), json, editor (path:line:col: ...), "
+                             "or github (Actions annotations on the diff)")
     parser.add_argument("--strict", action="store_true", help="Treat warnings as failures (exit 1)")
+    parser.add_argument("--profile", choices=sorted(PROFILES),
+                        help="dev = errors only, non-fatal. publish = everything, "
+                             "warnings fatal. all = everything, nothing fatal (default).")
+    parser.add_argument("--watch", action="store_true",
+                        help="Re-lint whenever the file changes, until interrupted")
     parser.add_argument("--list-rules", action="store_true", help="Print the full rule catalog and exit")
     parser.add_argument("--explain", metavar="CODE",
                         help="Print the full documentation for one rule and exit")
@@ -2247,7 +2447,15 @@ def main():
         sys.exit(run_fix(args.file, args.dry_run))
 
     cfg = load_config(args.config or str(Path(args.file).parent / ".pine-lint.json"))
+
+    profile = PROFILES[args.profile] if args.profile else PROFILES["all"]
+    strict = args.strict or profile["strict"]
+
+    if args.watch:
+        return run_watch(args, cfg, profile, strict)
+
     result = lint_file(args.file, cfg)
+    apply_profile(result, profile)
 
     if args.write_baseline:
         write_baseline(args.write_baseline, Path(args.file).name, result)
@@ -2262,17 +2470,18 @@ def main():
         if suppressed and not args.json:
             print(f"({suppressed} finding(s) suppressed by {args.baseline})\n")
 
-    if args.json:
-        print_json(args, result)
-    else:
-        print_human(args, result)
+    fmt = args.format or ("json" if args.json else "human")
+    {"json": print_json, "editor": print_editor,
+     "github": print_github, "human": print_human}[fmt](args, result)
 
-    sys.exit(0 if result.ok(strict=args.strict) else 1)
+    sys.exit(0 if result.ok(strict=strict) else 1)
 
 
 if __name__ == "__main__":
     try:
-        main()
+        code = main()
+        if code is not None:
+            sys.exit(code)
     except BrokenPipeError:
         # Common when piping through `head`/`grep` — exit quietly rather than
         # printing a Python traceback.

@@ -13,7 +13,7 @@ class TestRuleCatalog(unittest.TestCase):
     def test_catalog_endpoints_and_pine024(self):
         self.assertNotIn("PINE024", pine_lint.RULES)
         self.assertIn("PINE001", pine_lint.RULES)
-        self.assertIn("PINE055", pine_lint.RULES)
+        self.assertIn("PINE057", pine_lint.RULES)
 
     def test_list_rules_cli_prints_every_rule(self):
         # Derived from the catalog on purpose: a hand-maintained count here was
@@ -979,4 +979,85 @@ var array<float> buf = array.new<float>()
 plot(total(buf), title="X")
 """
         self.assertNotIn("PINE055", codes(lint_text(src)))
+
+
+class TestUnusedFunction(unittest.TestCase):
+    def test_uncalled_function_is_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+orphan(float v) =>
+    v * 2
+plot(close, title="C")
+"""
+        self.assertIn("PINE056", codes(lint_text(src)))
+
+    def test_called_function_is_not(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+used(float v) =>
+    v * 2
+plot(used(close), title="C")
+"""
+        self.assertNotIn("PINE056", codes(lint_text(src)))
+
+    def test_a_function_called_only_from_another_function_counts_as_used(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+inner(float v) =>
+    v * 2
+outer(float v) =>
+    inner(v) + 1
+plot(outer(close), title="C")
+"""
+        self.assertNotIn("PINE056", codes(lint_text(src)))
+
+    def test_exported_library_functions_are_exempt(self):
+        src = """//@version=6
+library("T")
+export helper(float v) =>
+    v * 2
+"""
+        self.assertNotIn("PINE056", codes(lint_text(src)))
+
+
+class TestConstantCondition(unittest.TestCase):
+    def test_literal_true_is_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+if true
+    label.new(bar_index, high, "debug")
+plot(close, title="C")
+"""
+        self.assertIn("PINE057", codes(lint_text(src)))
+
+    def test_literal_comparison_is_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+float x = 0.0
+if 2 > 1
+    x := 1.0
+plot(x, title="C")
+"""
+        self.assertIn("PINE057", codes(lint_text(src)))
+
+    def test_self_comparison_is_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+float value = close
+float x = 0.0
+if value == value
+    x := 1.0
+plot(x, title="C")
+"""
+        self.assertIn("PINE057", codes(lint_text(src)))
+
+    def test_a_real_condition_is_not(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+float x = 0.0
+if close > open
+    x := 1.0
+plot(x, title="C")
+"""
+        self.assertNotIn("PINE057", codes(lint_text(src)))
 
