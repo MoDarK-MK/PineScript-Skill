@@ -156,13 +156,24 @@ class TestFormatting(unittest.TestCase):
 
 class TestReleaseBundleInputs(unittest.TestCase):
     def test_bundles_carry_an_inputs_table(self):
+        """A project that HAS been released must carry an inputs table.
+
+        A project that has never been released is not a failure — release/ is
+        git-ignored, so a fresh clone has none at all, and demanding one here
+        would make this test pass only on a machine that had run a release."""
         missing = []
+        checked = 0
         for project in project_dirs():
-            inputs_md = project / "release" / "INPUTS.md"
-            if not inputs_md.exists():
+            release = project / "release"
+            if not release.is_dir():
+                continue
+            checked += 1
+            if not (release / "INPUTS.md").exists():
                 missing.append(project.name)
         self.assertEqual([], missing,
                          msg="regenerate with scripts/generate_release_bundle.py: " + str(missing))
+        if checked == 0:
+            self.skipTest("no release bundles in this checkout")
 
     def test_inputs_table_matches_the_current_source(self):
         stale = []

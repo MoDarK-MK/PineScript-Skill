@@ -69,6 +69,16 @@ class TestSkillFrontmatter(unittest.TestCase):
         self.assertGreater(len(desc), 200)
 
 
+# Files that only ever exist inside a generated release/ directory, which is
+# git-ignored. They are absent from a fresh clone by design, so requiring them
+# to exist would make this check pass only on a machine that had run a release.
+GENERATED_ARTIFACTS = {
+    "PUBLISH_DESCRIPTION.md",
+    "RELEASE_SUMMARY.txt",
+    "INPUTS.md",
+}
+
+
 class TestDocumentedPathsExist(unittest.TestCase):
     """Resolution is deliberately generous, and the generosity is the design.
 
@@ -95,6 +105,8 @@ class TestDocumentedPathsExist(unittest.TestCase):
             if Path(path).name.startswith(EXAMPLE_NAME_PREFIX):
                 continue
             if Path(path).name in self.REPO_FILENAMES:
+                continue
+            if Path(path).name in GENERATED_ARTIFACTS:
                 continue
             missing.append(f"{doc}: {path}")
         return missing
