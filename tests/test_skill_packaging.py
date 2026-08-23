@@ -78,6 +78,16 @@ GENERATED_ARTIFACTS = {
     "INPUTS.md",
 }
 
+# Files that live inside an individual PROJECT rather than in the repo. A
+# checkout may legitimately contain no projects at all — the private ones are
+# untracked — so requiring these to exist would make the check pass only on a
+# machine that happens to have one.
+PROJECT_LOCAL_FILES = {
+    "parts.json",
+    "budget.json",
+    "version.json",
+}
+
 
 class TestDocumentedPathsExist(unittest.TestCase):
     """Resolution is deliberately generous, and the generosity is the design.
@@ -107,6 +117,8 @@ class TestDocumentedPathsExist(unittest.TestCase):
             if Path(path).name in self.REPO_FILENAMES:
                 continue
             if Path(path).name in GENERATED_ARTIFACTS:
+                continue
+            if Path(path).name in PROJECT_LOCAL_FILES:
                 continue
             missing.append(f"{doc}: {path}")
         return missing
