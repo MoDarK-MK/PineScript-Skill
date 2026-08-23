@@ -3,6 +3,19 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.6.0] - 2026-08-23
+### Added
+- **Strength bubbles.** A green dot under a bar where buying overwhelmed selling, a red one where selling overwhelmed buying. Strength means the bar's OWN DELTA, measured with the same intrabar data the profile is built from — not candle size and not candle colour. A big green candle on thin, evenly-matched volume gets no bubble, and it should not: nothing was overwhelmed.
+- Two floors, as everywhere else here: how one-sided the bar was (default 40% of its volume) AND how much volume it carried against its own average (default 1.3x). Either alone lies — 90% buying on almost no volume is an empty book, and huge evenly-matched volume is a fight rather than a win.
+- The bar's direction has to agree. A bar with heavy BUY delta that still closed DOWN gets no green bubble: that is buying being *absorbed*, which this script already reports separately, and marking it green would contradict its own absorption row.
+- Each bubble's shade carries how far past the threshold it went, so a bar that barely qualifies reads faintly and an overwhelming one reads solid. Free — `plotshape`'s colour argument takes a series, so it costs no extra plot slots.
+- Bubble position is switchable between one readable row under price (default) and bull-below/bear-above.
+- New table row **Bar delta** shows the live bar's delta and volume ratio whether or not it qualifies, so a bar with no bubble can be READ rather than just noticed as absent.
+- Two alert conditions, off by default because on a busy symbol these are frequent.
+
+### Notes
+- Drawn with `plotshape`, not labels. There is potentially one per bar across the whole chart, and labels are capped at 500 — the oldest would start vanishing on any decent history, silently.
+
 ## [0.5.0] - 2026-08-23
 ### Added
 - **Intrabar volume distribution** (`request.security_lower_tf`, on by default at 1 minute). This is the largest accuracy gain available to the script. Without it a bar's volume has to be SPREAD across every price it touched using a guess about where inside the bar the trading happened; with it each sub-bar is placed at its own narrow range carrying its own close position, so the profile is largely measured rather than modelled and the buy/sell split gets one estimate per sub-bar instead of one per candle.

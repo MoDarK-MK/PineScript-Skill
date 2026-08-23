@@ -118,6 +118,23 @@ indicator(
 //   fails the WHOLE script on a lower plan, not just this feature. The default
 //   is one minute for that reason.
 //
+// STRENGTH BUBBLES: a green dot under a bar where buying overwhelmed selling,
+//   a red one where selling overwhelmed buying. Strength means the BAR'S OWN
+//   DELTA, measured with the same intrabar data the profile is built from — not
+//   candle size, not candle colour. A big green candle on thin, evenly-matched
+//   volume gets no bubble, and it should not: nothing was overwhelmed.
+//
+//   Two floors, as everywhere else here. How one-sided the bar was, AND how
+//   much volume it carried against its own average. Either alone lies: a bar
+//   can be 90% buying on almost no volume, which is an empty book rather than
+//   strength, and a bar can carry huge volume that was evenly matched, which is
+//   a fight rather than a win.
+//
+//   The bar's direction has to agree too. A bar with heavy BUY delta that still
+//   closed DOWN gets no green bubble — that is buying being absorbed, which
+//   this script reports separately, and marking it green would contradict that.
+//   The shade of each bubble carries how far past the threshold it went.
+//
 // LOW VOLUME NODES: the rows almost nothing traded in, tinted separately. They
 //   are the opposite of the POC and just as informative — price accelerates
 //   through them because there is nothing there to trade against, which makes
@@ -302,6 +319,39 @@ bool   entryAlertInput = input.bool(
      true, "Alert When Price Reaches The Level", group=EN_GROUP,
      tooltip="Fires on bar close, once per bar. Mid-bar the touch can un-happen, " +
      "and an alert for something that never finished is worse than no alert.")
+
+// ————— Inputs: Strength Bubbles
+string BB_GROUP = "Strength Bubbles"
+bool   showBubblesInput = input.bool(
+     true, "Show Strength Bubbles", group=BB_GROUP,
+     tooltip="Marks the bars where one side genuinely overwhelmed the other: a " +
+     "green bubble under a strong up bar, a red one for a strong down bar." +
+     "\n\nStrength here means the BAR'S OWN DELTA, measured with the same " +
+     "intrabar data the profile is built from — not candle size, not a colour. " +
+     "A big green candle on thin, evenly-matched volume gets no bubble, and it " +
+     "should not: nothing was overwhelmed.")
+float  bubbleDeltaInput = input.float(
+     40.0, "Minimum Delta (%)", minval=5.0, maxval=95.0, step=5.0, group=BB_GROUP,
+     tooltip="How one-sided the bar's volume must be. 40 means buying exceeded " +
+     "selling by 40% of the bar's total volume.")
+float  bubbleVolInput = input.float(
+     1.3, "Minimum Volume (x average)", minval=0.5, maxval=10.0, step=0.1, group=BB_GROUP,
+     tooltip="And how much volume it must carry, against its own recent average. " +
+     "This is the second floor, and it is the one that matters: a bar can be 90% " +
+     "buying on almost no volume. That is not strength, it is an empty book.")
+int    bubbleVolLenInput = input.int(
+     20, "Volume Average Length", minval=2, maxval=200, group=BB_GROUP)
+string bubblePosInput = input.string(
+     "Below bars", "Bubble Position",
+     options=["Below bars", "Bull below, bear above"], group=BB_GROUP,
+     tooltip="Below bars keeps them in one readable row under price. The other " +
+     "option puts each bubble on the side its direction points.")
+color  bubbleBullColorInput = input.color(#089981, "Bull Bubble", inline="bb", group=BB_GROUP)
+color  bubbleBearColorInput = input.color(#f23645, "Bear Bubble", inline="bb", group=BB_GROUP)
+bool   bubbleAlertInput = input.bool(
+     false, "Alert On Strength Bubbles", group=BB_GROUP,
+     tooltip="Fires on bar close. Off by default because on a busy symbol these " +
+     "are frequent.")
 
 // ————— Inputs: Confluence
 string CF_GROUP = "Confluence"
@@ -876,6 +926,63 @@ string intrabarTf = intrabarUsable ? intrabarTfInput : timeframe.period
 // slot against the 40-request cap instead of four.
 [ltfHigh, ltfLow, ltfClose, ltfVolume] = request.security_lower_tf(
      syminfo.tickerid, intrabarTf, [high, low, close, volume])
+
+// ————— Calculations: bar delta
+//
+// The same split the profile uses, applied to ONE bar. Intrabar when it is
+// available — each sub-bar contributes its own close position — and the
+// bar-level model otherwise, exactly as in buildProfile(). Keeping the two in
+// step matters: a bubble that disagreed with the profile beneath it would be
+// two different claims about the same volume.
+float barBuyVol  = 0.0
+float barSellVol = 0.0
+int   barSubCount = intrabarUsable and not na(ltfVolume) and not na(ltfHigh) and
+     not na(ltfLow) and not na(ltfClose) ?
+     int(math.min(math.min(array.size(ltfVolume), array.size(ltfHigh)),
+     math.min(array.size(ltfLow), array.size(ltfClose)))) : 0
+if barSubCount > 0
+    for s = 0 to barSubCount - 1
+        float sv = nz(array.get(ltfVolume, s))
+        if sv > 0
+            float sh = array.get(ltfHigh, s)
+            float sl = array.get(ltfLow, s)
+            float sc = array.get(ltfClose, s)
+            float sRange = sh - sl
+            float sBuy = sRange > 0 ? (sc - sl) / sRange : 0.5
+            sBuy := math.max(0.0, math.min(1.0, sBuy))
+            barBuyVol  += sv * sBuy
+            barSellVol += sv * (1 - sBuy)
+else
+    float rangeNow = high - low
+    float buyNow = rangeNow > 0 ? (close - low) / rangeNow : 0.5
+    buyNow := math.max(0.0, math.min(1.0, buyNow))
+    barBuyVol  := nz(volume) * buyNow
+    barSellVol := nz(volume) * (1 - buyNow)
+
+float barVolTotal = barBuyVol + barSellVol
+float barDeltaPct = barVolTotal > 0 ? (barBuyVol - barSellVol) / barVolTotal : 0.0
+float bubbleVolAvg = ta.sma(volume, bubbleVolLenInput)
+float bubbleVolRatio = nz(bubbleVolAvg) > 0 ? nz(volume) / bubbleVolAvg : 0.0
+float bubbleFloor = bubbleDeltaInput / 100
+
+// Both floors, plus agreement with the candle itself. A bar with heavy BUY
+// delta that still closed down is not weak buying — it is buying being
+// absorbed, which is a different thing this script already reports separately.
+// Marking it green here would contradict that.
+bool strongBull = showBubblesInput and close > open and
+     barDeltaPct >= bubbleFloor and bubbleVolRatio >= bubbleVolInput
+bool strongBear = showBubblesInput and close < open and
+     -barDeltaPct >= bubbleFloor and bubbleVolRatio >= bubbleVolInput
+
+// Shade carries the surplus above the threshold, so a bar that only just
+// qualifies reads faintly and an overwhelming one reads solid. Free: the colour
+// argument of plotshape takes a series, so this costs no extra plot slots.
+float bullSurplus = math.min(1.0, (barDeltaPct - bubbleFloor) /
+     math.max(1.0 - bubbleFloor, 0.0001))
+float bearSurplus = math.min(1.0, (-barDeltaPct - bubbleFloor) /
+     math.max(1.0 - bubbleFloor, 0.0001))
+color bullBubbleColor = color.new(bubbleBullColorInput, int(55 - 45 * nz(bullSurplus)))
+color bearBubbleColor = color.new(bubbleBearColorInput, int(55 - 45 * nz(bearSurplus)))
 
 // ————— Calculations: segment detection
 //
@@ -1465,7 +1572,7 @@ if barstate.islast
 
 // ————— Visuals: summary table
 var table dash = table.new(
-     tablePosFrom(tablePosInput), 2, 18,
+     tablePosFrom(tablePosInput), 2, 19,
      bgcolor=getPanelColor(themeInput, 15), border_width=1,
      border_color=getPanelColor(themeInput, 100),
      frame_color=color.new(mutedColor, 70), frame_width=1)
@@ -1534,35 +1641,64 @@ if showTableInput and barstate.islast
     dashRow(dash, 8, "Value migration", valueMigration, mutedColor,
          valueMigration == "UP" ? buyColorInput :
          valueMigration == "DOWN" ? sellColorInput : mutedColor)
-    dashRow(dash, 9, "Swing volume", haveSwing ? formatVolume(shown.totalVol) : "--",
+    // The live bar's own delta — the number the bubbles are made of. Shown
+    // whether or not the bar qualifies, so a bar with NO bubble can be read
+    // rather than merely noticed as absent.
+    dashRow(dash, 9, "Bar delta",
+         barVolTotal <= 0 ? "--" :
+         (barDeltaPct >= 0 ? "+" : "") + str.tostring(barDeltaPct * 100, "#.#") + "%  " +
+         str.tostring(bubbleVolRatio, "#.#") + "x vol", mutedColor,
+         strongBull ? bubbleBullColorInput : strongBear ? bubbleBearColorInput :
+         nz(barDeltaPct) >= 0 ? buyColorInput : sellColorInput)
+    dashRow(dash, 10, "Swing volume", haveSwing ? formatVolume(shown.totalVol) : "--",
          mutedColor, textColor)
-    dashRow(dash, 10, "Buy share", na(buyPct) ? "--" : str.tostring(buyPct, "#.#") + "%",
+    dashRow(dash, 11, "Buy share", na(buyPct) ? "--" : str.tostring(buyPct, "#.#") + "%",
          mutedColor, nz(buyPct, 50) >= 50 ? buyColorInput : sellColorInput)
-    dashRow(dash, 11, "POC", haveSwing ? str.tostring(rowPrice(shown, shown.pocIdx), format.mintick) : "--",
+    dashRow(dash, 12, "POC", haveSwing ? str.tostring(rowPrice(shown, shown.pocIdx), format.mintick) : "--",
          mutedColor, pocColorInput)
-    dashRow(dash, 12, "Value area", haveSwing ?
+    dashRow(dash, 13, "Value area", haveSwing ?
          str.tostring(rowPrice(shown, shown.vaBotIdx), format.mintick) + " - " +
          str.tostring(rowPrice(shown, shown.vaTopIdx), format.mintick) : "--",
          mutedColor, vaColorInput)
-    dashRow(dash, 13, "Max buy", haveSwing ?
+    dashRow(dash, 14, "Max buy", haveSwing ?
          str.tostring(rowPrice(shown, shown.maxBuyIdx), format.mintick) : "--",
          mutedColor, maxBuyColorInput)
-    dashRow(dash, 14, "Max sell", haveSwing ?
+    dashRow(dash, 15, "Max sell", haveSwing ?
          str.tostring(rowPrice(shown, shown.maxSellIdx), format.mintick) : "--",
          mutedColor, maxSellColorInput)
-    dashRow(dash, 15, "Rows / swing", rowNote, mutedColor,
+    dashRow(dash, 16, "Rows / swing", rowNote, mutedColor,
          shownRows < rowsInput ? pocColorInput : textColor)
     // Provenance. A number whose source is invisible invites more trust than
     // it has earned, and "measured" and "modelled" are not the same claim.
-    dashRow(dash, 16, "Data", not haveSwing ? "--" :
+    dashRow(dash, 17, "Data", not haveSwing ? "--" :
          not intrabarUsable ? "bar model" :
          str.tostring(shown.intrabarPct) + "% intrabar", mutedColor,
          not haveSwing or not intrabarUsable ? mutedColor :
          shown.intrabarPct >= 80 ? buyColorInput :
          shown.intrabarPct >= 30 ? pocColorInput : mutedColor)
-    dashRow(dash, 17, "Boxes used",
+    dashRow(dash, 18, "Boxes used",
          str.tostring(boxesUsed) + " / " + str.tostring(MAX_ROW_BOXES), mutedColor,
          boxesUsed >= MAX_ROW_BOXES ? pocColorInput : textColor)
+
+// ————— Visuals: strength bubbles
+//
+// plotshape, not label.new. There is one of these per qualifying bar across the
+// whole chart, and labels are capped at 500 — the oldest would start vanishing
+// on any decent history, silently. plotshape has no such limit.
+//
+// `location` must be a compile-time constant, which is why the bear side needs
+// two calls rather than one with a computed location. Each is inert when its
+// position mode is off, so only one ever draws.
+bool bearBelow = bubblePosInput == "Below bars"
+plotshape(strongBull, title="Strong Bull Bubble", style=shape.circle,
+     location=location.belowbar, color=bullBubbleColor, size=size.tiny,
+     display=display.pane)
+plotshape(strongBear and bearBelow, title="Strong Bear Bubble (below)",
+     style=shape.circle, location=location.belowbar, color=bearBubbleColor,
+     size=size.tiny, display=display.pane)
+plotshape(strongBear and not bearBelow, title="Strong Bear Bubble (above)",
+     style=shape.circle, location=location.abovebar, color=bearBubbleColor,
+     size=size.tiny, display=display.pane)
 
 // ————— Alerts
 alertcondition(showAbsorptionInput and absorptionState == "bullish" and
@@ -1571,6 +1707,12 @@ alertcondition(showAbsorptionInput and absorptionState == "bullish" and
 alertcondition(showAbsorptionInput and absorptionState == "bearish" and
      absorptionBar == bar_index - 1, "Bearish absorption",
      "A new swing high formed on RISING sell share - buying is being absorbed.")
+alertcondition(bubbleAlertInput and strongBull and barstate.isconfirmed,
+     "Strong bullish bar",
+     "A bar closed up with buying volume overwhelming selling on above-average volume.")
+alertcondition(bubbleAlertInput and strongBear and barstate.isconfirmed,
+     "Strong bearish bar",
+     "A bar closed down with selling volume overwhelming buying on above-average volume.")
 alertcondition(newSegment, "New swing confirmed",
      "A new swing has been confirmed (pivot, higher-timeframe pivot, or session close).")
 
@@ -1590,7 +1732,7 @@ if entryAlertInput and barstate.islast and barstate.isconfirmed
              alert.freq_once_per_bar_close)
 
 // ————— Debug / Test block (keep testModeInput false when handing off)
-int TEST_COUNT = 13     // keep in sync with the assertFailed() calls below
+int TEST_COUNT = 15     // keep in sync with the assertFailed() calls below
 var int passCount = 0
 var int failCount = 0
 
@@ -1667,6 +1809,14 @@ if testModeInput
          valueMigration == "--" or valueMigration == "UP" or
          valueMigration == "DOWN" or valueMigration == "FLAT",
          "value migration is not a known value")
+    // 14. Delta is a share of the bar's own volume, so it cannot leave -1..+1.
+    //     Outside that range means buy and sell volume no longer sum to the
+    //     total, which would corrupt every bubble and the profile with it.
+    fails += assertFailed(barDeltaPct >= -1.0001 and barDeltaPct <= 1.0001,
+         "bar delta is outside -100%..+100%")
+    // 15. One bar cannot be both overwhelmingly bought and overwhelmingly sold.
+    fails += assertFailed(not (strongBull and strongBear),
+         "a bar is flagged strong in both directions")
     failCount += fails
     passCount += TEST_COUNT - fails
 
