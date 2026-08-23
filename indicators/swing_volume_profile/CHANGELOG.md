@@ -3,6 +3,11 @@
 ## [Unreleased]
 - (nothing yet)
 
+## [0.6.1] - 2026-08-23
+### Fixed
+- v0.6.0 did not compile. The `request.security_lower_tf()` block sat BELOW the function declarations, and `buildProfile()` reads it — Pine resolves identifiers in textual order, so a function body can only see what was declared above its own declaration. TradingView reported `Undeclared identifier "ltfVolume"` against the function, which is the one place the problem was not. The block moved above the functions, with a comment saying why it lives there.
+- New PINE055 rule catches this class outright. It was written before the fix, run against a reconstruction of the rejected file, and flagged line 663 — the exact line TradingView named.
+
 ## [0.6.0] - 2026-08-23
 ### Added
 - **Strength bubbles.** A green dot under a bar where buying overwhelmed selling, a red one where selling overwhelmed buying. Strength means the bar's OWN DELTA, measured with the same intrabar data the profile is built from — not candle size and not candle colour. A big green candle on thin, evenly-matched volume gets no bubble, and it should not: nothing was overwhelmed.

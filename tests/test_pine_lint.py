@@ -13,7 +13,7 @@ class TestRuleCatalog(unittest.TestCase):
     def test_catalog_endpoints_and_pine024(self):
         self.assertNotIn("PINE024", pine_lint.RULES)
         self.assertIn("PINE001", pine_lint.RULES)
-        self.assertIn("PINE054", pine_lint.RULES)
+        self.assertIn("PINE055", pine_lint.RULES)
 
     def test_list_rules_cli_prints_every_rule(self):
         # Derived from the catalog on purpose: a hand-maintained count here was
@@ -918,4 +918,65 @@ array.push(closes, close)
 plot(close, title="C")
 """
         self.assertNotIn("PINE054", codes(lint_text(src)))
+
+
+class TestForwardGlobalReference(unittest.TestCase):
+    """PINE055. The negative cases carry the weight: a rule that flagged normal
+    top-to-bottom code would be unusable."""
+
+    def test_function_reading_a_later_global_is_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+readIt() =>
+    laterValue * 2
+float laterValue = ta.sma(close, 20)
+plot(readIt(), title="X")
+"""
+        self.assertIn("PINE055", codes(lint_text(src)))
+
+    def test_declaration_above_the_function_is_fine(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+float earlierValue = ta.sma(close, 20)
+readIt() =>
+    earlierValue * 2
+plot(readIt(), title="X")
+"""
+        self.assertNotIn("PINE055", codes(lint_text(src)))
+
+    def test_parameters_are_not_forward_references(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+scale(float value, float factor) =>
+    value * factor
+float value = 1.0
+float factor = 2.0
+plot(scale(close, 2), title="X")
+"""
+        self.assertNotIn("PINE055", codes(lint_text(src)))
+
+    def test_function_locals_are_not_forward_references(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+compute() =>
+    float temp = close * 2
+    temp + 1
+float temp = 5.0
+plot(compute(), title="X")
+"""
+        self.assertNotIn("PINE055", codes(lint_text(src)))
+
+    def test_loop_variables_are_not_forward_references(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+total(array<float> src) =>
+    float acc = 0.0
+    for item in src
+        acc += item
+    acc
+float item = 1.0
+var array<float> buf = array.new<float>()
+plot(total(buf), title="X")
+"""
+        self.assertNotIn("PINE055", codes(lint_text(src)))
 

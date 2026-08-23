@@ -1,0 +1,20 @@
+// FIXTURE — must be caught by PINE055
+// TradingView says: Undeclared identifier "ltfVolume" — pointing at the function, not at the declaration.
+// Shipped once: swing_volume_profile v0.6.0 put its request.security_lower_tf() block below the function that reads it.
+//
+// This file is DELIBERATELY broken. It is never scaffolded, published or
+// linted by CI — tests/test_compile_error_corpus.py asserts PINE055 still
+// fires on it, so the incident can never silently regress.
+//@version=6
+indicator("Fixture", overlay=true)
+
+// The function is declared here, and reads something that does not exist yet.
+sumIntrabar(int barsBack) =>
+    array<float> v = ltfVolume[barsBack]
+    na(v) ? 0.0 : array.sum(v)
+
+// ...declared down here, which is too late. Pine resolves identifiers in
+// textual order.
+array<float> ltfVolume = request.security_lower_tf(syminfo.tickerid, "1", volume)
+
+plot(sumIntrabar(1), title="Intrabar volume")

@@ -106,6 +106,7 @@ RULES = {
     "PINE052": ("warning", "Drawing created inside a loop without the matching max_*_count"),
     "PINE053": ("warning", "Loop nest's worst-case iteration count is over budget"),
     "PINE054": ("warning", "var collection grown inside a price-dependent branch with no bar-confirmation guard"),
+    "PINE055": ("error", "Function references a global declared later in the file"),
 }
 
 # Rules --fix can repair mechanically. Every one of these has exactly one
@@ -1917,6 +1918,103 @@ def check_var_collection_realtime_growth(lines, result):
                    % (m.group(2), m.group(1)))
 
 
+# @rule PINE055
+def _global_declaration_lines(lines):
+    """Maps every name declared at COLUMN 0 to the line it was declared on.
+
+    Column 0 is the whole test: a name indented under something is a local, and
+    locals are not what this rule is about."""
+    declared = {}
+    in_type_block = False
+    for i, text, depths in _lines_with_depths(lines):
+        if not text.strip():
+            continue
+        if TYPE_BLOCK_RE.match(text):
+            in_type_block = True
+            declared.setdefault(text.strip().split()[1], i + 1)
+            continue
+        if in_type_block:
+            if indent_width(lines[i]) > 0:
+                continue
+            in_type_block = False
+        if indent_width(lines[i]) != 0:
+            continue
+        m_func = FUNC_NAME_RE.match(text.strip())
+        if m_func:
+            declared.setdefault(m_func.group(1), i + 1)
+            continue
+        m_tuple = TUPLE_DECL_RE.match(text)
+        if m_tuple:
+            for part in m_tuple.group(1).split(","):
+                name = part.strip().split()[-1] if part.strip() else ""
+                if name:
+                    declared.setdefault(name, i + 1)
+            continue
+        for m in IDENT_ASSIGN_RE.finditer(text):
+            if depths[m.start()] != 0 or m.group(2) != "=":
+                continue
+            if m.start() > 0 and text[m.start() - 1] == '.':
+                continue
+            declared.setdefault(m.group(1), i + 1)
+    return declared
+
+
+def check_forward_global_reference(lines, result):
+    """PINE055 — Pine resolves identifiers in textual order, so a function body
+    can only see what was declared ABOVE its own declaration. Referencing a
+    global declared later is `Undeclared identifier`, and the error points at
+    the function rather than at the declaration that is in the wrong place.
+
+    This is easy to create by accident: adding a `request.*` call in the
+    calculations section and then reading it from a helper that happens to be
+    declared earlier looks perfectly reasonable in a diff."""
+    declared = _global_declaration_lines(lines)
+    if not declared:
+        return
+    reported = set()
+    for decl_idx, body in iter_function_bodies(lines):
+        decl_line = decl_idx + 1
+        # Names the function introduces itself are not forward references.
+        local = set()
+        header = strip_strings_and_comments(lines[decl_idx]).strip()
+        m_func = FUNC_NAME_RE.match(header)
+        if m_func:
+            params = call_arg_text(header, m_func.group(1) + "(")
+            for part in split_top_level_args(params or ""):
+                bare = part.split("=")[0].strip().split()
+                if bare:
+                    local.add(bare[-1])
+        for _idx, text in body:
+            for m in IDENT_ASSIGN_RE.finditer(text):
+                local.add(m.group(1))
+            m_for = FOR_IN_RE.match(text)
+            if m_for:
+                group = m_for.group(1) or m_for.group(2) or ""
+                for part in group.split(","):
+                    local.add(part.strip())
+        for idx, text in body:
+            for m in re.finditer(r'[A-Za-z_]\w*', text):
+                name = m.group(0)
+                if name in local or name not in declared:
+                    continue
+                if m.start() > 0 and text[m.start() - 1] == '.':
+                    continue
+                if declared[name] <= decl_line:
+                    continue
+                key = (m_func.group(1) if m_func else decl_line, name)
+                if key in reported:
+                    continue
+                reported.add(key)
+                result.add(idx + 1, "PINE055",
+                           "'%s' is declared on line %d, BELOW this function. Pine "
+                           "resolves identifiers in textual order, so a function body "
+                           "can only see what was declared above its own declaration — "
+                           "this is `Undeclared identifier` at compile time, and the "
+                           "error points here rather than at the declaration that is in "
+                           "the wrong place. Move the declaration above the function."
+                           % (name, declared[name]))
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -1991,6 +2089,7 @@ def lint_file(path, cfg):
     check_drawing_in_loop_budget(lines, statements, result)
     check_loop_cost(lines, statements, result, cfg)
     check_var_collection_realtime_growth(lines, result)
+    check_forward_global_reference(lines, result)
 
     file_wide, next_line, same_line = parse_suppressions(lines)
     filtered = []

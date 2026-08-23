@@ -541,6 +541,35 @@ type TrackedLevel
     bool  resolved
     bool  won
 
+// ————— Calculations: intrabar series
+// NOTE ON PLACEMENT: this block sits above the function declarations on
+// purpose. Pine resolves identifiers in textual order, so a function body
+// can only see what was declared ABOVE its own declaration — and
+// buildProfile() reads these arrays. Moving this below the functions is
+// what produced 'Undeclared identifier "ltfVolume"' once already.
+//
+// request.security_lower_tf() has to live at global scope, so the arrays are
+// fetched here and indexed by history offset inside buildProfile().
+//
+// The request itself is unconditional — Pine requires request.* calls at global
+// scope and they cannot be skipped. What the guard changes is the ARGUMENT and
+// whether the result is USED. A timeframe that is not lower than the chart's
+// returns nothing usable, and every consumer below treats an empty result as
+// "fall back to the bar model", so the two cases converge safely.
+float chartSecondsForLtf = math.max(timeframe.in_seconds(timeframe.period), 1)
+bool  intrabarUsable = useIntrabarInput and
+     timeframe.in_seconds(intrabarTfInput) > 0 and
+     timeframe.in_seconds(intrabarTfInput) < chartSecondsForLtf
+string intrabarTf = intrabarUsable ? intrabarTfInput : timeframe.period
+
+// ONE tuple request, not four separate ones. Four calls could in principle
+// return arrays of differing length, and indexing them in lockstep would then
+// read one sub-bar's price against another's volume — a corruption that would
+// look like noise rather than a bug. One call cannot do that, and it costs one
+// slot against the 40-request cap instead of four.
+[ltfHigh, ltfLow, ltfClose, ltfVolume] = request.security_lower_tf(
+     syminfo.tickerid, intrabarTf, [high, low, close, volume])
+
 // ————— Function declarations
 // @function Primary text color — the value column reads first.
 getTextColor(string theme) =>
@@ -902,30 +931,6 @@ int profileRows    = rowsInput
 color textColor  = getTextColor(themeInput)
 color mutedColor = getMutedColor(themeInput)
 string markerStyle = lineStyleFrom(lineStyleInput)
-
-// ————— Calculations: intrabar series
-//
-// request.security_lower_tf() has to live at global scope, so the arrays are
-// fetched here and indexed by history offset inside buildProfile().
-//
-// The request itself is unconditional — Pine requires request.* calls at global
-// scope and they cannot be skipped. What the guard changes is the ARGUMENT and
-// whether the result is USED. A timeframe that is not lower than the chart's
-// returns nothing usable, and every consumer below treats an empty result as
-// "fall back to the bar model", so the two cases converge safely.
-float chartSecondsForLtf = math.max(timeframe.in_seconds(timeframe.period), 1)
-bool  intrabarUsable = useIntrabarInput and
-     timeframe.in_seconds(intrabarTfInput) > 0 and
-     timeframe.in_seconds(intrabarTfInput) < chartSecondsForLtf
-string intrabarTf = intrabarUsable ? intrabarTfInput : timeframe.period
-
-// ONE tuple request, not four separate ones. Four calls could in principle
-// return arrays of differing length, and indexing them in lockstep would then
-// read one sub-bar's price against another's volume — a corruption that would
-// look like noise rather than a bug. One call cannot do that, and it costs one
-// slot against the 40-request cap instead of four.
-[ltfHigh, ltfLow, ltfClose, ltfVolume] = request.security_lower_tf(
-     syminfo.tickerid, intrabarTf, [high, low, close, volume])
 
 // ————— Calculations: bar delta
 //

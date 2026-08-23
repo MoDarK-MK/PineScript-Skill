@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 53 rules spanning codes PINE001–PINE054. The code
+Note on numbering: there are 54 rules spanning codes PINE001–PINE055. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -58,6 +58,7 @@ added *after* the error was hit in real use.
 | `Undeclared identifier 'x'` | **PINE050** | `:=` to a name that was never declared |
 | *(no error — the drawings just vanish)* | **PINE052** | Drawings made in a loop with no `max_*_count` |
 | "Loop takes too long to execute" / script timeout | **PINE053** | A loop nest whose worst case is unbounded |
+| `Undeclared identifier "x"` reported against a function | **PINE055** | A global declared BELOW the function that reads it |
 | *(no error — the array just accumulates)* | **PINE054** | A `var` collection grown on a tick with no confirmation guard |
 | `Pine cannot determine the referencing length…` | *(none yet)* | A dynamic history index without `max_bars_back` |
 
@@ -702,3 +703,32 @@ if not na(ph) and barstate.isconfirmed
 Growing a DRAWING pool is exempt: `while array.size(pool) < needed` converges
 instead of accumulating, so an unguarded `array.push(pool, box.new(...))` is
 correct and the rule does not fire on it.
+
+### PINE055 — error — Function references a global declared later in the file
+Pine resolves identifiers in TEXTUAL order. A function body can only see what
+was declared above its own declaration, so reading a global declared further
+down the file is `Undeclared identifier` at compile time — and the error points
+at the function, which is the one place the problem is not.
+
+This is easy to create by accident. Adding a `request.*` call in the
+calculations section and then reading it from a helper that happens to sit
+higher up looks perfectly reasonable in a diff, and the file still reads top to
+bottom in a sensible order.
+```pinescript
+// bad — "Undeclared identifier ltfVolume", reported against the function
+sumIntrabar(int barsBack) =>
+    array<float> v = ltfVolume[barsBack]
+    na(v) ? 0.0 : array.sum(v)
+
+array<float> ltfVolume = request.security_lower_tf(syminfo.tickerid, "1", volume)
+```
+```pinescript
+// good — the declaration moves above every function that reads it
+array<float> ltfVolume = request.security_lower_tf(syminfo.tickerid, "1", volume)
+
+sumIntrabar(int barsBack) =>
+    array<float> v = ltfVolume[barsBack]
+    na(v) ? 0.0 : array.sum(v)
+```
+Parameters, loop variables and anything the function declares itself are not
+forward references and are never flagged.
