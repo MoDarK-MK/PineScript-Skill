@@ -116,18 +116,27 @@ class TestRefusal(unittest.TestCase):
             self.assertIn("strategy.position_size", proc.stdout)
             self.assertIn("--force", proc.stdout)
 
-    def test_the_repo_strategy_is_correctly_refused(self):
-        """reversal_pro_strategy reads position size, average price, open trades
-        and equity. It genuinely cannot be converted, and the tool saying so is
-        the correct result — not a gap to work around."""
+    def test_a_real_strategy_in_the_workspace_is_correctly_refused(self):
+        """A strategy that reads live position state genuinely cannot be turned
+        into an indicator, and the tool saying so is the correct result rather
+        than a gap to work around.
+
+        Runs against whatever strategies are present. Skips when there are none,
+        because passing on an empty set would prove nothing."""
         from tests.helpers import REPO_ROOT
-        source = (REPO_ROOT / "strategies" / "reversal_pro_strategy" / "src"
-                  / "reversal_pro_strategy.pine")
-        _out, _notes, blockers = s2i.convert(
-            source.read_text(encoding="utf-8"), source.name, force=False)
-        self.assertTrue(blockers)
-        tokens = {token for _ln, token, _src in blockers}
-        self.assertIn("strategy.position_size", tokens)
+        base = REPO_ROOT / "strategies"
+        sources = sorted(base.rglob("src/*.pine")) if base.is_dir() else []
+        if not sources:
+            self.skipTest("no strategy projects present in this checkout")
+        refused = []
+        for source in sources:
+            _out, _notes, blockers = s2i.convert(
+                source.read_text(encoding="utf-8"), source.name, force=False)
+            if blockers:
+                refused.append({token for _ln, token, _src in blockers})
+        self.assertTrue(refused,
+                        msg="no strategy here reads live position state, so this "
+                            "test is not exercising the refusal path any more")
 
 
 if __name__ == "__main__":

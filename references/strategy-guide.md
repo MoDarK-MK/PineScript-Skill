@@ -12,7 +12,7 @@ Three docs divide this territory and none of them repeat each other:
 | **this file** | **Engineering** — how to actually build one that isn't fooling you |
 
 The reference implementation of everything here is
-`strategies/reversal_pro_strategy/src/reversal_pro_strategy.pine`, and
+the worked strategy in this workspace, and
 `assets/templates/strategy_template.pine` is the same machinery with a
 placeholder signal.
 
@@ -327,11 +327,11 @@ if strategy.position_size == 0 and strategy.position_size[1] != 0
 
 ## 10. Reference implementation
 
-`strategies/reversal_pro_strategy/` turns the Reversal Pro indicator's 0-5 pivot
+The worked strategy turns a reversal indicator's 0-5 pivot
 scoring engine into a full strategy: entries at the pivot **confirmation** bar,
 risk-based sizing off an ATR stop, breakeven + trailing resolved into one
 ratcheting stop, TP1/TP2 partials, and every filter in §5.
 
-Read it alongside `indicators/reversal_pro/` to see the same engine used both
+Read it alongside its indicator counterpart to see the same engine used both
 ways — the indicator draws the pivot back where it happened, the strategy trades
 it where it was confirmed. That difference is §2 in one screenshot.

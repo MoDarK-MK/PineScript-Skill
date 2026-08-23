@@ -1,0 +1,25 @@
+// Fixture for the input-inventory tests. It is NOT deliberately broken and it
+// does lint cleanly — it exists so those tests stop depending on a real project
+// file. A test that reads someone's working indicator breaks whenever that
+// indicator is edited, and cannot run at all where it is not checked out.
+//
+// It must keep the two shapes the tests care about: a group= that is a CONSTANT
+// rather than a literal, and a tooltip written as concatenated string parts.
+//@version=6
+indicator("Inputs Fixture", overlay=true)
+
+string SW_GROUP = "Swing Detection"
+string AP_GROUP = "Appearance"
+
+int  pivotLenInput = input.int(
+     10, "Pivot Length", minval=2, maxval=200, group=SW_GROUP,
+     tooltip="How many bars either side a high or low must lead to count as a " +
+     "swing point. Raise it for fewer, bigger swings; lower it for more, " +
+     "smaller ones.")
+bool showLabelsInput = input.bool(
+     true, "Show Labels", group=AP_GROUP,
+     tooltip="Hides the labels without changing any calculation.")
+color lineColorInput = input.color(#2962ff, "Line Color", group=AP_GROUP)
+
+plot(ta.sma(close, pivotLenInput), title="SMA", color=lineColorInput,
+     display=showLabelsInput ? display.all : display.none)

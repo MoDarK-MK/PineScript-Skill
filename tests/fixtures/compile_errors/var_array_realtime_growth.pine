@@ -1,6 +1,6 @@
 // FIXTURE — must be caught by PINE054
 // TradingView says: No error at all — the array just accumulates entries for conditions that never finished.
-// Shipped twice: swing_volume_profile recorded phantom pivots and reversal_pro recorded phantom order blocks.
+// Shipped twice: phantom pivots in one script, phantom order blocks in another.
 //
 // This file is DELIBERATELY broken. It is never scaffolded, published or
 // linted by CI — tests/test_compile_error_corpus.py asserts PINE054 still

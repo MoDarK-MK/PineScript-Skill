@@ -3,7 +3,8 @@
 Why things are the way they are. Short entries, one decision each, newest last.
 
 This file exists because of a specific failure. `max_bars_back` was removed from
-`reversal_pro` on the reasoning that a bounded scan made it unnecessary. That
+a reversal indicator here, on the reasoning that a bounded scan made it
+unnecessary. That
 reasoning was wrong — Pine cannot infer buffer depth from a dynamic index no
 matter how tightly the loop is bounded — and it had to be reverted. The
 information needed to avoid that was known and simply not written down anywhere
@@ -47,25 +48,9 @@ not order flow and no file here claims it is.
 
 ---
 
-## D3 — `swing_volume_profile` does not use `request.security_lower_tf()`
-
-**Decided:** the per-swing profile splits volume with D2 rather than reading
-intrabar data.
-
-**Why:** the target chart is 5-minute. The finest intrabar resolution available
-without a Premium plan is 1 minute — **five sub-bars per candle**. That is
-barely better than the range split and far more expensive, and seconds
-resolutions fail the entire script on a non-Premium plan (PINE044).
-
-**Would change our mind:** a higher target timeframe, where a 1-minute request
-buys 15 or 60 sub-bars instead of 5. `indicators/volume_pro` is where intrabar
-genuinely pays off, and that is why the two scripts differ.
-
----
-
 ## D4 — Delta is shown as bar colouring, not as a CVD pane
 
-**Decided:** `volume_pro` tints candles by whether buying or selling dominated,
+**Decided:** the footprint script tints candles by whether buying or selling dominated,
 and leaves CVD in the data window.
 
 **Why:** a real CVD pane needs `overlay = false`. The footprint needs
@@ -79,7 +64,7 @@ different script, not a setting.
 
 ## D5 — The shared scoring engine is duplicated, and held identical by a test
 
-**Decided:** `reversal_pro` and `reversal_pro_strategy` each contain a full copy
+**Decided:** the reversal indicator and its strategy counterpart each contain a full copy
 of the scoring engine, delimited by `SHARED SCORING ENGINE BEGIN/END` markers
 and compared byte-for-byte by `tests/test_shared_engine.py`.
 
@@ -173,28 +158,6 @@ fixture corpus exists because the honest answer to a missed error is a new
 rule, not a louder claim.
 
 **Would change our mind:** TradingView publishing a compiler API.
-
----
-
-### D11 — The hit rate measures the levels that are drawn, not an easier proxy
-
-**Decided:** `swing_volume_profile` records the entry level each swing would
-have produced, at the moment that swing closes, and follows it.
-
-**Why:** measuring something adjacent — every POC, say, or every value-area edge
-— would have been simpler and would have produced a bigger sample faster. It
-would also have been a number that looks like evidence for the line on screen
-while being about a different thing. If the statistic and the drawing disagree
-about what a "level" is, the statistic is decoration.
-
-**What would change our mind:** nothing about the principle. If the sample turns
-out to be too small to be useful on slow symbols, the fix is to say so in the
-table (it greys the number under 20 samples), not to measure something else.
-
-**Also decided:** when one bar covers both the target and the stop, the outcome
-is counted as a LOSS. The order they happened in is unknowable from bar data,
-and resolving the ambiguity in our own favour would inflate every number in the
-block. Conservative and stated, rather than accurate-looking and unfalsifiable.
 
 ---
 

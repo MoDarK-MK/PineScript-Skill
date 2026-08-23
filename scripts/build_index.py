@@ -30,7 +30,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import pine_lint  # noqa: E402
 
-PROJECT_PARENTS = ["indicators", "strategies", "libraries"]
+# indicators/ and strategies/ are deliberately absent: they are private trading
+# work (see .gitignore) and the generated README must never list them, on this
+# machine or any other. Listing a project whose files are not in the repo would
+# also produce a README full of broken links.
+PROJECT_PARENTS = ["libraries"]
 TARGETS = ["README.md", "SKILL.md"]
 
 TREE_ROOTS = ["scripts", "references", "references/snippets", "assets/templates"]

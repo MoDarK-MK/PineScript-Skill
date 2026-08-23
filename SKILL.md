@@ -61,8 +61,8 @@ project-root/
 └── .pine-lint.json   (optional shared lint config overrides)
 ```
 
-Worked examples live in the repo: `indicators/reversal_pro/` and
-`strategies/reversal_pro_strategy/` are the same pivot-scoring engine used both
+Where a workspace has them, an indicator and its strategy counterpart
+can share one scoring engine, used both
 ways — read them side by side when you need a concrete reference.
 
 Scaffold a new one (pre-fills the professional template, `version.json` at `0.1.0`,
@@ -127,7 +127,7 @@ with `.set_*()` instead of delete-and-recreate (PINE038), and merge
 Give every input used as a history offset a `maxval`, or a large value produces a
 runtime error that reads like a script bug.
 
-`indicators/reversal_pro/` is the worked example of all of this.
+A completed indicator project in the workspace is the worked example of all of this.
 
 ## Building strategies
 

@@ -1,6 +1,6 @@
 // FIXTURE — must be caught by PINE055
 // TradingView says: Undeclared identifier "ltfVolume" — pointing at the function, not at the declaration.
-// Shipped once: swing_volume_profile v0.6.0 put its request.security_lower_tf() block below the function that reads it.
+// Shipped once: a request.security_lower_tf() block was placed below the function that reads it.
 //
 // This file is DELIBERATELY broken. It is never scaffolded, published or
 // linted by CI — tests/test_compile_error_corpus.py asserts PINE055 still

@@ -47,7 +47,7 @@ results from it are optimistic in a way that does not show up as an error.
 **B** offsets the expression by one HTF bar, so it reads only the last CLOSED
 HTF bar, then uses `lookahead_on` to align that closed value to the correct
 chart bars. The offset is what makes the lookahead safe. This pair is the
-standard non-repainting idiom, and it is what `reversal_pro` uses for its
+standard non-repainting idiom, and it is what the reversal indicator here uses for its
 previous-day/week/month levels.
 
 **C** is the actual mistake. `lookahead_on` without the offset lets historical
@@ -83,12 +83,14 @@ Three things that bite:
   intrabar data is available — deep history usually returns nothing.
 - Seconds-based resolutions (`"1S"`, `"5S"`) require a **Premium** plan, and on
   a lower plan the request fails the ENTIRE script, not just that call. See
-  PINE044, and `indicators/volume_pro` for the input-gated fallback pattern.
+  PINE044 for the input-gated fallback pattern.
 
-`indicators/swing_volume_profile` deliberately does not use this at all — on a
-5-minute chart the finest non-Premium resolution is 1 minute, five sub-bars per
-candle, barely better than a range-based split and far more expensive. Recorded
-in `decisions.md`.
+Weigh the cost honestly before reaching for it. On a 5-minute chart the finest
+non-Premium resolution is 1 minute — five sub-bars per candle. That is still a
+real improvement over modelling the spread from one bar, and it compounds
+through everything built on those rows, but it is five times the work and the
+intrabar budget runs out on older history. Build the fallback first, then add
+the request.
 
 ---
 
@@ -171,7 +173,7 @@ The first is a design choice. The second is unavoidable and the reason
 wrong, and combination **C** above is how it usually gets in.
 
 A live price readout SHOULD repaint — that is what "live" means. A signal that
-claims to be confirmed should not. `reversal_pro` gates its alerts on
+claims to be confirmed should not. The reversal indicator here gates its alerts on
 `barstate.isconfirmed` by default for exactly this reason: a pivot can form
 mid-bar and vanish before the bar closes, and an alert saying "confirmed" must
 not fire on one that was not.

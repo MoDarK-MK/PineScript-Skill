@@ -21,8 +21,11 @@ project-root/
                         max line length or disabling a specific rule)
 ```
 
-This repo ships two worked examples in that shape: `indicators/reversal_pro/` and
-`strategies/reversal_pro_strategy/`.
+`scaffold_project.py` creates a project in exactly that shape.
+
+Note that `indicators/` and `strategies/` are **git-ignored** in this repo: the
+toolchain is public and the trading work built with it is not. They exist on
+disk and every script here operates on them normally.
 
 ## Sharing code between projects
 
@@ -30,7 +33,7 @@ Pine Script has **no local file imports** — you cannot `import` a `.pine` file
 from disk. There are only two real options:
 
 1. **Copy the block and maintain both sides.** This is what
-   `strategies/reversal_pro_strategy/` does with the `reversal_pro` scoring
+   a strategy does with its indicator's scoring
    engine. The rule: a change to the shared logic must be applied to both files
    **in the same commit**, and both projects get a version bump. Mark the region
    with a comment so the boundary is obvious to the next reader.

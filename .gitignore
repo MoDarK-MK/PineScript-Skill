@@ -9,6 +9,16 @@ __pycache__/
 Thumbs.db
 .DS_Store
 
+# ————— PRIVATE TRADING WORK — never published
+# The indicators and strategies in this repo are the owner's own trading work.
+# The toolchain is public; the edge is not. These directories stay on disk and
+# every local script still operates on them — they are simply never tracked.
+#
+# Adding a new one? It is covered automatically. Removing these two lines is the
+# only way to expose them again, and that should take a deliberate commit.
+/indicators/
+/strategies/
+
 # Generated release bundles inside scaffolded projects
 **/release/
 

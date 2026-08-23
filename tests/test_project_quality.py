@@ -74,7 +74,7 @@ class TestInputDocumentation(unittest.TestCase):
     def test_inventory_resolves_group_constants(self):
         """group=SW_GROUP must render as the heading the user sees, not as the
         constant's name — the first version of this tool shipped the latter."""
-        source = input_inventory.resolve_source(REPO_ROOT / "indicators" / "swing_volume_profile")
+        source = REPO_ROOT / "tests" / "fixtures" / "inputs_sample.pine"
         groups = {i["group"] for i in
                   input_inventory.extract_inputs(source.read_text(encoding="utf-8"))}
         self.assertIn("Swing Detection", groups)
@@ -84,7 +84,7 @@ class TestInputDocumentation(unittest.TestCase):
         """Pine has no multi-line string, so every long tooltip is written as
         "part one " + "part two". Rendering the expression verbatim is what the
         first version did, and the tables were unreadable."""
-        source = input_inventory.resolve_source(REPO_ROOT / "indicators" / "swing_volume_profile")
+        source = REPO_ROOT / "tests" / "fixtures" / "inputs_sample.pine"
         tips = [i["tooltip"] for i in
                 input_inventory.extract_inputs(source.read_text(encoding="utf-8"))
                 if i["tooltip"]]
