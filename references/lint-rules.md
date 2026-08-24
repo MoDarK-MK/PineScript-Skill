@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 56 rules spanning codes PINE001–PINE057. The code
+Note on numbering: there are 57 rules spanning codes PINE001–PINE058. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -59,6 +59,7 @@ added *after* the error was hit in real use.
 | *(no error — the drawings just vanish)* | **PINE052** | Drawings made in a loop with no `max_*_count` |
 | "Loop takes too long to execute" / script timeout | **PINE053** | A loop nest whose worst case is unbounded |
 | `Undeclared identifier "x"` reported against a function | **PINE055** | A global declared BELOW the function that reads it |
+| *(no error — the wrong value is simply used)* | **PINE058** | A name shadowing a built-in namespace, then dereferenced |
 | *(no error — the array just accumulates)* | **PINE054** | A `var` collection grown on a tick with no confirmation guard |
 | `Pine cannot determine the referencing length…` | *(none yet)* | A dynamic history index without `max_bars_back` |
 
@@ -769,3 +770,25 @@ if value == value
 if na(value)
     doSomething()
 ```
+
+### PINE058 — error — Name shadows a built-in namespace
+A parameter or variable named after a built-in namespace (`format`, `label`,
+`color`, `math`, `str`, …) shadows it inside that scope. The rule fires only
+when the shadow is also DEREFERENCED — `name.something` — because that is when
+it does damage, and flagging every `string label` would make the rule noise.
+
+Nothing errors when it happens. Passing the wrong thing to a function that
+accepts it is legal, so the damage surfaces as wrong output rather than a
+compile failure.
+```pinescript
+// bad — `format.mintick` reads the PARAMETER, a string
+payload(float price, string format) =>
+    str.tostring(price, format.mintick)
+```
+```pinescript
+// good
+payload(float price, string style) =>
+    str.tostring(price, format.mintick)
+```
+This shipped in this repo, and was found by EXECUTING the script offline rather
+than by reading it — see `scripts/pine_interp/`.

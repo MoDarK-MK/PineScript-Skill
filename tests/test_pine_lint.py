@@ -13,7 +13,7 @@ class TestRuleCatalog(unittest.TestCase):
     def test_catalog_endpoints_and_pine024(self):
         self.assertNotIn("PINE024", pine_lint.RULES)
         self.assertIn("PINE001", pine_lint.RULES)
-        self.assertIn("PINE057", pine_lint.RULES)
+        self.assertIn("PINE058", pine_lint.RULES)
 
     def test_list_rules_cli_prints_every_rule(self):
         # Derived from the catalog on purpose: a hand-maintained count here was
@@ -1060,4 +1060,39 @@ if close > open
 plot(x, title="C")
 """
         self.assertNotIn("PINE057", codes(lint_text(src)))
+
+
+class TestNamespaceShadowing(unittest.TestCase):
+    """PINE058. Both halves are required — the shadow AND the dereference."""
+
+    def test_a_shadow_that_is_dereferenced_is_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+payload(float price, string format) =>
+    str.tostring(price, format.mintick)
+plot(close, title="C")
+"""
+        self.assertIn("PINE058", codes(lint_text(src)))
+
+    def test_a_shadow_that_is_never_dereferenced_is_not(self):
+        """`string label` is everywhere in this repo and harmless. Flagging it
+        would make the rule noise and get it switched off."""
+        src = """//@version=6
+indicator("T", overlay=true)
+row(string label, string value) =>
+    label + ": " + value
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE058", codes(lint_text(src)))
+
+    def test_a_named_argument_on_a_wrapped_line_is_not_a_declaration(self):
+        """The first version flagged `location=location.belowbar` on a
+        continuation line, because a wrapped named argument looks exactly like
+        a declaration when you read one line at a time."""
+        src = """//@version=6
+indicator("T", overlay=true)
+plotshape(close > open, title="X", style=shape.circle,
+     location=location.belowbar, color=color.green, size=size.tiny)
+"""
+        self.assertNotIn("PINE058", codes(lint_text(src)))
 

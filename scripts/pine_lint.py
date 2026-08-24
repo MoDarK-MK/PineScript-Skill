@@ -126,6 +126,7 @@ RULES = {
     "PINE055": ("error", "Function references a global declared later in the file"),
     "PINE056": ("info", "Function declared but never called"),
     "PINE057": ("warning", "Condition is constant — always true or always false"),
+    "PINE058": ("error", "Name shadows a built-in namespace"),
 }
 
 # Rules --fix can repair mechanically. Every one of these has exactly one
@@ -2144,6 +2145,79 @@ def check_constant_condition(lines, result):
                           m.group(1)))
 
 
+# @rule PINE058
+BUILTIN_NAMESPACES = frozenset({
+    "math", "ta", "array", "matrix", "map", "str", "color", "label", "line",
+    "box", "table", "polyline", "linefill", "request", "syminfo", "timeframe",
+    "barstate", "strategy", "input", "format", "display", "position", "size",
+    "location", "shape", "extend", "order", "alert", "session", "xloc", "yloc",
+    "chart", "runtime", "currency", "dayofweek", "text", "font", "scale",
+    "barmerge", "adjustment", "plot", "hline", "earnings", "dividends",
+    "splits", "math_pi",
+})
+
+
+def check_namespace_shadowing(lines, result):
+    """PINE058 — a name shadows a built-in namespace AND is dereferenced.
+
+    Both halves are required. A parameter called `label` is harmless until
+    something in that scope writes `label.new(...)`, at which point the shadow
+    wins and the call reads the parameter. Flagging the name alone would fire
+    on every `string label` in the repo and get the rule switched off; flagging
+    the dereference alone would miss where the shadow came from.
+
+    This shipped here: `entryAlertPayload(..., string format)` used
+    `format.mintick` in its body, so the price was formatted with the string
+    "Text" instead of the tick format. Nothing errored — passing a string to a
+    function that accepts one is legal — so it showed up as wrong text in an
+    alert. Found by RUNNING the script, not by reading it.
+    """
+    reported = set()
+
+    def flag(line_no, name, where):
+        if (line_no, name) in reported:
+            return
+        reported.add((line_no, name))
+        result.add(line_no, "PINE058",
+                   "'%s' shadows the built-in namespace of the same name, and %s "
+                   "dereferences it as '%s.something'. The shadow wins, so that "
+                   "reads THIS value instead of the built-in — and nothing errors, "
+                   "because passing the wrong thing to a function that accepts it "
+                   "is legal. Rename it." % (name, where, name))
+
+    # 1. Function parameters, checked against their own body.
+    for decl_idx, body in iter_function_bodies(lines):
+        head = strip_strings_and_comments(lines[decl_idx]).strip()
+        m = FUNC_NAME_RE.match(head)
+        if not m:
+            continue
+        params = call_arg_text(head, m.group(1) + "(")
+        body_text = " ".join(text for _idx, text in body)
+        for part in split_top_level_args(params or ""):
+            bare = part.split("=")[0].strip().split()
+            if not bare:
+                continue
+            name = bare[-1]
+            if name in BUILTIN_NAMESPACES and re.search(
+                    r'(?<![.\w])' + re.escape(name) + r'\s*\.', body_text):
+                flag(decl_idx + 1, name, "its body")
+
+    # 2. Declarations at global scope, checked against the whole file.
+    joined = " ".join(strip_strings_and_comments(l) for l in lines)
+    for i, text, depths in _lines_with_depths(lines):
+        if not text.strip() or indent_width(lines[i]) != 0:
+            continue
+        for m in IDENT_ASSIGN_RE.finditer(text):
+            if depths[m.start()] != 0 or m.group(2) != "=":
+                continue
+            if m.start() > 0 and text[m.start() - 1] == '.':
+                continue
+            name = m.group(1)
+            if name in BUILTIN_NAMESPACES and re.search(
+                    r'(?<![.\w])' + re.escape(name) + r'\s*\.', joined):
+                flag(i + 1, name, "the file")
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -2221,6 +2295,7 @@ def lint_file(path, cfg):
     check_forward_global_reference(lines, result)
     check_unused_function(lines, result)
     check_constant_condition(lines, result)
+    check_namespace_shadowing(lines, result)
 
     file_wide, next_line, same_line = parse_suppressions(lines)
     filtered = []

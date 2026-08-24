@@ -11,13 +11,14 @@ Transform your TradingView Pine Script ideas into **production-ready indicators 
 
 Most Pine Script traders treat each indicator as a one-off script. Pine Script Skill treats them like **real projects**:
 
-- 🔍 **56-Rule Linter** — v6 compile errors, repainting traps, scope violations, performance costs, invisible dashboard text. Six rules repair themselves with `--fix`
+- 🔍 **57-Rule Linter** — v6 compile errors, repainting traps, scope violations, performance costs, invisible dashboard text. Six rules repair themselves with `--fix`
+- ▶️ **It Runs The Code** — a Pine interpreter in Python executes a script offline, bar by bar, with real series history. Not a lint pass: actual execution, with parameter sweeps and every approximation reported
 - 🧠 **Real Static Analysis** — A symbol table catches `:=` to an undeclared name (TradingView's `Undeclared identifier`) and variables written but never read. Loop nests are costed at their worst case against Pine's 500 ms limit
 - 🎨 **Formatter** — `pine_fmt.py --check` in CI. It never touches block indentation, because in Pine that is structure, not style
 - 📋 **Professional Templates** — Scaffold indicators/strategies with theme-aware dashboards, test blocks, and best-practice structure
 - 🛡️ **Strategy Risk Modules** — Risk-% sizing, ATR stops, breakeven + trailing, TP1/TP2 partials, session and date-window filters, account-level guards — wired together and ready to use
 - ✅ **In-Script Testing** — Assertions inside your Pine code; results show in a test-mode table
-- 🧬 **Tests That Are Themselves Tested** — `mutate_check.py` disables each lint rule and confirms the suite goes red. Its first run found 16 of 56 rules with no test at all
+- 🧬 **Tests That Are Themselves Tested** — `mutate_check.py` disables each lint rule and confirms the suite goes red. Its first run found 16 of 57 rules with no test at all
 - 📦 **Automated Releases** — Lint report, version bump, changelog, git tag, publish description, and a generated table of every setting
 - ⚡ **Live & Fast** — Work-tiering and memoization so a dashboard tracks price tick-by-tick without re-running heavy scans
 - 📚 **12 Reference Guides** — including a multi-timeframe guide, a symptom-first troubleshooting index, and a decision record
@@ -126,6 +127,7 @@ PineScript-Skill/
 │   ├── new_rule.py
 │   ├── pine_fmt.py
 │   ├── pine_lint.py
+│   ├── pine_run.py
 │   ├── publish.py
 │   ├── scaffold_project.py
 │   └── strategy_to_indicator.py
@@ -160,6 +162,7 @@ PineScript-Skill/
 │   ├── test_docs_consistency.py
 │   ├── test_generate_release_bundle.py
 │   ├── test_new_tooling.py
+│   ├── test_pine_interp.py
 │   ├── test_pine_lint.py
 │   ├── test_project_quality.py
 │   ├── test_scaffold_project.py
@@ -198,7 +201,7 @@ python3 scripts/pine_lint.py FILE --watch            # re-lint on every save
 python3 scripts/pine_lint.py FILE --format editor    # path:line:col, for editors
 python3 scripts/pine_lint.py FILE --format github    # CI annotations on the diff
 
-# List all 56 rules (rules marked [--fix] can be repaired automatically)
+# List all 57 rules (rules marked [--fix] can be repaired automatically)
 python3 scripts/pine_lint.py --list-rules
 
 # Explain one rule in full
@@ -283,7 +286,7 @@ python3 scripts/mutate_check.py --only PINE045
 
 Disables one lint rule at a time and re-runs the suite. A rule whose absence
 changes nothing has no test that can detect it breaking. The first run found 16
-of 56 rules in exactly that state.
+of 57 rules in exactly that state.
 
 ### **strategy_to_indicator.py** — Alert-Only View of a Strategy
 ```bash
@@ -295,6 +298,34 @@ and direction, and comments out the risk guards. **It refuses** when the
 strategy reads live position state, and names every blocking line — an indicator
 has no position, and faking one would produce alerts that disagree with the
 backtest they claim to mirror.
+
+### **pine_run.py** — Actually Execute The Script
+```bash
+python3 scripts/pine_run.py FILE --bars 400
+python3 scripts/pine_run.py FILE --csv data.csv --var swings --var boxesUsed
+python3 scripts/pine_run.py FILE --set "Price Rows Per Swing=200"
+python3 scripts/pine_run.py FILE --sweep "Price Rows Per Swing=30,60,120,240"
+```
+
+The 57 lint rules match **patterns**. This runs the **code** — bar by bar, with
+real series history, `var` persistence, user functions, UDTs, arrays and
+`if`/`for`/`while`/`switch` as expressions — and reports what came out.
+
+It is the difference between "this looks like it compiles" and "this produced
+484 boxes across 4 swings with the POC at 104.22". Because `input.*()` reads
+from an override map instead of the source, `--sweep` runs the same file under
+many settings without editing anything.
+
+**Every run prints its approximations.** Offline there is no intrabar data, no
+higher-timeframe series and no order execution, and a result depending on any
+of those is not exact. Saying so beside the number is the only honest way to
+show it.
+
+What it does not do, stated because a partial interpreter that hides its edges
+is worse than none: confirmed bars only (no realtime ticks, so tick-order bugs
+belong to the linter), no `request.*` data, and an unimplemented builtin
+**raises** instead of returning `na` — a value invented there would travel
+silently into every result downstream.
 
 ### **doctor.py** — One Command, One Verdict
 ```bash
@@ -434,7 +465,7 @@ Every script benefits from these docs; required reading before shipping:
 | **[decisions.md](references/decisions.md)** | Decision record — what was decided, why, and what would change our mind |
 | **[pine-v6-guide.md](references/pine-v6-guide.md)** | v5→v6 breaking changes, platform limits, dynamic requests, repainting traps, `var`/`varip` semantics |
 | **[style-guide.md](references/style-guide.md)** | Official naming conventions (camelCase/SNAKE_CASE), section order, spacing, line wrapping |
-| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 56 lint rules (codes PINE001–PINE057; PINE024 unassigned) with examples and rationale |
+| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 57 lint rules (codes PINE001–PINE058; PINE024 unassigned) with examples and rationale |
 | **[performance-guide.md](references/performance-guide.md)** | Keeping a script fast AND live: work tiering, memoization, buffer reuse, drawing updates, var vs varip |
 | **[strategy-guide.md](references/strategy-guide.md)** | Building strategies: signal design, position sizing math, the four risk modules, filters, overfitting, walk-forward |
 | **[design-system.md](references/design-system.md)** | Theming, gradients, multi-color palettes, watermarks, dashboard patterns |
@@ -509,12 +540,14 @@ multiple ±25% and see whether the result degrades gracefully or collapses.
 
 | | |
 |---|---|
-| **56 lint rules** | PINE001–PINE057 (PINE024 vacant), fact-checked against TradingView's docs; 6 auto-fixable |
+| **57 lint rules** | PINE001–PINE058 (PINE024 vacant), fact-checked against TradingView's docs; 6 auto-fixable |
+| **Offline execution** | `pine_run.py` runs a script bar by bar over real or synthetic OHLCV, with series history and `var` semantics |
+| **Parameter sweeps** | One file, many settings — `input.*()` reads from an override map |
 | **Symbol table** | Undeclared `:=` targets, unused and write-only variables |
 | **Cost analysis** | Loop nests costed at their inputs' `maxval`; drawings made in loops checked against `max_*_count` |
 | **Formatter** | `--check` gate in CI; never re-indents, never collapses alignment columns |
 | **230 tests** | stdlib `unittest`, zero dependencies |
-| **Mutation-checked** | 56/56 rules verified to have a test that fails when the rule is disabled |
+| **Mutation-checked** | 57/57 rules verified to have a test that fails when the rule is disabled |
 | **Strategy risk modules** | Risk-% sizing, ATR stops, breakeven, trailing, partials, filters, `strategy.risk.*` account guards |
 | **Backtest realism gate** | Blocks lookahead bias, synthetic chart types, zero-cost backtests |
 | **In-script testing** | Assertion counter inside the Pine file; no external runner |
@@ -541,6 +574,7 @@ python scripts/lint_all.py                       # every source .pine, strict
 python scripts/pine_fmt.py FILE --check          # formatting gate
 python scripts/build_index.py --check            # generated docs are current
 python scripts/check_library_sync.py             # inlined library copies match
+python scripts/pine_run.py FILE --bars 300       # execute it, offline
 python scripts/doctor.py --fast                  # all of the above, one verdict
 python scripts/mutate_check.py                   # ~8 min; see below
 ```
@@ -553,7 +587,7 @@ and — on pushes to `main` only — the mutation run.
 they would fail if the thing they test broke, and a test that cannot fail is
 worth nothing. `mutate_check.py` disables one lint rule at a time and re-runs
 the suite; a rule whose absence changes nothing is one the next refactor can
-delete silently. The first run found **16 of 56 rules in exactly that state** —
+delete silently. The first run found **16 of 57 rules in exactly that state** —
 nearly a third of the catalog, invisible while everything reported OK.
 
 **Adding a lint rule.** `scripts/new_rule.py` scaffolds the catalog entry, the

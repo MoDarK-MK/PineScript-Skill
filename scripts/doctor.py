@@ -138,6 +138,38 @@ def check_part_builds():
     return PASS, f"{projects} project(s) match their parts"
 
 
+def check_interpreter():
+    """Runs every project through the Pine interpreter.
+
+    Not a lint pass — actual EXECUTION. A script that lints clean and cannot
+    run is exactly the combination this repo kept shipping."""
+    script = ROOT / "scripts" / "pine_run.py"
+    if not script.exists():
+        return SKIP, "pine_run.py not present"
+    targets = []
+    for base in ("indicators", "strategies", "libraries"):
+        d = ROOT / base
+        if not d.is_dir():
+            continue
+        for project in sorted(d.iterdir()):
+            src = project / "src"
+            if not src.is_dir():
+                continue
+            found = [f for f in sorted(src.glob("*.pine"))]
+            if len(found) == 1:
+                targets.append(found[0])
+    if not targets:
+        return SKIP, "no projects to run"
+    failed = []
+    for path in targets:
+        code, out = run(py("scripts/pine_run.py", str(path), "--bars", "150"))
+        if code != 0:
+            failed.append(f"{path.parent.parent.name}: {out.strip().splitlines()[-1][:70]}")
+    if failed:
+        return FAIL, "; ".join(failed)
+    return PASS, f"{len(targets)} script(s) executed over 150 bars"
+
+
 def check_mutation():
     code, out = run(py("scripts/mutate_check.py"))
     summary = next((l for l in out.splitlines() if "rule(s)" in l or "unprotected" in l), "")
@@ -154,6 +186,7 @@ CHECKS = [
     Check("drawing budgets", check_budgets),
     Check("persian reference", check_fa_reference),
     Check("part builds", check_part_builds),
+    Check("interpreter run", check_interpreter),
     Check("rule mutation", check_mutation, slow=True),
 ]
 

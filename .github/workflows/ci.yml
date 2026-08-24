@@ -39,6 +39,11 @@ jobs:
       - name: Declared resource budgets
         run: python scripts/check_budget.py
 
+      - name: A scaffolded project executes in the interpreter
+        run: |
+          python scripts/scaffold_project.py --kind indicator --name ci_run --out /tmp/ciproj
+          python scripts/pine_run.py /tmp/ciproj/ci_run/src/ci_run.pine --bars 150
+
   generated-docs:
     name: Generated docs are current
     runs-on: ubuntu-latest
