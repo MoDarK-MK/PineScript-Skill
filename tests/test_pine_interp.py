@@ -368,23 +368,68 @@ class TestRealIndicator(unittest.TestCase):
                     self.assertGreater(pct, 99.0,
                                        f"swing {i} covers only {pct:.1f}% of its span")
 
-    def test_whole_chart_mode_stays_inside_tradingview_limits(self):
-        """Every swing on the chart, and still under 500 boxes, 500 lines and
-        500 labels — crossing any of those drops the oldest drawings silently."""
-        r = run_file(str(PROJECT), synthetic_bars(600), platform=self.platform,
-                     inputs={"Cover The Whole Chart": True, "Price Rows Per Swing": 60})
+    def test_a_high_swing_count_stays_inside_tradingview_limits(self):
+        """The swing count is uncapped now. Crossing 500 boxes, lines or labels
+        drops the oldest drawings with no error at all, so the script has to
+        stay under them by itself."""
+        r = run_file(str(PROJECT), synthetic_bars(700), platform=self.platform,
+                     inputs={"Swings To Show": 500, "Price Rows Per Swing": 60,
+                             "Pivot Length": 5})
         self.assertGreater(len(r.global_value("swings").items), 6,
-                           "whole-chart mode kept no more swings than the default")
+                           "a high swing count kept no more swings than the default")
         for kind in ("box", "line", "label"):
             with self.subTest(kind=kind):
                 self.assertLessEqual(r.count_drawings(kind), 500)
 
-    def test_whole_chart_mode_still_covers_every_span(self):
-        r = run_file(str(PROJECT), synthetic_bars(600), platform=self.platform,
-                     inputs={"Cover The Whole Chart": True, "Price Rows Per Swing": 60})
+    def test_a_high_swing_count_still_covers_every_span(self):
+        r = run_file(str(PROJECT), synthetic_bars(700), platform=self.platform,
+                     inputs={"Swings To Show": 500, "Price Rows Per Swing": 60,
+                             "Pivot Length": 5})
         for i, pct in enumerate(self.span_coverage(r)):
             self.assertGreater(pct, 99.0,
                                f"swing {i} covers only {pct:.1f}% of its span")
+
+    def test_the_entry_search_does_not_grow_with_the_swing_count(self):
+        """The entry search is the ONE calculation that reruns on every price
+        change, and it costs a pass over a swing's rows per swing. Unbounded, at
+        500 swings of 500 rows that is a quarter of a million array reads
+        between one tick and the next — so raising the swing limit without
+        bounding this would stall the script at exactly the settings the raised
+        limit exists for."""
+        from pine_interp.engine import Interpreter
+        source = PROJECT.read_text(encoding="utf-8")
+        bars = synthetic_bars(700)
+
+        def searches(swing_setting):
+            interp = Interpreter(source, bars, platform=self.platform,
+                                 inputs={"Swings To Show": swing_setting,
+                                         "Price Rows Per Swing": 60,
+                                         "Pivot Length": 5})
+            seen = [0]
+            original = interp.call_user
+
+            def counting(name, pos, named, node):
+                if name == "bestEntry":
+                    seen[0] += 1
+                return original(name, pos, named, node)
+
+            interp.call_user = counting
+            interp.run()
+            kept = len(interp.globals.lookup("swings").get(0).items)
+            return seen[0], kept
+
+        few, few_kept = searches(10)
+        many, many_kept = searches(500)
+        self.assertGreater(many_kept, few_kept + 20,
+                           "the two runs kept a similar number of swings, so this "
+                           "proves nothing about the bound")
+        # Each completed swing registers one level for the hit-rate tracker, so
+        # the totals differ by that; what must NOT scale is the per-tick search.
+        per_tick_few = few - few_kept
+        per_tick_many = many - many_kept
+        self.assertLessEqual(per_tick_many, per_tick_few + 20,
+                             f"the per-tick entry search grew from {per_tick_few} "
+                             f"to {per_tick_many} with the swing count")
 
     def test_thinning_only_happens_when_the_budget_is_spent(self):
         for rows in (30, 400):
