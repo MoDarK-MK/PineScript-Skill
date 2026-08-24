@@ -1096,3 +1096,59 @@ plotshape(close > open, title="X", style=shape.circle,
 """
         self.assertNotIn("PINE058", codes(lint_text(src)))
 
+
+class TestUnterminatedString(unittest.TestCase):
+    """PINE059. Pine has no multi-line string, so a quote left open at the end
+    of a line cannot compile. This reached a chart twice before the rule
+    existed, because bracket counting stays balanced across the break and the
+    file lints clean."""
+
+    def test_a_string_left_open_at_end_of_line_is_flagged(self):
+        # Built by joining lines: the defect IS a real newline inside a string
+        # literal, so writing it as one ordinary literal is impossible.
+        src = "\n".join([
+            "//@version=6",
+            'indicator("T", overlay=true)',
+            'float x = input.float(1.0, "M", tooltip="How far ahead." +',
+            '     "',
+            "",
+            'Without a floor the nearest row is the one beside it." )',
+            'plot(x, title="C")',
+        ])
+        self.assertIn("PINE059", codes(lint_text(src)))
+
+    def test_the_escape_written_correctly_is_not_flagged(self):
+        """The same tooltip carrying the two characters backslash-n, which is
+        what it was meant to say all along."""
+        src = """//@version=6
+indicator("T", overlay=true)
+float x = input.float(1.0, "M", tooltip="How far ahead." +
+     "\\n\\nWithout a floor the nearest row is the one beside it.")
+plot(x, title="C")
+"""
+        self.assertNotIn("PINE059", codes(lint_text(src)))
+
+    def test_an_apostrophe_inside_a_double_quoted_string_is_not_an_opener(self):
+        """Counting quotes trips here and calls the line unterminated. The rule
+        walks the line instead, so the apostrophe is just text."""
+        src = """//@version=6
+indicator("T", overlay=true)
+plot(close, title="the swing's high")
+"""
+        self.assertNotIn("PINE059", codes(lint_text(src)))
+
+    def test_a_double_slash_inside_a_string_does_not_start_a_comment(self):
+        """Stripping the comment first would cut the string in half and report
+        the remainder as unterminated."""
+        src = """//@version=6
+indicator("T", overlay=true)
+plot(close, title="https://example.com")
+"""
+        self.assertNotIn("PINE059", codes(lint_text(src)))
+
+    def test_an_escaped_quote_does_not_close_the_string(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+plot(close, title="he said \\"hi\\" and left")
+"""
+        self.assertNotIn("PINE059", codes(lint_text(src)))

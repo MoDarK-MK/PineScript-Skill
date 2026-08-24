@@ -7,7 +7,7 @@ description: Use this skill whenever the user wants to write, edit, review, vers
 
 A skill for writing production-quality TradingView Pine Script (v6) indicators and
 strategies, and wrapping them in a lightweight "CI/CD"-style workflow: git repo
-structure, a 57-rule offline linter, professional visual design, in-script logical
+structure, a 58-rule offline linter, professional visual design, in-script logical
 tests, semantic versioning, and an automated release-bundle step.
 
 **Important framing to give the user up front (once, briefly):** TradingView has no
@@ -27,7 +27,7 @@ TradingView's servers.
 | `references/decisions.md` | Decision record: what was decided, why, and what would change our mind |
 | `references/pine-v6-guide.md` | v5→v6 breaking changes, dynamic requests, repainting traps, `var`/`varip`, verified hard platform limits |
 | `references/style-guide.md` | Official naming/structure/spacing conventions (camelCase, SNAKE_CASE, section order, line-wrapping) |
-| `references/lint-rules.md` | Full catalog of all 57 lint rules (codes PINE001–PINE058; PINE024 unassigned) with bad/good examples |
+| `references/lint-rules.md` | Full catalog of all 58 lint rules (codes PINE001–PINE059; PINE024 unassigned) with bad/good examples |
 | `references/design-system.md` | Making indicators look professional: theming, dashboards, gradients, palettes |
 | `references/strategy-guide.md` | Building strategies: signal design, position sizing math, the four risk modules, filters, overfitting, walk-forward, v6 strategy pitfalls |
 | `references/publishing-guide.md` | TradingView House Rules condensed: privacy/visibility, strategy realism, description format |
@@ -179,7 +179,7 @@ zero-cost backtests block the release outright.
 ## Linting (the "CI" part)
 
 `scripts/pine_lint.py` is a rule-based, OFFLINE linter — it does NOT compile the
-script (no such public tool exists). All 57 rules are fact-checked against
+script (no such public tool exists). All 58 rules are fact-checked against
 TradingView's official docs (migration guide, limitations page, style guide) as of
 mid-2026; full catalog with examples in `references/lint-rules.md`. Highlights:
 

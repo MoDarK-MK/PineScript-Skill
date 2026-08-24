@@ -1,0 +1,23 @@
+// FIXTURE — must be caught by PINE059
+//
+// TradingView: "Error at 430:1 Missing enclosing character in the literal
+// string. Enclose literal strings using a set of quotation marks (") or
+// apostrophes (') on the same code line."
+//
+// A tooltip whose 
+ escapes became real newlines when a tool rewrote the
+// file, splitting one string into two that never close. Pine has no
+// multi-line string, so this cannot compile.
+//
+// It shipped twice. Bracket counting stays balanced across the break, so the
+// file linted clean both times and failed on paste.
+//@version=6
+indicator("Unterminated String", overlay=true)
+
+float lengthInput = input.float(0.75, "Minimum Distance",
+     tooltip="How far ahead a node must be to count as a target." +
+     "
+
+Without a floor the nearest busy row is the one right next to it." )
+
+plot(lengthInput)

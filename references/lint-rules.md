@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 57 rules spanning codes PINE001–PINE058. The code
+Note on numbering: there are 58 rules spanning codes PINE001–PINE059. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -61,6 +61,7 @@ added *after* the error was hit in real use.
 | `Undeclared identifier "x"` reported against a function | **PINE055** | A global declared BELOW the function that reads it |
 | *(no error — the wrong value is simply used)* | **PINE058** | A name shadowing a built-in namespace, then dereferenced |
 | *(no error — the array just accumulates)* | **PINE054** | A `var` collection grown on a tick with no confirmation guard |
+| "Missing enclosing character in the literal string" | **PINE059** | A string opened on a line that ends before closing it |
 | `Pine cannot determine the referencing length…` | *(none yet)* | A dynamic history index without `max_bars_back` |
 
 If you hit a code that is not in this table, that is a genuine gap — the fix is
@@ -792,3 +793,36 @@ payload(float price, string style) =>
 ```
 This shipped in this repo, and was found by EXECUTING the script offline rather
 than by reading it — see `scripts/pine_interp/`.
+
+### PINE059 — error — String literal not closed on its own line
+Pine has no multi-line string. A quote that opens on a line which ends before
+closing it is a hard compile failure:
+
+> Error at 430:1 Missing enclosing character in the literal string. Enclose
+> literal strings using a set of quotation marks (") or apostrophes (') on the
+> same code line.
+
+Almost nobody writes this deliberately. It arrives when a tool rewrites the
+file and turns an escape sequence into a real newline, splitting one string
+into two that never close:
+```pinescript
+// bad — the \n became an actual line break, so neither half closes
+tooltip="How far ahead a node must be." +
+"
+
+Without a floor the nearest busy row is the one right next to it."
+```
+```pinescript
+// good
+tooltip="How far ahead a node must be." +
+     "\n\nWithout a floor the nearest busy row is the one right next to it."
+```
+This shipped twice from this repo. Both times the file linted clean first,
+because bracket counting can stay balanced across the break — the opening
+paren is still matched, so nothing looked wrong until TradingView read it.
+
+The interpreter rejects it too. It used to accept it: wrapped lines are joined
+before tokenising, so the string simply closed on a later line and the script
+ran. An interpreter that accepts what TradingView rejects is worse than one
+that refuses to read the file, so it now refuses.
+

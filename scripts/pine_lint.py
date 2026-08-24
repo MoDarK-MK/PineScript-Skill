@@ -127,6 +127,7 @@ RULES = {
     "PINE056": ("info", "Function declared but never called"),
     "PINE057": ("warning", "Condition is constant — always true or always false"),
     "PINE058": ("error", "Name shadows a built-in namespace"),
+    "PINE059": ("error", "String literal not closed on its own line"),
 }
 
 # Rules --fix can repair mechanically. Every one of these has exactly one
@@ -2218,6 +2219,54 @@ def check_namespace_shadowing(lines, result):
                 flag(i + 1, name, "the file")
 
 
+# @rule PINE059
+def unclosed_string_column(line):
+    """The column where a string opens and never closes, or None.
+
+    Walks the line rather than counting quotes: an escaped quote inside a
+    string, and a `//` that falls inside one, each defeat a counting approach."""
+    in_str, opened_at, i = None, None, 0
+    while i < len(line):
+        ch = line[i]
+        if in_str:
+            if ch == "\\" and i + 1 < len(line):
+                i += 2
+                continue
+            if ch == in_str:
+                in_str, opened_at = None, None
+        elif ch in ('"', "'"):
+            in_str, opened_at = ch, i + 1
+        elif ch == "/" and i + 1 < len(line) and line[i + 1] == "/":
+            break
+        i += 1
+    return opened_at if in_str else None
+
+
+def check_unterminated_string(lines, result):
+    """PINE059 - Pine has no multi-line string, so a quote left open at the end
+    of a line is a hard compile error: `Missing enclosing character in the
+    literal string`.
+
+    This happens by accident far more often than on purpose, most reliably when
+    a tool writing the file turns an escape sequence into a real newline and
+    splits one string into two broken ones. It happened twice here, and neither
+    time did anything catch it - bracket counting stays balanced across the
+    break, so the file lints clean and fails on paste."""
+    for i, raw in enumerate(lines):
+        column = unclosed_string_column(raw)
+        if column is None:
+            continue
+        # chr(92) rather than an escape: an escape here is exactly the thing
+        # that broke the file this rule exists to catch, and it would break
+        # silently again the next time a tool rewrites this line.
+        result.add(i + 1, "PINE059",
+                   "A string opens at column " + str(column) + " and never "
+                   "closes on this line. Pine has no multi-line string, so this "
+                   "is 'Missing enclosing character in the literal string' at "
+                   "compile time. For a line break inside the text, write the "
+                   "two characters " + chr(92) + "n rather than an actual newline.")
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -2296,6 +2345,7 @@ def lint_file(path, cfg):
     check_unused_function(lines, result)
     check_constant_condition(lines, result)
     check_namespace_shadowing(lines, result)
+    check_unterminated_string(lines, result)
 
     file_wide, next_line, same_line = parse_suppressions(lines)
     filtered = []

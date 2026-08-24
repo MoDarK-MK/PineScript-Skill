@@ -100,6 +100,25 @@ def strip_comment(text):
     return "".join(out)
 
 
+def _opens_unclosed_string(line):
+    """True when a quote opens on this line and never closes on it."""
+    in_str, i = None, 0
+    while i < len(line):
+        ch = line[i]
+        if in_str:
+            if ch == "\\" and i + 1 < len(line):
+                i += 2
+                continue
+            if ch == in_str:
+                in_str = None
+        elif ch in ('"', "'"):
+            in_str = ch
+        elif ch == "/" and i + 1 < len(line) and line[i + 1] == "/":
+            break
+        i += 1
+    return in_str is not None
+
+
 def logical_lines(source):
     """Yields (line_no, indent, text) for each LOGICAL line.
 
@@ -114,6 +133,16 @@ def logical_lines(source):
             continue
         indent = len(text) - len(text.lstrip(" \t"))
         body = text.strip()
+
+        # Pine has no multi-line string. Joining wrapped lines before
+        # tokenising lets one close on a LATER line and run happily here -
+        # accepting what TradingView rejects, which is worse than refusing to
+        # read the file at all.
+        if _opens_unclosed_string(text):
+            raise PineSyntaxError(
+                "a string literal opens on this line and never closes. Pine has "
+                "no multi-line string; write " + chr(92) + "n inside the string "
+                "for a line break.", i + 1)
 
         if buf:
             buf += " " + body
