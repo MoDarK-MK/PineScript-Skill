@@ -335,6 +335,57 @@ class TestRealIndicator(unittest.TestCase):
                 self.assertTrue(grants)
                 self.assertNotIn(0, grants, "a swing was allocated no boxes at all")
 
+    def span_coverage(self, result):
+        """How much of each swing's price range actually has bars drawn."""
+        swings = list(result.global_value("swings").items)
+        live = result.global_value("liveSwing")
+        seq = ([live] if live is not None else []) + list(reversed(swings))
+        ys = [d.props["lefttop"][1] for d in result.drawings
+              if d.kind == "box" and isinstance(d.props.get("lefttop"), (list, tuple))]
+        ys = [y for y in ys if isinstance(y, (int, float))]
+        out = []
+        for p in seq:
+            f = p.fields
+            lo, step, rows = f["lo"], f["step"], len(f["buyRows"].items)
+            top = lo + rows * step
+            inside = [y for y in ys if lo - 1e-9 <= y <= top + 1e-9]
+            out.append(0.0 if not inside else (max(inside) - lo) / (top - lo) * 100)
+        return out
+
+    def test_every_profile_spans_its_whole_price_range(self):
+        """The bug the user saw as "bars are there in some places and not in
+        others". Rows run from the lowest price upward, and the drawing loop
+        used to stop when the budget ran out — which deleted the TOP of every
+        profile. Measured at 62.8% of the span on one swing.
+
+        Rows are merged into wider bars now, so coverage must be total at every
+        row count, however tight the budget."""
+        for rows in (30, 100, 500):
+            with self.subTest(rows=rows):
+                r = run_file(str(PROJECT), self.bars, platform=self.platform,
+                             inputs={"Price Rows Per Swing": rows})
+                for i, pct in enumerate(self.span_coverage(r)):
+                    self.assertGreater(pct, 99.0,
+                                       f"swing {i} covers only {pct:.1f}% of its span")
+
+    def test_whole_chart_mode_stays_inside_tradingview_limits(self):
+        """Every swing on the chart, and still under 500 boxes, 500 lines and
+        500 labels — crossing any of those drops the oldest drawings silently."""
+        r = run_file(str(PROJECT), synthetic_bars(600), platform=self.platform,
+                     inputs={"Cover The Whole Chart": True, "Price Rows Per Swing": 60})
+        self.assertGreater(len(r.global_value("swings").items), 6,
+                           "whole-chart mode kept no more swings than the default")
+        for kind in ("box", "line", "label"):
+            with self.subTest(kind=kind):
+                self.assertLessEqual(r.count_drawings(kind), 500)
+
+    def test_whole_chart_mode_still_covers_every_span(self):
+        r = run_file(str(PROJECT), synthetic_bars(600), platform=self.platform,
+                     inputs={"Cover The Whole Chart": True, "Price Rows Per Swing": 60})
+        for i, pct in enumerate(self.span_coverage(r)):
+            self.assertGreater(pct, 99.0,
+                               f"swing {i} covers only {pct:.1f}% of its span")
+
     def test_thinning_only_happens_when_the_budget_is_spent(self):
         for rows in (30, 400):
             with self.subTest(rows=rows):
