@@ -350,6 +350,73 @@ class TestRealIndicator(unittest.TestCase):
             self.assertEqual(len(lv.fields["targets"].items),
                              len(lv.fields["hits"].items))
 
+    def test_the_three_stops_are_ordered_and_on_the_right_side(self):
+        """Each tier has its own rule and they are NOT naturally ordered: the
+        first shelf below an entry can sit under the value-area edge, which
+        would leave "Tight" further out than "Balanced" and make both labels
+        lie. The order is enforced after the fact, and this is what checks it.
+
+        Also that no stop lands on the wrong side of its own entry, which the
+        value-area rule can produce on its own when the entry is outside the
+        value area."""
+        checked = 0
+        for lv in self.result.global_value("tracked").items:
+            stops = list(lv.fields["stops"].items)
+            if len(stops) != 3:
+                continue
+            checked += 1
+            price, is_buy = lv.fields["price"], lv.fields["isBuy"]
+            for tier, stop in enumerate(stops):
+                if is_buy:
+                    self.assertLess(stop, price, f"buy stop {tier} above its entry")
+                else:
+                    self.assertGreater(stop, price, f"sell stop {tier} below its entry")
+            near, mid, far = (abs(price - s) for s in stops)
+            self.assertLessEqual(near, mid + 1e-9, "Balanced is tighter than Tight")
+            self.assertLessEqual(mid, far + 1e-9, "Wide is tighter than Balanced")
+        if checked == 0:
+            self.skipTest("no levels were tracked on this data")
+
+    def test_stop_outcomes_never_exceed_the_windows_that_closed(self):
+        """A level's stop is decided once, so hit and win are exclusive and
+        neither can outrun the number of closed windows. Anything else means an
+        outcome was recorded twice or a window was scored without closing."""
+        hit = list(self.result.global_value("stopHitN").items)
+        win = list(self.result.global_value("stopWinN").items)
+        scored = list(self.result.global_value("stopScoredN").items)
+        for tier, (h, w, s) in enumerate(zip(hit, win, scored)):
+            self.assertLessEqual(h, s, f"tier {tier}: {h} hit of {s} scored")
+            self.assertLessEqual(w, s, f"tier {tier}: {w} won of {s} scored")
+            self.assertLessEqual(h + w, s,
+                                 f"tier {tier}: {h} hit + {w} won exceeds {s} scored")
+
+    def test_a_wider_stop_is_never_hit_more_often_in_the_same_window(self):
+        """Not asserted as a global invariant, because it can legitimately fail:
+        if the target arrives while only the tight stop has been passed, the
+        tight stop is marked target-first and a later break can still stop the
+        wide one out. What IS guaranteed is per level and per bar — a wide stop
+        cannot be hit while the tight one in front of it is still open."""
+        for lv in self.result.global_value("tracked").items:
+            states = list(lv.fields["stopState"].items)
+            if len(states) != 3:
+                continue
+            for near, far in zip(states, states[1:]):
+                if far == 1:  # SL_STOPPED
+                    self.assertNotEqual(0, near,
+                                        "a wider stop was hit while the tighter "
+                                        "one in front of it was still open")
+
+    def test_no_stop_is_suggested_before_the_evidence_exists(self):
+        """The 20-sample floor is a refusal, not a formality: under it the
+        ranking is noise wearing a percentage sign. A short run cannot close 20
+        windows, so nothing may claim to be proven."""
+        r = run_file(str(PROJECT), synthetic_bars(120), platform=self.platform)
+        self.assertFalse(r.global_value("stopProven"),
+                         "a placement was called proven on 120 bars")
+        scored = list(r.global_value("stopScoredN").items)
+        self.assertTrue(all(s < 20 for s in scored),
+                        f"120 bars closed 20+ windows: {scored}")
+
     def test_the_value_area_brackets_the_poc(self):
         for profile in self.result.global_value("swings").items:
             f = profile.fields
