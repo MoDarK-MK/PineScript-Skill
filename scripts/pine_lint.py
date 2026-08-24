@@ -823,19 +823,16 @@ def check_array_alloc_in_block(lines, result):
     Such a block re-runs every bar (or every realtime tick under barstate.islast),
     so the allocation is repeated; `var` + array.fill() reuses one buffer."""
     stripped = [strip_strings_and_comments(l) for l in lines]
-    # Track which indented regions belong to a user function body, where a local
-    # array is a normal temporary rather than per-bar churn.
-    in_function_until_indent = None
+    # A local array inside a function body is a normal temporary, not per-bar
+    # churn. This used its own scan and shared FUNC_DECL_RE's blind spot: a
+    # function whose header wrapped was not recognised, and its one allocation
+    # was reported while the identical function with a one-line header was not.
+    in_function = _function_region_lines(lines)
     for i, line in enumerate(stripped):
-        if not line.strip():
+        if not line.strip() or i in in_function:
             continue
         indent = indent_width(lines[i])
-        if in_function_until_indent is not None and indent <= in_function_until_indent:
-            in_function_until_indent = None
-        if indent == 0 and FUNC_DECL_RE.match(line.strip()):
-            in_function_until_indent = 0
-            continue
-        if in_function_until_indent is not None or indent == 0:
+        if indent == 0:
             continue
         if not ARRAY_NEW_RE.search(line):
             continue
@@ -950,19 +947,56 @@ def check_oversized_text(lines, result):
                         f"a headline value and size.small elsewhere.")
 
 
+def function_header_end(lines, stripped, i):
+    """The last line index of the header that starts at `i`, or None.
+
+    A header wraps as soon as the parameter list outgrows a line, and matching
+    FUNC_DECL_RE against the first line alone finds nothing when it does. Six
+    rules run off this iterator, so a header that fails to match here removes
+    the whole function from all of them at once."""
+    if not stripped[i].strip() or indent_width(lines[i]) != 0:
+        return None
+    if not re.match(r'^[a-zA-Z_]\w*\s*\(', stripped[i].strip()):
+        return None
+    depth = 0
+    for j in range(i, len(lines)):
+        seg = stripped[j]
+        depth += seg.count("(") + seg.count("[") - seg.count(")") - seg.count("]")
+        if depth <= 0:
+            header = " ".join(stripped[k].strip() for k in range(i, j + 1))
+            return j if FUNC_DECL_RE.match(header.strip()) else None
+    return None
+
+
+def function_header_text(lines, i):
+    """The FULL header of the function starting at line index i, joined into one
+    line, or "" when line i does not start a function.
+
+    Reading `lines[i]` alone loses every parameter that wrapped onto the next
+    line - and then those parameters look like references to whatever globals
+    happen to share their names. That produced six confident, wrong errors on a
+    file that compiles."""
+    stripped = [strip_strings_and_comments(l) for l in lines]
+    end = function_header_end(lines, stripped, i)
+    if end is None:
+        return ""
+    return " ".join(stripped[k].strip() for k in range(i, end + 1))
+
+
 def iter_function_bodies(lines):
     """Yields (decl_line_index, [(line_index, text), ...]) for each user function
-    declared at global scope, with its indented body."""
+    declared at global scope, with its indented body.
+
+    The declaration index is the FIRST line of the header; a header spanning
+    several lines contributes none of them to the body."""
     stripped = [strip_strings_and_comments(l) for l in lines]
     n = len(lines)
     for i in range(n):
-        text = stripped[i]
-        if not text.strip() or indent_width(lines[i]) != 0:
-            continue
-        if not FUNC_DECL_RE.match(text.strip()):
+        end = function_header_end(lines, stripped, i)
+        if end is None:
             continue
         body = []
-        j = i + 1
+        j = end + 1
         while j < n:
             if not stripped[j].strip():
                 j += 1
@@ -2071,7 +2105,7 @@ def check_forward_global_reference(lines, result):
         decl_line = decl_idx + 1
         # Names the function introduces itself are not forward references.
         local = set()
-        header = strip_strings_and_comments(lines[decl_idx]).strip()
+        header = function_header_text(lines, decl_idx)
         m_func = FUNC_NAME_RE.match(header)
         if m_func:
             params = call_arg_text(header, m_func.group(1) + "(")
@@ -2272,7 +2306,7 @@ def check_namespace_shadowing(lines, result):
 
     # 1. Function parameters, checked against their own body.
     for decl_idx, body in iter_function_bodies(lines):
-        head = strip_strings_and_comments(lines[decl_idx]).strip()
+        head = function_header_text(lines, decl_idx)
         m = FUNC_NAME_RE.match(head)
         if not m:
             continue

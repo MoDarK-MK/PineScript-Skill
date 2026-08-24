@@ -314,6 +314,42 @@ class TestRealIndicator(unittest.TestCase):
             for key in ("pocIdx", "maxBuyIdx", "maxSellIdx", "vaTopIdx", "vaBotIdx"):
                 self.assertTrue(0 <= f[key] < rows, f"{key}={f[key]} rows={rows}")
 
+    def test_no_profile_reaches_into_the_next_swing(self):
+        """0.9.0's Minimum Width floor gave every profile at least 20 chart bars
+        whether or not the swing owned them, so a 5-bar swing was drawn across 20
+        and covered the two swings after it. Overlapping profiles are worse than
+        thin ones: a row lying across three swings describes none of them.
+
+        The width rule is recomputed here rather than read back, because the
+        boxes themselves cannot be grouped by swing — a split row's buy box
+        starts partway along, so its left edge is not the profile's."""
+        swings = list(self.result.global_value("swings").items)
+        live = self.result.global_value("liveSwing")
+        if live is not None:
+            swings = swings + [live]
+        self.assertGreater(len(swings), 1, "need two swings to overlap at all")
+
+        max_pct = self.result.global_value("maxWidthPctInput")
+        min_bars = self.result.global_value("minProfileBarsInput")
+        last_bar = self.result.bars - 1
+
+        for n, s in enumerate(swings):
+            left, right = s.fields["leftBar"], s.fields["rightBar"]
+            next_left = swings[n + 1].fields["leftBar"] if n + 1 < len(swings) else last_bar
+            fitted = max(1, int(max(1, right - left) * max_pct / 100))
+            room = max(1, int(max(1, next_left - left) * max_pct / 100))
+            right_edge = left + min(max(fitted, min_bars), room)
+            self.assertLessEqual(
+                right_edge, next_left,
+                f"swing {n} drawn {left}-{right_edge} but the next starts at {next_left}")
+
+    def test_a_targets_hit_array_matches_its_target_count(self):
+        """One flag per target. A shorter `hits` array would raise on the first
+        rank past its end; a longer one would silently never be read."""
+        for lv in self.result.global_value("tracked").items:
+            self.assertEqual(len(lv.fields["targets"].items),
+                             len(lv.fields["hits"].items))
+
     def test_the_value_area_brackets_the_poc(self):
         for profile in self.result.global_value("swings").items:
             f = profile.fields
@@ -431,49 +467,84 @@ class TestRealIndicator(unittest.TestCase):
                              f"the per-tick entry search grew from {per_tick_few} "
                              f"to {per_tick_many} with the swing count")
 
-    def test_short_swings_still_get_a_readable_profile(self):
-        """Width used to come only from the swing's duration, so an 11-bar swing
-        produced a 7-bar profile with rows one or two chart-bars across — drawn
-        correctly and invisible, which is what "the older swings do not display"
-        was describing."""
+    def test_a_profile_spends_every_bar_it_is_allotted(self):
+        """This replaces a test that demanded a minimum of 10 chart bars per
+        profile. A short swing can only reach that by drawing over its
+        neighbour, which is the bug 0.10.0 removed, so the old assertion was
+        holding the bug in place.
+
+        What is genuinely guaranteed is that nothing is left unused: row widths
+        are normalised against the busiest bucket, so that bucket spans the
+        profile's full width exactly. Whether that width is wide depends on how
+        much room the swing owns, and coverage of the price span - the thing
+        that actually made older swings look broken - is asserted separately in
+        test_every_profile_spans_its_whole_price_range."""
         r = run_file(str(PROJECT), synthetic_bars(700), platform=self.platform,
                      inputs={"Swings To Show": 8, "Pivot Length": 6,
                              "Minimum Width (bars)": 20})
-        boxes = [d for d in r.drawings if d.kind == "box"
-                 and isinstance(d.props.get("lefttop"), (list, tuple))
-                 and isinstance(d.props.get("rightbottom"), (list, tuple))]
-        widths = []
-        for d in boxes:
-            left, right = d.props["lefttop"][0], d.props["rightbottom"][0]
-            if isinstance(left, int) and isinstance(right, int):
-                widths.append(right - left)
-        self.assertTrue(widths, "no row boxes were drawn at all")
-        self.assertGreaterEqual(max(widths), 10,
-                                "even the widest row is a hairline")
+        rights = {d.props["rightbottom"][0] for d in r.drawings
+                  if d.kind == "box"
+                  and isinstance(d.props.get("rightbottom"), (list, tuple))
+                  and isinstance(d.props["rightbottom"][0], int)}
+        self.assertTrue(rights, "no row boxes were drawn at all")
 
-    def test_a_projected_target_respects_its_minimum_distance(self):
-        """Without a floor the target lands on the row beside the entry and is
-        'reached' almost always — a true number that means nothing."""
+        swings = list(r.global_value("swings").items)
+        live = r.global_value("liveSwing")
+        if live is not None:
+            swings = swings + [live]
+        max_pct = r.global_value("maxWidthPctInput")
+        min_bars = r.global_value("minProfileBarsInput")
+        last_bar = r.bars - 1
+        for n, s in enumerate(swings):
+            left, right = s.fields["leftBar"], s.fields["rightBar"]
+            nxt = swings[n + 1].fields["leftBar"] if n + 1 < len(swings) else last_bar
+            fitted = max(1, int(max(1, right - left) * max_pct / 100))
+            room = max(1, int(max(1, nxt - left) * max_pct / 100))
+            right_edge = left + min(max(fitted, min_bars), room)
+            self.assertIn(right_edge, rights,
+                          f"swing {n} was given {left}-{right_edge} but no row "
+                          f"reaches its right edge")
+
+    def test_every_target_is_further_out_than_the_one_before(self):
+        """Spacing is applied between successive targets, not only from the
+        entry. From the entry alone, ten targets come out of the same shelf a
+        tick apart: ten lines drawn on top of each other, and ten reach rates
+        that are all really the first one's."""
         r = run_file(str(PROJECT), synthetic_bars(900), platform=self.platform,
                      inputs={"Swings To Show": 8, "Pivot Length": 6,
                              "Minimum Target Distance (ATR)": 1.5})
-        tracked = r.global_value("tracked").items
-        pairs = [(lv.fields["price"], lv.fields["target"]) for lv in tracked
-                 if lv.fields["target"] is not None]
-        if not pairs:
-            self.skipTest("no targets were projected on this data")
-        for price, target in pairs:
-            self.assertGreater(abs(target - price), 0,
-                               "a target landed on its own entry price")
+        seen = 0
+        for lv in r.global_value("tracked").items:
+            targets = list(lv.fields["targets"].items)
+            price = lv.fields["price"]
+            for target in targets:
+                self.assertNotEqual(target, price,
+                                    "a target landed on its own entry price")
+            if len(targets) < 2:
+                continue
+            seen += 1
+            want = (sorted(targets) if lv.fields["isBuy"]
+                    else sorted(targets, reverse=True))
+            self.assertEqual(want, targets, f"targets out of order: {targets}")
+            for earlier, later in zip(targets, targets[1:]):
+                self.assertNotEqual(earlier, later, "two targets at one price")
+        if seen == 0:
+            self.skipTest("no level projected more than one target on this data")
 
-    def test_target_counters_never_exceed_what_was_scored(self):
+    def test_no_target_rank_reports_more_than_100_percent(self):
+        """The numerator moves when a target is reached and the denominator when
+        its window closes. A level evicted before its window closed used to
+        leave reaches counted with nothing beneath them, and that can only
+        surface as a rate above 100% - the one arithmetic impossibility this
+        statistic is able to produce."""
         r = run_file(str(PROJECT), synthetic_bars(900), platform=self.platform,
                      inputs={"Swings To Show": 8, "Pivot Length": 6})
-        reached, scored = (r.global_value("targetReached"),
-                           r.global_value("targetScored"))
-        self.assertLessEqual(reached, scored + len(r.global_value("tracked").items),
-                             "more targets reached than were ever projected")
-        self.assertGreaterEqual(reached, 0)
+        reached = list(r.global_value("targetReachedN").items)
+        scored = list(r.global_value("targetScoredN").items)
+        self.assertEqual(len(reached), len(scored))
+        for rank, (hit, total) in enumerate(zip(reached, scored), start=1):
+            self.assertGreaterEqual(hit, 0)
+            self.assertLessEqual(hit, total, f"T{rank}: {hit} reached of {total} scored")
 
     def test_a_target_is_published_only_alongside_a_drawn_entry(self):
         """A projection for a level that is not on the chart would be a line
