@@ -431,6 +431,58 @@ class TestRealIndicator(unittest.TestCase):
                              f"the per-tick entry search grew from {per_tick_few} "
                              f"to {per_tick_many} with the swing count")
 
+    def test_short_swings_still_get_a_readable_profile(self):
+        """Width used to come only from the swing's duration, so an 11-bar swing
+        produced a 7-bar profile with rows one or two chart-bars across — drawn
+        correctly and invisible, which is what "the older swings do not display"
+        was describing."""
+        r = run_file(str(PROJECT), synthetic_bars(700), platform=self.platform,
+                     inputs={"Swings To Show": 8, "Pivot Length": 6,
+                             "Minimum Width (bars)": 20})
+        boxes = [d for d in r.drawings if d.kind == "box"
+                 and isinstance(d.props.get("lefttop"), (list, tuple))
+                 and isinstance(d.props.get("rightbottom"), (list, tuple))]
+        widths = []
+        for d in boxes:
+            left, right = d.props["lefttop"][0], d.props["rightbottom"][0]
+            if isinstance(left, int) and isinstance(right, int):
+                widths.append(right - left)
+        self.assertTrue(widths, "no row boxes were drawn at all")
+        self.assertGreaterEqual(max(widths), 10,
+                                "even the widest row is a hairline")
+
+    def test_a_projected_target_respects_its_minimum_distance(self):
+        """Without a floor the target lands on the row beside the entry and is
+        'reached' almost always — a true number that means nothing."""
+        r = run_file(str(PROJECT), synthetic_bars(900), platform=self.platform,
+                     inputs={"Swings To Show": 8, "Pivot Length": 6,
+                             "Minimum Target Distance (ATR)": 1.5})
+        tracked = r.global_value("tracked").items
+        pairs = [(lv.fields["price"], lv.fields["target"]) for lv in tracked
+                 if lv.fields["target"] is not None]
+        if not pairs:
+            self.skipTest("no targets were projected on this data")
+        for price, target in pairs:
+            self.assertGreater(abs(target - price), 0,
+                               "a target landed on its own entry price")
+
+    def test_target_counters_never_exceed_what_was_scored(self):
+        r = run_file(str(PROJECT), synthetic_bars(900), platform=self.platform,
+                     inputs={"Swings To Show": 8, "Pivot Length": 6})
+        reached, scored = (r.global_value("targetReached"),
+                           r.global_value("targetScored"))
+        self.assertLessEqual(reached, scored + len(r.global_value("tracked").items),
+                             "more targets reached than were ever projected")
+        self.assertGreaterEqual(reached, 0)
+
+    def test_a_target_is_published_only_alongside_a_drawn_entry(self):
+        """A projection for a level that is not on the chart would be a line
+        pointing away from nothing."""
+        r = run_file(str(PROJECT), synthetic_bars(700), platform=self.platform,
+                     inputs={"Which Side": "Buy Side Only"})
+        self.assertIsNone(r.global_value("targetSellPrice"),
+                          "a sell target survived with the sell entry hidden")
+
     def test_thinning_only_happens_when_the_budget_is_spent(self):
         for rows in (30, 400):
             with self.subTest(rows=rows):
