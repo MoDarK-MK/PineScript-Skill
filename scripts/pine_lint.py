@@ -1961,6 +1961,59 @@ def check_var_collection_realtime_growth(lines, result):
 
 
 # @rule PINE055
+def _function_region_lines(lines):
+    """Every line index a function occupies: its header, the lines that header
+    wraps onto, and its body.
+
+    Not the same as `iter_function_bodies`, which yields the declaration line
+    and the body. A wrapped header leaves its continuation lines in neither, and
+    those lines carry the PARAMETER list — which reads exactly like global code
+    referring to whatever the parameters happen to be named."""
+    covered = set()
+    n = len(lines)
+    i = 0
+    while i < n:
+        raw = lines[i]
+        text = strip_strings_and_comments(raw)
+        if not text.strip() or indent_width(raw) != 0:
+            i += 1
+            continue
+        # Deliberately looser than FUNC_NAME_RE, which needs the closing paren
+        # AND the arrow on one line - the whole point here is the headers that
+        # wrap. The joined header is checked against the real pattern below.
+        if not re.match(r'^[A-Za-z_]\w*\s*\(', text.strip()):
+            i += 1
+            continue
+        # Consume the header, however many lines its bracket run spans.
+        depth = text.count("(") + text.count("[") - text.count(")") - text.count("]")
+        last = i
+        while depth > 0 and last + 1 < n:
+            last += 1
+            nxt = strip_strings_and_comments(lines[last])
+            depth += nxt.count("(") + nxt.count("[") - nxt.count(")") - nxt.count("]")
+        header = " ".join(strip_strings_and_comments(lines[k]).strip()
+                          for k in range(i, last + 1))
+        if not FUNC_NAME_RE.match(header.strip()):
+            i = last + 1
+            continue
+        for k in range(i, last + 1):
+            covered.add(k)
+        # A body only exists when the header ENDS on the arrow; `f(x) => x + 1`
+        # is the whole function.
+        i = last + 1
+        if header.rstrip().endswith("=>"):
+            while i < n:
+                if not lines[i].strip():
+                    covered.add(i)
+                    i += 1
+                    continue
+                if indent_width(lines[i]) == 0:
+                    break
+                covered.add(i)
+                i += 1
+    return covered
+
+
 def _global_declaration_lines(lines):
     """Maps every name declared at COLUMN 0 to the line it was declared on.
 
@@ -2055,6 +2108,37 @@ def check_forward_global_reference(lines, result):
                            "error points here rather than at the declaration that is in "
                            "the wrong place. Move the declaration above the function."
                            % (name, declared[name]))
+
+    # Everything above walks FUNCTION bodies. Textual resolution is not a
+    # property of functions though — a top-level `if` reading a global declared
+    # further down fails exactly the same way, and that is the version that
+    # shipped: two counters declared with the drawing pools and incremented from
+    # a tracking block several hundred lines earlier.
+    body_lines = _function_region_lines(lines)
+
+    for i, text, _depths in _lines_with_depths(lines):
+        if i in body_lines or not text.strip():
+            continue
+        line_no = i + 1
+        for m in re.finditer(r'[A-Za-z_]\w*', text):
+            name = m.group(0)
+            if name not in declared or declared[name] <= line_no:
+                continue
+            if m.start() > 0 and text[m.start() - 1] == '.':
+                continue
+            # A named argument (`color=x`) is not a reference to `color`.
+            after = text[m.end():].lstrip()
+            if after.startswith("=") and not after.startswith("=="):
+                continue
+            if (line_no, name) in reported:
+                continue
+            reported.add((line_no, name))
+            result.add(line_no, "PINE055",
+                       "'%s' is declared on line %d, BELOW this line. Pine resolves "
+                       "identifiers in textual order, so nothing here can see a "
+                       "global declared further down — this is `Undeclared "
+                       "identifier` at compile time. Move the declaration above "
+                       "its first use." % (name, declared[name]))
 
 
 # @rule PINE056

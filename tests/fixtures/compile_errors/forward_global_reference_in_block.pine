@@ -1,0 +1,18 @@
+// FIXTURE — must be caught by PINE055
+//
+// TradingView: Undeclared identifier "targetReached" / "Variable
+// "targetScored" is not found in scope ..., cannot register side effect"
+//
+// The counters were declared with the drawing pools, below the tracking block
+// that increments them. Pine resolves identifiers textually EVERYWHERE, not
+// only inside functions — which is why PINE055 missed it: the rule only
+// walked function bodies, and this read sits in a top-level `if`.
+//@version=6
+indicator("Forward Global In Block", overlay=true)
+
+if barstate.isconfirmed
+    if close > open
+        targetReached += 1
+
+var int targetReached = 0
+plot(targetReached, title="C")

@@ -58,7 +58,7 @@ added *after* the error was hit in real use.
 | `Undeclared identifier 'x'` | **PINE050** | `:=` to a name that was never declared |
 | *(no error — the drawings just vanish)* | **PINE052** | Drawings made in a loop with no `max_*_count` |
 | "Loop takes too long to execute" / script timeout | **PINE053** | A loop nest whose worst case is unbounded |
-| `Undeclared identifier "x"` reported against a function | **PINE055** | A global declared BELOW the function that reads it |
+| `Undeclared identifier "x"` / "cannot register side effect" | **PINE055** | A global declared BELOW the code that reads it |
 | *(no error — the wrong value is simply used)* | **PINE058** | A name shadowing a built-in namespace, then dereferenced |
 | *(no error — the array just accumulates)* | **PINE054** | A `var` collection grown on a tick with no confirmation guard |
 | "Missing enclosing character in the literal string" | **PINE059** | A string opened on a line that ends before closing it |
@@ -734,6 +734,8 @@ sumIntrabar(int barsBack) =>
 ```
 Parameters, loop variables and anything the function declares itself are not
 forward references and are never flagged.
+
+The rule originally walked only function bodies, and missed the version that shipped from this repo: two counters declared with the drawing pools and incremented from a top-level `if` several hundred lines earlier. Textual resolution is not a property of functions — it applies everywhere, so the rule now checks global blocks too.
 
 ### PINE056 — info — Function declared but never called
 Pine has no dead-code warning of its own, so an orphaned helper survives every
