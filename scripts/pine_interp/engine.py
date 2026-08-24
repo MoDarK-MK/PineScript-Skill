@@ -22,6 +22,7 @@ Design notes worth knowing before reading:
 import math
 
 from .runtime import (NA, Drawing, PineArray, PineRuntimeError, Series,
+                      coerce_declared, is_pine_int, pine_divide,
                       UDTInstance, format_number, is_na, num, nz, ta_ema,
                       ta_extreme, ta_pivot, ta_rma, ta_sma, truthy)
 from .platform import PASSTHROUGH_PREFIXES, Platform, timeframe_seconds
@@ -171,15 +172,19 @@ class Interpreter:
     def exec_decl(self, node, scope):
         qualifier, name = node.a
         s = self.series_for(node)
+        # The declared type is carried on the series, not just applied once:
+        # `float x = 0.0` followed by `x := array.size(a)` must still hold a
+        # float, or the next division silently truncates.
+        s.decl_type = node.c
         if qualifier in ("var", "varip"):
             # Initialised once, on the bar it first runs, and never again. On
             # every later bar it is left untouched — commit() carries the value
             # forward, so there is nothing to re-assign here.
             if not s.inited:
-                s.set(self.eval(node.b, scope))
+                s.set(coerce_declared(self.eval(node.b, scope), s.decl_type))
                 s.inited = True
         else:
-            s.set(self.eval(node.b, scope))
+            s.set(coerce_declared(self.eval(node.b, scope), s.decl_type))
         scope.declare(name, s)
         return s.get(0)
 
@@ -198,9 +203,13 @@ class Interpreter:
                 value = NA
             else:
                 value = {"+=": lambda a, b: a + b, "-=": lambda a, b: a - b,
-                         "*=": lambda a, b: a * b, "/=": lambda a, b: a / b if b else NA,
+                         "*=": lambda a, b: a * b,
+                         "/=": lambda a, b: pine_divide(a, b),
                          "%=": lambda a, b: a % b if b else NA}[op](cur, rhs)
-        s.set(value)
+        # The declared type survives reassignment. `float x = 0.0` followed by
+        # `x := array.size(a)` must still hold a float, or the next division
+        # truncates and the int-division fix creates the opposite bug.
+        s.set(coerce_declared(value, s.decl_type))
         return value
 
     def exec_setattr(self, node, scope):
@@ -503,7 +512,12 @@ class Interpreter:
         if op == "*":
             return a * b
         if op == "/":
-            return NA if b == 0 else a / b
+            # Pine divides two integers as an INTEGER. `1 / 2` is 0 on a chart,
+            # and `math.ceil(30 / 14)` is 2 rather than 3 because the truncation
+            # happens before ceil is ever called. Returning the float here made
+            # this interpreter agree with arithmetic instead of with Pine, and
+            # vouch for a script that was miscounting on the chart.
+            return pine_divide(a, b)
         if op == "%":
             return NA if b == 0 else math.fmod(a, b)
         if op == "<":

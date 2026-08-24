@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 58 rules spanning codes PINE001–PINE059. The code
+Note on numbering: there are 59 rules spanning codes PINE001–PINE060. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -61,6 +61,7 @@ added *after* the error was hit in real use.
 | `Undeclared identifier "x"` / "cannot register side effect" | **PINE055** | A global declared BELOW the code that reads it |
 | *(no error — the wrong value is simply used)* | **PINE058** | A name shadowing a built-in namespace, then dereferenced |
 | *(no error — the array just accumulates)* | **PINE054** | A `var` collection grown on a tick with no confirmation guard |
+| *(no error — the arithmetic is simply wrong)* | **PINE060** | Two ints divided where a fraction was wanted |
 | "Missing enclosing character in the literal string" | **PINE059** | A string opened on a line that ends before closing it |
 | `Pine cannot determine the referencing length…` | *(none yet)* | A dynamic history index without `max_bars_back` |
 
@@ -827,4 +828,38 @@ The interpreter rejects it too. It used to accept it: wrapped lines are joined
 before tokenising, so the string simply closed on a later line and the script
 ran. An interpreter that accepts what TradingView rejects is worse than one
 that refuses to read the file, so it now refuses.
+
+### PINE060 — error — Integer division used where a fraction was wanted
+Pine divides two integers as an **integer**. `30 / 14` is `2`, not `2.142`, so
+a fraction written that way is truncated before anything else sees it.
+
+Two shapes are reported, both meaning the author expected a fraction:
+```pinescript
+// bad — ceil() of a value that is already an integer
+int stride = int(math.ceil(rows / affordable))
+float ratio = rows / affordable
+```
+```pinescript
+// good — one side forced to float first
+int stride = int(math.ceil(rows * 1.0 / affordable))
+float ratio = rows * 1.0 / affordable
+```
+Rounding an integer is a no-op, and that is what makes this rule able to be
+certain rather than merely suspicious. Integer division INTO an int —
+`int half = total / 2` — is legitimate and is not reported.
+
+This shipped from this repo and was reported from a chart three separate times.
+A bucket stride computed as `math.ceil(rows / affordable)` came out one short
+whenever the two did not divide evenly, so the profile needed more boxes than
+it had been granted and the loop drawing it broke early — removing the top of
+every profile. Measured with the fault present: **94.1% of the price span
+covered at 100 rows, 97.0% at 500**.
+
+It was invisible twice over. The source reads correctly, and the offline
+interpreter divided the way arithmetic does rather than the way Pine does, so
+every test agreed with the broken script. `scripts/pine_interp/` now truncates
+integer division and carries declared types so it can tell an int from a float.
+An interpreter that is more forgiving than the platform does not merely miss
+bugs — it vouches for them.
+
 

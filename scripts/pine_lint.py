@@ -128,6 +128,7 @@ RULES = {
     "PINE057": ("warning", "Condition is constant — always true or always false"),
     "PINE058": ("error", "Name shadows a built-in namespace"),
     "PINE059": ("error", "String literal not closed on its own line"),
+    "PINE060": ("error", "Integer division used where a fraction was wanted"),
 }
 
 # Rules --fix can repair mechanically. Every one of these has exactly one
@@ -2385,6 +2386,121 @@ def check_unterminated_string(lines, result):
                    "two characters " + chr(92) + "n rather than an actual newline.")
 
 
+# @rule PINE060
+INT_BUILTIN_RE = re.compile(
+    r'^(?:array|matrix|map)\.(?:size|indexof|lastindexof|binary_search\w*)\('
+    r'|^str\.(?:length|pos)\('
+    r'|^(?:bar_index|last_bar_index|timenow|time|dayofweek|dayofmonth|month|year|hour|minute|second)$'
+    r'|^int\(')
+ROUNDING_CALL_RE = re.compile(r'\bmath\.(ceil|floor|round)\s*\(')
+FLOAT_DECL_DIV_RE = re.compile(r'^\s*(?:var(?:ip)?\s+)?float\s+[a-zA-Z_]\w*\s*=\s*([^=].*)$')
+
+
+def int_typed_names(lines):
+    """Every name this file declares as `int`, including loop counters and
+    `int` function parameters."""
+    names = set()
+    for raw in lines:
+        text = strip_strings_and_comments(raw)
+        for m in re.finditer(r'\bint\s+([a-zA-Z_]\w*)', text):
+            names.add(m.group(1))
+        m_for = re.match(r'\s*for\s+([a-zA-Z_]\w*)\s*=', text)
+        if m_for:
+            names.add(m_for.group(1))
+    return names
+
+
+def is_int_expression(expr, int_names):
+    """True when an expression is certainly of Pine's `int` type.
+
+    Deliberately conservative — it returns False whenever it is not sure. The
+    rule below is only worth having if it never cries wolf, because the pattern
+    it describes looks completely ordinary."""
+    expr = expr.strip()
+    while expr.startswith("(") and expr.endswith(")"):
+        expr = expr[1:-1].strip()
+    if not expr:
+        return False
+    if re.fullmatch(r'\d+', expr):
+        return True
+    if expr in int_names:
+        return True
+    if INT_BUILTIN_RE.match(expr):
+        return True
+    # math.max/min carry the type of their arguments through.
+    m = re.match(r'^math\.(?:max|min)\s*\((.*)\)$', expr, re.DOTALL)
+    if m:
+        parts = split_top_level_args(m.group(1))
+        return bool(parts) and all(is_int_expression(p, int_names) for p in parts)
+    return False
+
+
+def int_division_operands(expr, int_names):
+    """The two operands of a top-level `/` when both are certainly ints."""
+    depth = 0
+    for i, ch in enumerate(expr):
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        elif ch == "/" and depth == 0:
+            if i + 1 < len(expr) and expr[i + 1] == "/":
+                break
+            left, right = expr[:i], expr[i + 1:]
+            # Only the FIRST division matters; a/b/c truncates at the first one.
+            if is_int_expression(left, int_names) and is_int_expression(right, int_names):
+                return left.strip(), right.strip()
+            return None
+    return None
+
+
+def check_integer_division(lines, result):
+    """PINE060 - Pine divides two integers as an INTEGER, so a fraction written
+    that way is truncated before anything else sees it.
+
+    Two shapes are reported, both of which mean the author expected a fraction:
+    rounding the result, and storing it in a `float`. Rounding an integer is a
+    no-op, so `math.ceil(rows / affordable)` cannot be anything but a mistake.
+
+    This shipped from this repo. A bucket stride computed as
+    `math.ceil(rows / affordable)` came out one short whenever the two did not
+    divide evenly, and the profile above that point was never drawn - 94.1% of
+    the price span at 100 rows. It reached a chart three times, because the
+    source looks correct and the offline interpreter was dividing as arithmetic
+    does rather than as Pine does."""
+    int_names = int_typed_names(lines)
+    for i, raw in enumerate(lines):
+        text = strip_strings_and_comments(raw)
+        if "/" not in text:
+            continue
+
+        for m in ROUNDING_CALL_RE.finditer(text):
+            inner = call_arg_text(text[m.start():], "math." + m.group(1) + "(")
+            if inner is None:
+                continue
+            pair = int_division_operands(inner, int_names)
+            if pair is None:
+                continue
+            result.add(i + 1, "PINE060",
+                       "math.%s() is rounding '%s / %s', and both sides are int - "
+                       "so Pine has already divided them as integers and the value "
+                       "being rounded has no fraction left to round. Rounding an "
+                       "integer is a no-op, which is the tell. Force one side to "
+                       "float: '%s * 1.0 / %s'."
+                       % (m.group(1), pair[0], pair[1], pair[0], pair[1]))
+
+        m_decl = FLOAT_DECL_DIV_RE.match(text)
+        if m_decl:
+            pair = int_division_operands(m_decl.group(1), int_names)
+            if pair is not None:
+                result.add(i + 1, "PINE060",
+                           "This float is assigned '%s / %s', and both sides are "
+                           "int - Pine divides them as integers, so the fraction "
+                           "is gone before the float ever receives it. Force one "
+                           "side to float: '%s * 1.0 / %s'."
+                           % (pair[0], pair[1], pair[0], pair[1]))
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -2464,6 +2580,7 @@ def lint_file(path, cfg):
     check_constant_condition(lines, result)
     check_namespace_shadowing(lines, result)
     check_unterminated_string(lines, result)
+    check_integer_division(lines, result)
 
     file_wide, next_line, same_line = parse_suppressions(lines)
     filtered = []

@@ -274,6 +274,53 @@ plot(array.size(pool), title="n")
         self.assertEqual(10, r.last("n"))
 
 
+class TestPineArithmetic(unittest.TestCase):
+    """Pine's arithmetic, not Python's.
+
+    An interpreter that is more forgiving than the platform does not merely miss
+    bugs, it vouches for them. This class exists because it did: a profile that
+    was cut off on every chart passed every test here for weeks, because `30/14`
+    came out 2.142 offline and 2 on TradingView."""
+
+    def test_two_integers_divide_as_an_integer(self):
+        r = run_source(head("plot(30 / 14, title=\"d\")"), BARS)
+        self.assertEqual(2, r.last("d"))
+
+    def test_rounding_an_integer_division_cannot_round_anything(self):
+        """The exact shape of the bug that shipped."""
+        r = run_source(head("plot(math.ceil(30 / 14), title=\"d\")"), BARS)
+        self.assertEqual(2, r.last("d"))
+
+    def test_truncation_is_toward_zero_not_floor(self):
+        """Pine truncates like C. Python's // floors, which differs for
+        negatives: -3 against -4."""
+        r = run_source(head("plot(-7 / 2, title=\"d\")"), BARS)
+        self.assertEqual(-3, r.last("d"))
+
+    def test_one_float_operand_makes_it_float_division(self):
+        r = run_source(head("plot(30 * 1.0 / 14, title=\"d\")"), BARS)
+        self.assertAlmostEqual(30 / 14, r.last("d"), places=9)
+
+    def test_a_float_declaration_keeps_its_type(self):
+        """`float x = 3` holds 3.0, not 3 — otherwise dividing it would
+        truncate and the fix for integer division would introduce the opposite
+        bug in its place."""
+        r = run_source(head("float x = 3\nplot(x / 2, title=\"d\")"), BARS)
+        self.assertAlmostEqual(1.5, r.last("d"), places=9)
+
+    def test_a_float_keeps_its_type_through_reassignment(self):
+        r = run_source(head(
+            "var array<float> a = array.new<float>(3, 1.0)\n"
+            "float x = 0.0\n"
+            "x := array.size(a)\n"
+            "plot(x / 2, title=\"d\")"), BARS)
+        self.assertAlmostEqual(1.5, r.last("d"), places=9)
+
+    def test_an_int_declaration_truncates_what_it_is_given(self):
+        r = run_source(head("int n = 7.9\nplot(n, title=\"d\")"), BARS)
+        self.assertEqual(7, r.last("d"))
+
+
 PROJECT = REPO_ROOT / "indicators" / "swing_volume_profile" / "src" / "swing_volume_profile.pine"
 
 

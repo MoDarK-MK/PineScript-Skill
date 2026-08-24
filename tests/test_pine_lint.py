@@ -1152,3 +1152,70 @@ indicator("T", overlay=true)
 plot(close, title="he said \\"hi\\" and left")
 """
         self.assertNotIn("PINE059", codes(lint_text(src)))
+
+
+class TestIntegerDivision(unittest.TestCase):
+    """PINE060. Pine divides two ints as an int, so a fraction written that way
+    is truncated before anything else sees it."""
+
+    def test_ceil_of_an_integer_division_is_flagged(self):
+        """Rounding a value that is already an integer is a no-op. That is what
+        makes this certain rather than suspicious."""
+        src = """//@version=6
+indicator("T", overlay=true)
+int rows = 30
+int affordable = 14
+int stride = int(math.ceil(rows / affordable))
+plot(stride, title="C")
+"""
+        self.assertIn("PINE060", codes(lint_text(src)))
+
+    def test_a_float_assigned_an_integer_division_is_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+int hits = 3
+int total = 4
+float rate = hits / total
+plot(rate, title="C")
+"""
+        self.assertIn("PINE060", codes(lint_text(src)))
+
+    def test_forcing_one_side_to_float_is_not_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+int rows = 30
+int affordable = 14
+int stride = int(math.ceil(rows * 1.0 / affordable))
+plot(stride, title="C")
+"""
+        self.assertNotIn("PINE060", codes(lint_text(src)))
+
+    def test_integer_division_into_an_int_is_legitimate(self):
+        """`int half = total / 2` means what it says. Flagging every int
+        division would bury the rule in noise and get it switched off."""
+        src = """//@version=6
+indicator("T", overlay=true)
+int total = 30
+int half = total / 2
+plot(half, title="C")
+"""
+        self.assertNotIn("PINE060", codes(lint_text(src)))
+
+    def test_a_float_operand_is_not_integer_division(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+float rate = close / 2
+plot(math.ceil(high / 2), title="C")
+"""
+        self.assertNotIn("PINE060", codes(lint_text(src)))
+
+    def test_array_size_counts_as_an_int(self):
+        """The shipped bug divided array.size() by a local int, so the rule is
+        worth nothing if it only understands declared names."""
+        src = """//@version=6
+indicator("T", overlay=true)
+var array<float> pool = array.new<float>()
+int stride = 3
+plot(math.ceil(array.size(pool) / stride), title="C")
+"""
+        self.assertIn("PINE060", codes(lint_text(src)))

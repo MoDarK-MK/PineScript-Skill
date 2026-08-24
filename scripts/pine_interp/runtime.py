@@ -58,13 +58,16 @@ class Series:
     Storing every bar is deliberate. Capping it would silently change what
     `x[500]` returns, and a value that quietly becomes na is exactly the class
     of bug this interpreter exists to catch."""
-    __slots__ = ("values", "current", "has_current", "inited")
+    __slots__ = ("values", "current", "has_current", "inited", "decl_type")
 
     def __init__(self):
         self.values = []
         self.current = NA
         self.has_current = False
         self.inited = False
+        # The declaration's type words, so a reassignment cannot quietly turn a
+        # float into an int and change how the next division behaves.
+        self.decl_type = None
 
     def set(self, value):
         self.current = value
@@ -114,6 +117,45 @@ class UDTInstance:
 
     def __repr__(self):
         return f"{self.type_name}({self.fields!r})"
+
+
+def is_pine_int(v):
+    """True for a value Pine would call `int`.
+
+    bool is excluded deliberately: Python makes it a subclass of int, and Pine
+    does not divide booleans at all."""
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def pine_divide(a, b):
+    """Division as Pine does it, which is not as Python does it.
+
+    Two integers divide to an INTEGER, truncated toward zero like C - `1 / 2` is
+    0, and `30 / 14` is 2. Python's `/` gives a float and its `//` floors, so
+    neither operator alone is correct here."""
+    if b == 0:
+        return NA
+    if is_pine_int(a) and is_pine_int(b):
+        return int(a / b)
+    return a / b
+
+
+def coerce_declared(value, type_words):
+    """Applies a declaration's type to the value it is given.
+
+    Without this the interpreter has no int/float distinction to divide by:
+    `float x = 3` would hold a Python int, and `x / 2` would truncate to 1 when
+    Pine says 1.5. Only the two numeric types matter here - the rest of the type
+    words carry no arithmetic meaning."""
+    if value is NA or value is None or not type_words:
+        return value
+    if isinstance(value, bool):
+        return value
+    if "float" in type_words and isinstance(value, int):
+        return float(value)
+    if "int" in type_words and isinstance(value, float):
+        return int(value)
+    return value
 
 
 class Drawing:
