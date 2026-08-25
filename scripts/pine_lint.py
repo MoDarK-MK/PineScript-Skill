@@ -156,6 +156,25 @@ PLOT_COUNT_WEIGHTS = {
     "fill(": 1,
 }
 PLOT_COUNT_FUNCS = list(PLOT_COUNT_WEIGHTS)
+
+
+def count_plot_calls(text):
+    """The weighted plot count, counting only real calls to these functions.
+
+    A plain substring count treats `box.set_bgcolor(` as a `bgcolor()` plot and
+    `array.fill(` as a `fill()`, which inflates the number against a HARD
+    TradingView limit of 64. Strings and comments are removed first, so a `plot(`
+    written inside a tooltip does not count either."""
+    clean = chr(10).join(strip_strings_and_comments(l) for l in text.splitlines())
+    total = 0
+    for func, weight in PLOT_COUNT_WEIGHTS.items():
+        name = func[:-1]
+        # Not preceded by an identifier character or a dot: that is what
+        # separates `fill(` from `array.fill(` and `set_bgcolor(`.
+        total += len(re.findall(r'(?<![\w.])' + re.escape(name) + r'\s*\(', clean)) * weight
+    return total
+
+
 DRAWING_FUNCS = {
     "line.new(": ("max_lines_count", "line"),
     "box.new(": ("max_boxes_count", "box"),
@@ -1466,7 +1485,7 @@ def check_int_division_literals(lines, result):
 
 
 def check_plot_and_drawing_limits(text, lines, result, cfg):
-    plot_count = sum(text.count(f) * w for f, w in PLOT_COUNT_WEIGHTS.items())
+    plot_count = count_plot_calls(text)
     max_plots = cfg.get("max_plot_calls", 64)
     warn_ratio = cfg.get("plot_calls_warn_ratio", 0.75)
     if plot_count > max_plots:
@@ -1978,7 +1997,12 @@ def check_var_collection_realtime_growth(lines, result):
             if head.startswith("while ") and "array.size" in head:
                 inside_pool_loop = True
                 break
-            if head.startswith("if ") or head.startswith("for ") or head.startswith("while "):
+            if (head.startswith("if ") or head.startswith("for ")
+                    or head.startswith("while ") or head.startswith("else")):
+                # `else` and `else if` are part of the block above them, not the
+                # end of the walk. Stopping here reported a push guarded three
+                # levels up by barstate.isconfirmed, because the guard sat above
+                # an `else if` the walk never got past.
                 continue
             break             # a function body or an unindented statement
         if guarded or inside_pool_loop:

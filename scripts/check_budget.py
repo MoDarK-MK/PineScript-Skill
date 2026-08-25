@@ -70,8 +70,9 @@ def measure(source):
         # Undeclared means TradingView's default of 50, not "unlimited".
         used[key] = value if value is not None else (50 if key != "polylines" else 50)
 
-    used["plot_counts"] = sum(text.count(f) * w
-                              for f, w in pine_lint.PLOT_COUNT_WEIGHTS.items())
+    # Real calls only. A substring count read `box.set_bgcolor(` as a bgcolor()
+    # plot and `array.fill(` as a fill(), against a hard limit of 64.
+    used["plot_counts"] = pine_lint.count_plot_calls(text)
     used["tables"] = text.count("table.new(")
     used["requests"] = sum(text.count(f) for f in
                            ("request.security(", "request.security_lower_tf(",
