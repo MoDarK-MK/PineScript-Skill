@@ -34,6 +34,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import pine_lint  # noqa: E402  (reuse the same linter, don't reimplement checks)
+import strip_comments  # noqa: E402
 import input_inventory  # noqa: E402
 
 LICENSE_HEADER = (
@@ -318,6 +319,8 @@ def main():
     parser.add_argument("project_dir", help="Path to the project folder (contains src/, version.json, CHANGELOG.md)")
     parser.add_argument("--out", default=None, help="Output directory (default: <project_dir>/release)")
     parser.add_argument("--strict", action="store_true", help="Treat lint warnings as blocking too")
+    parser.add_argument("--keep-comments", action="store_true",
+                        help="Leave the source comments in the released .pine")
     args = parser.parse_args()
 
     project_dir = Path(args.project_dir)
@@ -359,8 +362,17 @@ def main():
         declaration = parse_declaration_args(text)
         strategy_blocking, strategy_advisory = check_strategy_realism(text, lint_result)
 
+    # The released copy carries no comments. This repo writes a lot of prose
+    # into its scripts on purpose, and all of it is for whoever changes the
+    # code - it is not for the person pasting the script into TradingView, who
+    # gets several hundred lines of text between them and it. The source keeps
+    # every word; the release keeps the version directive and the licence.
+    #
+    # Linting has already happened, against the SOURCE, so suppression comments
+    # have done their work before they are removed.
+    released = text_with_license if args.keep_comments else         strip_comments.strip_pine_comments(text_with_license)
     final_pine_path = out_dir / f"{name}.pine"
-    final_pine_path.write_text(text_with_license, encoding="utf-8")
+    final_pine_path.write_text(released, encoding="utf-8")
 
     changelog_text = changelog_path.read_text(encoding="utf-8") if changelog_path.exists() else "(no CHANGELOG.md found)"
     desc = build_publish_description(name, version_info, changelog_text, is_strategy, declaration)

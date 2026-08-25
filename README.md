@@ -130,7 +130,8 @@ PineScript-Skill/
 │   ├── pine_run.py
 │   ├── publish.py
 │   ├── scaffold_project.py
-│   └── strategy_to_indicator.py
+│   ├── strategy_to_indicator.py
+│   └── strip_comments.py
 ├── references/
 │   ├── alerts-guide.md
 │   ├── decisions.md
@@ -170,6 +171,7 @@ PineScript-Skill/
 │   ├── test_skill_packaging.py
 │   ├── test_snapshots.py
 │   ├── test_strategy_to_indicator.py
+│   ├── test_strip_comments.py
 │   └── test_untested_rules.py
 └── .github/workflows/ci.yml
 ```
@@ -248,10 +250,16 @@ python3 scripts/generate_release_bundle.py indicators/my_rsi_bands
 ```
 
 Outputs to `release/`:
-- ✅ **`my_rsi_bands.pine`** — Final linted source with MPL 2.0 header
+- ✅ **`my_rsi_bands.pine`** — Final linted script, MPL 2.0 header, **comments stripped**
 - ✅ **`PUBLISH_DESCRIPTION.md`** — Pre-filled TradingView publish template
 - ✅ **`INPUTS.md`** — Generated table of every setting, grouped as the panel groups them
 - ✅ **`RELEASE_SUMMARY.txt`** — Lint results, test-mode check, readiness verdict
+
+The released `.pine` carries **no comments**. This repo writes a lot of prose into its scripts on purpose, and all of it is for whoever changes the code — not for the person pasting the script into TradingView, who would otherwise read several hundred lines of it first. The source keeps every word.
+
+Two things survive, because they are not really comments: `//@version=N`, which is a compiler directive, and the licence and copyright lines. Pass `--keep-comments` for the annotated copy.
+
+Stripping is verified rather than assumed: `tests/test_strip_comments.py` runs every real indicator through the interpreter twice, with comments and without, and compares every drawing, plot and alert. A `//` inside a string is not a comment, and a stripper that thinks otherwise turns a tooltip containing a URL into a compile error.
 
 
 ### **pine_fmt.py** — Formatter
