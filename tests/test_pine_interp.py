@@ -581,26 +581,22 @@ class TestRealIndicator(unittest.TestCase):
                              f"the per-tick entry search grew from {per_tick_few} "
                              f"to {per_tick_many} with the swing count")
 
-    def test_a_profile_spends_every_bar_it_is_allotted(self):
-        """This replaces a test that demanded a minimum of 10 chart bars per
-        profile. A short swing can only reach that by drawing over its
-        neighbour, which is the bug 0.10.0 removed, so the old assertion was
-        holding the bug in place.
+    def test_a_profile_spends_all_the_room_it_is_allotted(self):
+        """Row widths are normalised against the busiest bucket, so that bucket
+        spans the profile's full width exactly and nothing is left unused.
 
-        What is genuinely guaranteed is that nothing is left unused: row widths
-        are normalised against the busiest bucket, so that bucket spans the
-        profile's full width exactly. Whether that width is wide depends on how
-        much room the swing owns, and coverage of the price span - the thing
-        that actually made older swings look broken - is asserted separately in
+        Checked in TIME, because that is what the boxes are positioned by now.
+        Whole bar numbers capped a four-bar-wide profile at four distinct row
+        lengths, which drew thirty-four rows as a solid block; milliseconds have
+        no such limit. Coverage of the price span is asserted separately in
         test_every_profile_spans_its_whole_price_range."""
         r = run_file(str(PROJECT), synthetic_bars(700), platform=self.platform,
                      inputs={"Swings To Show": 8, "Pivot Length": 6,
                              "Minimum Width (bars)": 20})
-        rights = {d.props["rightbottom"][0] for d in r.drawings
-                  if d.kind == "box"
-                  and isinstance(d.props.get("rightbottom"), (list, tuple))
-                  and isinstance(d.props["rightbottom"][0], int)}
-        self.assertTrue(rights, "no row boxes were drawn at all")
+        boxes = [d for d in r.drawings if d.kind == "box"
+                 and isinstance(d.props.get("lefttop"), (list, tuple))
+                 and isinstance(d.props.get("rightbottom"), (list, tuple))]
+        self.assertTrue(boxes, "no row boxes were drawn at all")
 
         swings = list(r.global_value("swings").items)
         live = r.global_value("liveSwing")
@@ -609,15 +605,64 @@ class TestRealIndicator(unittest.TestCase):
         max_pct = r.global_value("maxWidthPctInput")
         min_bars = r.global_value("minProfileBarsInput")
         last_bar = r.bars - 1
+        checked = 0
         for n, s in enumerate(swings):
             left, right = s.fields["leftBar"], s.fields["rightBar"]
             nxt = swings[n + 1].fields["leftBar"] if n + 1 < len(swings) else last_bar
             fitted = max(1, int(max(1, right - left) * max_pct / 100))
             room = max(1, int(max(1, nxt - left) * max_pct / 100))
             right_edge = left + min(max(fitted, min_bars), room)
-            self.assertIn(right_edge, rights,
-                          f"swing {n} was given {left}-{right_edge} but no row "
-                          f"reaches its right edge")
+            left_time = s.fields["leftTime"]
+            ms_per_bar = (s.fields["rightTime"] - left_time) / max(1, right - left)
+            if ms_per_bar <= 0:
+                continue
+            want = left_time + (right_edge - left) * ms_per_bar
+            mine = [b for b in boxes
+                    if left_time - 1 <= b.props["lefttop"][0] <= want + 1]
+            if not mine:
+                continue
+            checked += 1
+            widest = max(b.props["rightbottom"][0] for b in mine)
+            # Within one millisecond: the coordinates are integers, and the
+            # busiest bucket is meant to reach the profile's right edge exactly.
+            self.assertLessEqual(abs(widest - want), 1.0 + ms_per_bar * 0.001,
+                                 f"swing {n} was given up to {want} but its "
+                                 f"widest row reaches {widest}")
+        self.assertGreater(checked, 0, "no profile could be matched to a swing")
+
+    def test_a_narrow_profile_still_has_room_to_show_a_shape(self):
+        """The failure this replaced a whole approach over. A profile four chart
+        bars wide, positioned by bar index, had four row lengths available and
+        drew thirty-four rows with them - a block with two steps in it, which is
+        what the short swings looked like on the chart while the long ones
+        looked fine.
+
+        Widening the profile was the wrong answer and produced the overlap of
+        0.10.0: the room in front of a short swing genuinely is four bars."""
+        r = run_file(str(PROJECT), synthetic_bars(700), platform=self.platform,
+                     inputs={"Swings To Show": 6, "Price Rows Per Swing": 200})
+        swings = list(r.global_value("swings").items)
+        live = r.global_value("liveSwing")
+        if live is not None:
+            swings = swings + [live]
+        boxes = [d for d in r.drawings if d.kind == "box"
+                 and isinstance(d.props.get("lefttop"), (list, tuple))]
+        narrowest = None
+        for n, s in enumerate(swings):
+            span = s.fields["rightBar"] - s.fields["leftBar"]
+            if narrowest is None or span < narrowest[1]:
+                narrowest = (s, span)
+        s = narrowest[0]
+        left_time = s.fields["leftTime"]
+        mine = [b for b in boxes if b.props["lefttop"][0] == left_time]
+        if len(mine) < 8:
+            self.skipTest("the narrowest swing drew too few rows to judge")
+        lengths = {b.props["rightbottom"][0] - left_time for b in mine}
+        # Whole bars gave four. Anything in single figures is the old bug back.
+        self.assertGreater(len(lengths), 10,
+                           f"the narrowest swing ({narrowest[1]} bars) drew "
+                           f"{len(mine)} rows with only {len(lengths)} distinct "
+                           f"lengths — the shape is quantised away")
 
     def test_every_target_is_further_out_than_the_one_before(self):
         """Spacing is applied between successive targets, not only from the
