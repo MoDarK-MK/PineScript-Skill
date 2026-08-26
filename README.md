@@ -167,6 +167,7 @@ PineScript-Skill/
 │   ├── test_pine_lint.py
 │   ├── test_project_quality.py
 │   ├── test_scaffold_project.py
+│   ├── test_sessions.py
 │   ├── test_shared_engine.py
 │   ├── test_skill_packaging.py
 │   ├── test_snapshots.py

@@ -12,7 +12,10 @@ the interpreter does not know a function, it says so and names it.
 SECOND: drawing calls are recorded, never rendered. What a test wants from
 box.new() is that it happened, how many times, and with what coordinates.
 """
+import datetime
 import math
+import re
+import zoneinfo
 
 from .runtime import (NA, Drawing, PineArray, PineRuntimeError, UDTInstance,
                       format_number, is_na, num, nz, ta_ema, ta_extreme,
@@ -578,12 +581,88 @@ def _timeframe_change(interp, pos, named, node):
     return False
 
 
+SESSION_CACHE = {}
+
+
+def _zone(name):
+    """A tzinfo for a Pine timezone string, or None when it cannot be resolved.
+
+    IANA names go through zoneinfo so their DST rules apply. Fixed offsets like
+    "UTC-5" are accepted too, and are exactly as wrong here as they are on a
+    chart - which is the point of supporting both."""
+    if not name:
+        return datetime.timezone.utc
+    key = str(name)
+    if key in SESSION_CACHE:
+        return SESSION_CACHE[key]
+    zone = None
+    m = re.fullmatch(r"(?:UTC|GMT)([+-]\d{1,2})(?::?(\d{2}))?", key.strip())
+    if m:
+        hours = int(m.group(1))
+        mins = int(m.group(2) or 0) * (1 if hours >= 0 else -1)
+        zone = datetime.timezone(datetime.timedelta(hours=hours, minutes=mins))
+    else:
+        try:
+            zone = zoneinfo.ZoneInfo(key)
+        except Exception:
+            zone = None
+    SESSION_CACHE[key] = zone
+    return zone
+
+
+def _parse_session(spec):
+    """(start_minute, end_minute, {pine weekdays}) from "HHMM-HHMM:1234567"."""
+    text = str(spec).strip()
+    days = None
+    if ":" in text:
+        text, mask = text.split(":", 1)
+        days = {int(c) for c in mask.strip() if c.isdigit()}
+    m = re.fullmatch(r"(\d{4})\s*-\s*(\d{4})", text.strip())
+    if not m:
+        return None
+    def minutes(hhmm):
+        return int(hhmm[:2]) * 60 + int(hhmm[2:])
+    return minutes(m.group(1)), minutes(m.group(2)), days
+
+
 def _time_call(interp, pos, named, node):
-    if len(pos) >= 2:
-        interp.approximations.add(
-            "time(timeframe, session) returned na; sessions are not modelled offline")
+    """`time(timeframe, session, timezone)` - the bar's time when it falls
+    inside the session, na when it does not.
+
+    Pine numbers weekdays from 1 = Sunday, which is not Python's numbering and
+    is the kind of off-by-one that silently shifts a whole day mask."""
+    if len(pos) < 2:
+        return interp.hist["time"][-1] if interp.hist["time"] else NA
+    if not interp.hist["time"]:
         return NA
-    return interp.hist["time"][-1] if interp.hist["time"] else NA
+    stamp = interp.hist["time"][-1]
+    if is_na(stamp):
+        return NA
+
+    parsed = _parse_session(pos[1])
+    if parsed is None:
+        interp.approximations.add(
+            f"session spec {pos[1]!r} could not be parsed; time() returned na")
+        return NA
+    start, end, days = parsed
+
+    tzname = pos[2] if len(pos) > 2 else (named.get("timezone") if named else None)
+    zone = _zone(tzname)
+    if zone is None:
+        interp.approximations.add(
+            f"timezone {tzname!r} is not a zone this machine knows; the session "
+            "was measured in UTC instead")
+        zone = datetime.timezone.utc
+
+    local = datetime.datetime.fromtimestamp(stamp / 1000.0, tz=zone)
+    minute = local.hour * 60 + local.minute
+    # Pine: 1 = Sunday. Python: Monday = 0.
+    pine_day = (local.weekday() + 1) % 7 + 1
+    if days and pine_day not in days:
+        return NA
+
+    inside = start <= minute < end if start < end else (minute >= start or minute < end)
+    return stamp if inside else NA
 
 
 def _cast_int(interp, pos, named, node):
