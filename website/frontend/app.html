@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PineScript-Skill | Live Editor</title>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Monaco Editor Styles -->
+    <link rel="stylesheet" data-name="vs/editor/editor.main" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.38.0/min/vs/editor/editor.main.min.css">
+    
+    <style>
+        body, html {
+            height: 100%;
+            overflow: hidden; /* Prevent page scrolling in the app view */
+        }
+        
+        .app-container {
+            display: flex;
+            height: calc(100vh - 4rem);
+            margin-top: 4rem;
+        }
+
+        .editor-section {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid var(--color-border);
+        }
+        
+        .editor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            background-color: var(--color-card);
+            border-bottom: 1px solid var(--color-border);
+        }
+        
+        .toolbar {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        #monaco-editor {
+            flex: 1;
+            width: 100%;
+        }
+        
+        .console-panel {
+            height: 250px;
+            background-color: var(--color-primary);
+            border-top: 1px solid var(--color-border);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .console-header {
+            padding: 0.25rem 1rem;
+            background-color: var(--color-card);
+            border-bottom: 1px solid var(--color-border);
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        #console-output {
+            flex: 1;
+            padding: 1rem;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        
+        .chat-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: var(--color-background);
+        }
+        
+        .chat-header {
+            padding: 0.75rem 1rem;
+            background-color: var(--color-card);
+            border-bottom: 1px solid var(--color-border);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .chat-messages {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        
+        .message {
+            padding: 0.75rem 1rem;
+            border-radius: var(--radius-md);
+            max-width: 90%;
+            line-height: 1.5;
+        }
+        
+        .message.user {
+            background-color: var(--color-secondary);
+            align-self: flex-end;
+        }
+        
+        .message.ai {
+            background-color: var(--color-card);
+            border: 1px solid var(--color-card-border);
+            align-self: flex-start;
+        }
+        
+        .message pre {
+            background-color: #0d1117;
+            padding: 1rem;
+            border-radius: var(--radius-sm);
+            overflow-x: auto;
+            margin-top: 0.5rem;
+        }
+        
+        .chat-input-area {
+            padding: 1rem;
+            border-top: 1px solid var(--color-border);
+            background-color: var(--color-card);
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        .chat-input-area input {
+            flex: 1;
+            background-color: var(--color-primary);
+            border: 1px solid var(--color-border);
+            color: var(--color-foreground);
+            padding: 0.75rem 1rem;
+            border-radius: var(--radius-md);
+            font-family: var(--font-sans);
+        }
+        
+        .chat-input-area input:focus {
+            outline: none;
+            border-color: var(--color-accent);
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container nav-content" style="max-width: 100%; padding: 0 2rem;">
+            <div class="logo">
+                <i class="ph ph-code"></i>
+                <a href="index.html">PineScript-Skill</a>
+            </div>
+            <div class="nav-links">
+                <span class="text-muted"><i class="ph ph-circle-notch ph-spin" style="display:none" id="loader"></i></span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="app-container">
+        <!-- Editor Section -->
+        <div class="editor-section">
+            <div class="editor-header">
+                <span class="text-muted">untitled.pine</span>
+                <div class="toolbar">
+                    <button id="btn-lint" class="btn btn-primary" style="padding: 0.4rem 1rem; font-size: 0.85rem;">
+                        <i class="ph ph-magic-wand"></i> Lint Code
+                    </button>
+                </div>
+            </div>
+            
+            <div id="monaco-editor"></div>
+            
+            <div class="console-panel">
+                <div class="console-header">Terminal / Linter Output</div>
+                <div id="console-output"><span class="text-muted">Ready.</span></div>
+            </div>
+        </div>
+        
+        <!-- Chat Section -->
+        <div class="chat-section">
+            <div class="chat-header">
+                <i class="ph ph-robot text-accent" style="font-size: 1.5rem;"></i>
+                <strong>Ollama AI Assistant</strong>
+            </div>
+            
+            <div class="chat-messages" id="chat-messages">
+                <div class="message ai">
+                    Hello! I am connected to the PineScript-Skill logic rules. Tell me what kind of indicator or strategy you want to build.
+                </div>
+            </div>
+            
+            <div class="chat-input-area">
+                <input type="text" id="chat-input" placeholder="Ask Ollama to write a strategy..." autocomplete="off">
+                <button id="btn-send" class="btn btn-primary">
+                    <i class="ph ph-paper-plane-right"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Monaco Editor Loader -->
+    <script>var require = { paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.38.0/min/vs' } };</script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.38.0/min/vs/loader.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.38.0/min/vs/editor/editor.main.nls.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.38.0/min/vs/editor/editor.main.js"></script>
+    
+    <script src="app.js"></script>
+</body>
+</html>
