@@ -127,6 +127,12 @@ with `.set_*()` instead of delete-and-recreate (PINE038), and merge
 Give every input used as a history offset a `maxval`, or a large value produces a
 runtime error that reads like a script bug.
 
+**When the user asks for a "Heavy Script", "High-Performance Script", or complains about speed:**
+- Always default to the fingerprint caching pattern.
+- Combine this with pooling (`var array`), and restrict intensive ops to `barstate.isconfirmed` where possible.
+- Hide intermediate plots using `display=display.none` to prevent Status Line clutter.
+- Add visual polish natively: Use `color.from_gradient` for varying densities instead of solid colors.
+
 A completed indicator project in the workspace is the worked example of all of this.
 
 Before shipping anything, `python3 scripts/doctor.py --fast` runs every check

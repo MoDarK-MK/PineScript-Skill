@@ -115,8 +115,25 @@ bool  trendUp    = sourceInput > maValue
 float srcLowest  = ta.lowest(sourceInput, lengthInput)
 float srcHighest = ta.highest(sourceInput, lengthInput)
 
+// Example: Gradient coloring for visual polish
+float rsiValue = ta.rsi(sourceInput, 14)
+color gradientColor = color.from_gradient(rsiValue, 30, 70, bearColor, bullColor)
+
+// Example: Heavy loop fingerprint caching
+// Heavy logic (like profiling) should only re-run when its inputs change, not on every tick.
+// var int cachedBar = na
+// var float heavyResult = na
+// if barstate.islast
+//     if cachedBar != bar_index // Fingerprint check
+//         cachedBar := bar_index
+//         heavyResult := 0.0 // Do heavy loop here
+//     // Update drawings using heavyResult here
+
 // ————— Visuals
-plot(maValue, "MA", color=trendUp ? bullColor : bearColor, linewidth=2)
+// Use display.pane to keep the status line clean for plots that are just visual aids
+plot(maValue, "MA", color=gradientColor, linewidth=2, display=display.pane)
+// Example of a hidden series used only for external referencing
+plot(rsiValue, "RSI (Hidden)", display=display.none)
 
 var table dashboard = table.new(
      tablePosFrom(tablePosInput), 2, 3,
