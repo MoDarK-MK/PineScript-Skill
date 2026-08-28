@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PineScript-Skill | Production-Grade Pine Script Tooling</title>
+    <meta name="description" content="Transform your TradingView Pine Script ideas into production-ready indicators and strategies with professional tooling, automated linting, and structured versioning.">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Phosphor Icons (for crisp SVG icons) -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container nav-content">
+            <div class="logo">
+                <i class="ph ph-code"></i>
+                <span>PineScript-Skill</span>
+            </div>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#demo">How it Works</a>
+                <a href="https://github.com/MoDarK-MK/PineScript-Skill" target="_blank" class="btn btn-secondary">
+                    <i class="ph ph-github-logo"></i> GitHub
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <header class="hero">
+        <div class="container hero-content">
+            <div class="hero-text reveal">
+                <div class="badge">v6 Ready</div>
+                <h1>Write Pine Script Like a <span>Software Engineer</span></h1>
+                <p>Transform TradingView ideas into production-ready indicators and strategies with a 59-rule linter, automated versioning, and professional CI/CD workflows.</p>
+                
+                <div class="cta-group">
+                    <div class="code-copy" id="clone-cmd">
+                        <span class="prompt">$</span>
+                        <code class="cmd-text">git clone https://github.com/MoDarK-MK/PineScript-Skill.git</code>
+                        <button class="copy-btn" aria-label="Copy to clipboard" onclick="copyCommand()">
+                            <i class="ph ph-copy"></i>
+                        </button>
+                    </div>
+                    <a href="#quickstart" class="btn btn-primary">Quick Start <i class="ph ph-arrow-right"></i></a>
+                </div>
+            </div>
+            
+            <div class="hero-visual reveal">
+                <div class="terminal-window">
+                    <div class="terminal-header">
+                        <div class="window-controls">
+                            <span class="control red"></span>
+                            <span class="control yellow"></span>
+                            <span class="control green"></span>
+                        </div>
+                        <div class="window-title">pine_lint.py --fix</div>
+                    </div>
+                    <div class="terminal-body">
+                        <pre><code><span class="text-muted">$ python3 scripts/pine_lint.py indicators/my_rsi/src/my_rsi.pine</span>
+<span class="text-accent">✔ PINE001:</span> No compilation errors detected.
+<span class="text-accent">✔ PINE012:</span> Repainting traps mitigated.
+<span class="text-warning">! PINE036:</span> table.cell() missing text_color parameter.
+<span class="text-muted">  ↳ Fixing automatically with --fix...</span>
+<span class="text-accent">✔ PINE036:</span> Fixed 2 occurrences.
+
+<span class="text-primary">Summary:</span> 59 rules checked, <span class="text-accent">0 errors</span>, 1 auto-fixed.
+<span class="text-muted">Ready for production.</span></code></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <section id="features" class="features section">
+        <div class="container">
+            <div class="section-header reveal">
+                <h2>Not Just Another Script</h2>
+                <p>Most Pine Script traders treat each indicator as a one-off. We treat them like real projects.</p>
+            </div>
+            
+            <div class="features-grid">
+                <div class="feature-card reveal">
+                    <div class="icon-wrapper">
+                        <i class="ph ph-magnifying-glass"></i>
+                    </div>
+                    <h3>59-Rule Offline Linter</h3>
+                    <p>Catches v6 compile errors, repainting traps, scope violations, and performance costs offline. 7 rules repair themselves automatically with <code class="inline-code">--fix</code>.</p>
+                </div>
+                
+                <div class="feature-card reveal">
+                    <div class="icon-wrapper">
+                        <i class="ph ph-play"></i>
+                    </div>
+                    <h3>Execution Engine</h3>
+                    <p>A Python-based Pine interpreter runs scripts offline, bar by bar, with real series history. It reports parameter sweeps and approximation data.</p>
+                </div>
+                
+                <div class="feature-card reveal">
+                    <div class="icon-wrapper">
+                        <i class="ph ph-shield-check"></i>
+                    </div>
+                    <h3>Strategy Risk Modules</h3>
+                    <p>Risk-% sizing, ATR stops, breakeven + trailing, TP1/TP2 partials, and account-level guards — fully wired and ready for testing.</p>
+                </div>
+                
+                <div class="feature-card reveal">
+                    <div class="icon-wrapper">
+                        <i class="ph ph-package"></i>
+                    </div>
+                    <h3>Automated Releases</h3>
+                    <p>Generate lint reports, version bumps, changelogs, git tags, publish descriptions, and exhaustive INPUT tables with one command.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="demo" class="demo section">
+        <div class="container">
+            <div class="demo-content">
+                <div class="demo-text reveal">
+                    <h2>Beautiful & Fast Dashboards</h2>
+                    <p>Work-tiering and memoization patterns ensure dashboards track price tick-by-tick without re-running heavy scans.</p>
+                    <ul class="checklist">
+                        <li><i class="ph-fill ph-check-circle"></i> Theme-aware color palettes</li>
+                        <li><i class="ph-fill ph-check-circle"></i> Built-in test blocks & assertions</li>
+                        <li><i class="ph-fill ph-check-circle"></i> Micro-optimizations for 500ms limit</li>
+                    </ul>
+                </div>
+                
+                <div class="demo-visual reveal">
+                    <div class="code-comparison">
+                        <div class="code-block bad">
+                            <div class="block-label">Typical Script</div>
+                            <pre><code>if barstate.islast
+  // Heavy scan runs every tick!
+  poc = expensiveScan()
+  label.new(bar_index, poc)</code></pre>
+                        </div>
+                        <div class="code-block good">
+                            <div class="block-label">PineScript-Skill Pattern</div>
+                            <pre><code>if barstate.islast
+  <span class="text-muted">// Computation is gated</span>
+  if cachedLeft != leftBar
+    cachedPoc := expensiveScan()
+  <span class="text-muted">// Drawing runs live</span>
+  box.set_rightbottom(zone, bar_index, cachedPoc)</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="container footer-content">
+            <div class="footer-brand">
+                <div class="logo">
+                    <i class="ph ph-code"></i>
+                    <span>PineScript-Skill</span>
+                </div>
+                <p>Production-Grade TradingView Pine Script Tooling.</p>
+            </div>
+            
+            <div class="footer-links">
+                <div class="link-group">
+                    <h4>Resources</h4>
+                    <a href="https://github.com/MoDarK-MK/PineScript-Skill/blob/main/references/pine-v6-guide.md">v6 Guide</a>
+                    <a href="https://github.com/MoDarK-MK/PineScript-Skill/blob/main/references/performance-guide.md">Performance Guide</a>
+                    <a href="https://github.com/MoDarK-MK/PineScript-Skill/blob/main/references/strategy-guide.md">Strategy Guide</a>
+                </div>
+                <div class="link-group">
+                    <h4>Project</h4>
+                    <a href="https://github.com/MoDarK-MK/PineScript-Skill">GitHub</a>
+                    <a href="https://github.com/MoDarK-MK/PineScript-Skill/blob/main/LICENSE">License (MPL 2.0)</a>
+                </div>
+            </div>
+        </div>
+        <div class="container copyright">
+            <p>&copy; 2026 PineScript-Skill Contributors. Designed with UI UX Pro Max intelligence.</p>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
