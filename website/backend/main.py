@@ -86,6 +86,30 @@ async def chat(request: Request):
             
     return StreamingResponse(generate(), media_type="text/plain")
 
+@app.get("/api/models")
+async def get_models(host: str = "http://localhost:11434"):
+    url = f"{host}/api/tags"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read())
+            models = [m["name"] for m in data.get("models", [])]
+            return JSONResponse({"models": models})
+    except Exception as e:
+        return JSONResponse({"error": str(e), "models": []})
+
+@app.get("/api/explain/{code}")
+async def explain_error(code: str):
+    try:
+        # Run pine_lint.py --explain CODE
+        lint_cmd = ["python", str(SCRIPTS_DIR / "pine_lint.py"), "--explain", code]
+        result = subprocess.run(lint_cmd, capture_output=True, text=True, encoding="utf-8")
+        if result.returncode == 0:
+            return JSONResponse({"explanation": result.stdout})
+        return JSONResponse({"error": result.stderr or result.stdout})
+    except Exception as e:
+        return JSONResponse({"error": str(e)})
+
 # Mount frontend files at the root
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
 app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")

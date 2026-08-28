@@ -1,5 +1,8 @@
 let editor;
 
+// Configure Monaco AMD require path
+require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.38.0/min/vs' } });
+
 // Initialize Monaco Editor
 require(['vs/editor/editor.main'], function () {
     // Register Pine Script basic syntax highlighting
@@ -19,12 +22,34 @@ require(['vs/editor/editor.main'], function () {
         }
     });
 
+    // Define custom dark theme matching the app design system
+    monaco.editor.defineTheme('pine-dark', {
+        base: 'vs-dark',
+        inherit: true,
+        rules: [
+            { token: 'keyword', foreground: '22C55E', fontStyle: 'bold' },
+            { token: 'type.identifier', foreground: '60A5FA' },
+            { token: 'comment', foreground: '64748B', fontStyle: 'italic' },
+            { token: 'string', foreground: 'F59E0B' },
+            { token: 'number', foreground: 'EC4899' }
+        ],
+        colors: {
+            'editor.background': '#0F172A',
+            'editor.foreground': '#F8FAFC',
+            'editorLineNumber.foreground': '#475569',
+            'editorLineNumber.activeForeground': '#22C55E',
+            'editor.lineHighlightBackground': '#1E293B60',
+            'editorIndentGuide.background': '#1E293B',
+            'editorIndentGuide.activeBackground': '#334155'
+        }
+    });
+
     editor = monaco.editor.create(document.getElementById('monaco-editor'), {
         value: [
             '//@version=6',
             'indicator("My Awesome Indicator", overlay=true)',
             '',
-            '// Type your code here or ask Ollama to generate it!',
+            '// Type your code here or click the magic wand button to lint!',
             'len = input.int(14, "Length")',
             'src = input.source(close, "Source")',
             '',
@@ -32,7 +57,7 @@ require(['vs/editor/editor.main'], function () {
             'plot(my_rsi, color=color.new(color.blue, 0))'
         ].join('\n'),
         language: 'pinescript',
-        theme: 'vs-dark',
+        theme: 'pine-dark',
         automaticLayout: true,
         minimap: { enabled: false },
         fontSize: 14,
