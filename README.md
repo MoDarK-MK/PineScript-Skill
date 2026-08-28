@@ -126,6 +126,7 @@ PineScript-Skill/
 │   ├── lint_all.py
 │   ├── mutate_check.py
 │   ├── new_rule.py
+│   ├── ollama_agent.py
 │   ├── pine_edit.py
 │   ├── pine_fmt.py
 │   ├── pine_lint.py
