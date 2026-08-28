@@ -170,6 +170,39 @@ def check_interpreter():
     return PASS, f"{len(targets)} script(s) executed over 150 bars"
 
 
+def check_private_backup():
+    """Is the gitignored work backed up, and is the backup current?
+
+    `indicators/` and `strategies/` are excluded from git on purpose, which
+    also excluded them from having any history at all. This is the one check
+    here whose failure mode is losing work rather than shipping a fault, so it
+    reports STALE as a failure rather than a note."""
+    script = ROOT / "scripts" / "backup_private.py"
+    if not script.exists():
+        return SKIP, "backup_private.py not present"
+    sources = [ROOT / n for n in ("indicators", "strategies")]
+    if not any(s.is_dir() for s in sources):
+        return SKIP, "nothing private to back up"
+    code, out = run(py("scripts/backup_private.py", "--status"))
+    if code != 0:
+        return FAIL, "no backup exists — run scripts/backup_private.py"
+    stored = next((l for l in out.splitlines() if l.startswith("files stored")), "")
+    dirty = next((l for l in out.splitlines()
+                  if l.startswith("uncommitted changes")), "")
+    # The snapshot is only refreshed when the script runs, so fewer stored
+    # files than live ones means it is BEHIND, not broken. The backup carries
+    # its own README, so it holds one more file than the sources do.
+    live = sum(1 for base in sources if base.is_dir()
+               for f in base.rglob("*") if f.is_file()
+               and "__pycache__" not in f.parts)
+    saved = next((int(l.split(":")[1]) for l in out.splitlines()
+                  if l.startswith("files stored")), 0)
+    if saved - 1 < live:
+        return FAIL, (f"backup is behind: {saved - 1} file(s) stored against "
+                      f"{live} live — run scripts/backup_private.py")
+    return PASS, f"{stored.split(':')[1].strip()} file(s) stored, {dirty.split(':')[1].strip()} pending"
+
+
 def check_mutation():
     code, out = run(py("scripts/mutate_check.py"))
     summary = next((l for l in out.splitlines() if "rule(s)" in l or "unprotected" in l), "")
@@ -187,6 +220,7 @@ CHECKS = [
     Check("persian reference", check_fa_reference),
     Check("part builds", check_part_builds),
     Check("interpreter run", check_interpreter),
+    Check("private backup", check_private_backup),
     Check("rule mutation", check_mutation, slow=True),
 ]
 
