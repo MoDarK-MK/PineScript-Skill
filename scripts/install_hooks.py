@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-install_hooks.py - Install the repo's git pre-commit hook.
+install_hooks.py - Install the repo's git hooks.
 
 The hook lints every staged .pine file with --strict and blocks the commit if
 any of them fails, which is the same gate CI applies. Until now this existed
@@ -18,11 +18,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOK_NAME = "pre-commit"
-MARKER = "# pine-script-cicd pre-commit hook"
+MARKER = "# pine-script-cicd hook"
 
 HOOK_BODY = f'''#!/bin/sh
-{MARKER}
+{MARKER} (pre-commit)
 # Lints every staged .pine file with --strict. Bypass once with --no-verify.
 #
 # tests/fixtures/ is skipped on purpose: the compile-error corpus there is
@@ -56,6 +55,50 @@ exit $status
 '''
 
 
+PREPUSH_BODY = f'''#!/bin/sh
+{MARKER} (pre-push)
+# Two things reading cannot catch, run at the last moment before the work
+# leaves this machine. Bypass once with --no-verify.
+#
+#   1. EXECUTION. A script that lints clean and cannot run is the exact
+#      combination this repo kept shipping. pine_run actually interprets it.
+#   2. The BACKUP. indicators/ and strategies/ are gitignored, so a push is
+#      precisely when they are most likely to be forgotten.
+
+set -e
+repo_root=$(git rev-parse --show-toplevel)
+status=0
+
+if [ -f "$repo_root/scripts/pine_run.py" ]; then
+    for f in "$repo_root"/indicators/*/src/*.pine "$repo_root"/strategies/*/src/*.pine; do
+        [ -f "$f" ] || continue
+        case "$f" in
+            */parts/*) continue ;;
+        esac
+        if ! python "$repo_root/scripts/pine_run.py" "$f" --bars 120 >/dev/null 2>&1; then
+            echo "pre-push: $f does not run under the interpreter"
+            status=1
+        fi
+    done
+fi
+
+if [ -f "$repo_root/scripts/backup_private.py" ]; then
+    if ! python "$repo_root/scripts/backup_private.py" >/dev/null 2>&1; then
+        echo "pre-push: the private backup could not be written"
+        status=1
+    fi
+fi
+
+if [ $status -ne 0 ]; then
+    echo ""
+    echo "pre-push: blocked. Push with --no-verify to bypass deliberately."
+fi
+exit $status
+'''
+
+HOOKS = {"pre-commit": HOOK_BODY, "pre-push": PREPUSH_BODY}
+
+
 def hooks_dir(repo_root):
     """Respects core.hooksPath, which some setups (husky, shared configs) set."""
     try:
@@ -79,10 +122,10 @@ def find_repo_root():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Install the pre-commit lint hook.")
+    parser = argparse.ArgumentParser(description="Install the repo git hooks (pre-commit lint, pre-push run).")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite an existing hook that this script did not write")
-    parser.add_argument("--uninstall", action="store_true", help="Remove the hook")
+    parser.add_argument("--uninstall", action="store_true", help="Remove the hooks")
     args = parser.parse_args()
 
     repo_root = find_repo_root()
@@ -91,31 +134,39 @@ def main():
         return 1
 
     target_dir = hooks_dir(repo_root)
-    target = target_dir / HOOK_NAME
 
     if args.uninstall:
-        if not target.exists():
-            print(f"No {HOOK_NAME} hook installed.")
-            return 0
-        if MARKER not in target.read_text(encoding="utf-8", errors="replace"):
-            print(f"error: {target} was not written by this script — leaving it alone.",
-                  file=sys.stderr)
-            return 1
-        target.unlink()
-        print(f"Removed {target}")
+        removed = 0
+        for name in HOOKS:
+            target = target_dir / name
+            if not target.exists():
+                continue
+            if MARKER not in target.read_text(encoding="utf-8", errors="replace"):
+                print(f"error: {target} was not written by this script — leaving "
+                      f"it alone.", file=sys.stderr)
+                return 1
+            target.unlink()
+            print(f"Removed {target}")
+            removed += 1
+        if removed == 0:
+            print("No hooks installed.")
         return 0
 
-    if target.exists() and not args.force:
-        existing = target.read_text(encoding="utf-8", errors="replace")
-        if MARKER in existing:
-            print(f"Hook already installed at {target} (refreshing).")
-        else:
-            print(f"error: {target} already exists and was not written by this script.\n"
-                  f"       Re-run with --force to overwrite it.", file=sys.stderr)
-            return 1
-
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target.write_text(HOOK_BODY, encoding="utf-8", newline="\n")
+    for name, body in HOOKS.items():
+        target = target_dir / name
+        if target.exists() and not args.force:
+            existing = target.read_text(encoding="utf-8", errors="replace")
+            if MARKER in existing:
+                print(f"Hook already installed at {target} (refreshing).")
+            else:
+                print(f"error: {target} already exists and was not written by "
+                      f"this script.\n       Re-run with --force to overwrite it.",
+                      file=sys.stderr)
+                return 1
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8", newline="\n")
+        target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    target = target_dir / "pre-commit"
     # git requires the hook to be executable on POSIX; harmless on Windows.
     target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 

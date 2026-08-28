@@ -11,7 +11,7 @@ Transform your TradingView Pine Script ideas into **production-ready indicators 
 
 Most Pine Script traders treat each indicator as a one-off script. Pine Script Skill treats them like **real projects**:
 
-- 🔍 **59-Rule Linter** — v6 compile errors, repainting traps, scope violations, performance costs, invisible dashboard text. Six rules repair themselves with `--fix`
+- 🔍 **59-Rule Linter** — v6 compile errors, repainting traps, scope violations, performance costs, invisible dashboard text. Seven rules repair themselves with `--fix`
 - ▶️ **It Runs The Code** — a Pine interpreter in Python executes a script offline, bar by bar, with real series history. Not a lint pass: actual execution, with parameter sweeps and every approximation reported
 - 🧠 **Real Static Analysis** — A symbol table catches `:=` to an undeclared name (TradingView's `Undeclared identifier`) and variables written but never read. Loop nests are costed at their worst case against Pine's 500 ms limit
 - 🎨 **Formatter** — `pine_fmt.py --check` in CI. It never touches block indentation, because in Pine that is structure, not style
@@ -110,6 +110,7 @@ Paste the `.pine` file into the Pine Editor, use the generated description, publ
 PineScript-Skill/
 ├── libraries/pine_toolkit/  # v0.1.0 (library)
 ├── scripts/
+│   ├── backup_private.py
 │   ├── build_fa_reference.py
 │   ├── build_index.py
 │   ├── build_pine.py
@@ -125,6 +126,7 @@ PineScript-Skill/
 │   ├── lint_all.py
 │   ├── mutate_check.py
 │   ├── new_rule.py
+│   ├── pine_edit.py
 │   ├── pine_fmt.py
 │   ├── pine_lint.py
 │   ├── pine_run.py
@@ -158,6 +160,7 @@ PineScript-Skill/
 │   ├── strategy_template.pine
 │   └── test_block_template.pine
 ├── tests/
+│   ├── test_backup_private.py
 │   ├── test_bump_version.py
 │   ├── test_compile_error_corpus.py
 │   ├── test_docs_consistency.py
@@ -549,7 +552,7 @@ multiple ±25% and see whether the result degrades gracefully or collapses.
 
 | | |
 |---|---|
-| **59 lint rules** | PINE001–PINE060 (PINE024 vacant), fact-checked against TradingView's docs; 6 auto-fixable |
+| **59 lint rules** | PINE001–PINE060 (PINE024 vacant), fact-checked against TradingView's docs; 7 auto-fixable |
 | **Offline execution** | `pine_run.py` runs a script bar by bar over real or synthetic OHLCV, with series history and `var` semantics |
 | **Parameter sweeps** | One file, many settings — `input.*()` reads from an override map |
 | **Symbol table** | Undeclared `:=` targets, unused and write-only variables |

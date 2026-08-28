@@ -824,6 +824,8 @@ This shipped twice from this repo. Both times the file linted clean first,
 because bracket counting can stay balanced across the break — the opening
 paren is still matched, so nothing looked wrong until TradingView read it.
 
+`--fix` repairs it: the halves are joined and the two characters are put back where the newline was. It is the one fix in the linter that changes the LINE COUNT, so it runs before the line-based repairs rather than among them.
+
 The interpreter rejects it too. It used to accept it: wrapped lines are joined
 before tokenising, so the string simply closed on a later line and the script
 ran. An interpreter that accepts what TradingView rejects is worse than one

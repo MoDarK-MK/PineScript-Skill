@@ -133,7 +133,8 @@ RULES = {
 
 # Rules --fix can repair mechanically. Every one of these has exactly one
 # correct rewrite; anything needing intent stays out.
-FIXABLE = {"PINE004", "PINE012", "PINE019", "PINE023", "PINE026", "PINE041"}
+FIXABLE = {"PINE004", "PINE012", "PINE019", "PINE023", "PINE026", "PINE041",
+           "PINE059"}
 
 STRATEGY_ORDER_FUNCS = [
     "strategy.entry(", "strategy.order(", "strategy.exit(", "strategy.close(",
@@ -1868,13 +1869,53 @@ OVERSIZED_RE = re.compile(r'\bsize\.(large|huge)\b')
 INT_DIV_LITERAL_RE = re.compile(r'(?<![.\w])(\d+)\s*/\s*(\d+)(?![.\d])')
 
 
+def rejoin_split_strings(lines):
+    """Puts a string literal back together after something split it across lines.
+
+    Separate from apply_fixes() because it is the one repair here that changes
+    the LINE COUNT, so it has to run first and its line numbers refer to the
+    file as it was.
+
+    The split happens when a tool writing the file turns an escape sequence into
+    a real newline, and the repair is the exact inverse: join the halves and put
+    the two characters back where the newline is. Written from a character code
+    rather than typed, because typing it is what breaks it."""
+    out, log = [], []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if unclosed_string_column(line) is None:
+            out.append(line)
+            i += 1
+            continue
+        # Walk forward until the string closes. If it never does, this is not a
+        # split string - it is a file with a genuinely broken quote, and
+        # guessing where it should end would be inventing content.
+        joined = line
+        j = i
+        while unclosed_string_column(joined) is not None and j + 1 < len(lines):
+            j += 1
+            joined = joined + (chr(92) + "n") + lines[j].lstrip()
+        if unclosed_string_column(joined) is not None:
+            out.append(line)
+            i += 1
+            continue
+        out.append(joined)
+        log.append((i + 1, "PINE059",
+                    f"string split across {j - i + 1} lines rejoined"))
+        i = j + 1
+    return out, log
+
+
 def apply_fixes(lines):
     """Returns (new_lines, [(line_no, code, description)]).
 
     Line-based on purpose: every fix here is a substitution inside one line, so
     line numbers never shift and a fixed file can be re-linted meaningfully."""
+    # The multi-line repair runs first: it is the only fix that changes the
+    # line count, and the line-based ones below rely on numbers staying put.
+    lines, log = rejoin_split_strings(lines)
     fixed = []
-    log = []
     for i, raw in enumerate(lines):
         line = raw
         line, n = _replace_outside_strings(line, STUDY_RE, "indicator(")

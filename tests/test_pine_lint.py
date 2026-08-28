@@ -1219,3 +1219,55 @@ int stride = 3
 plot(math.ceil(array.size(pool) / stride), title="C")
 """
         self.assertIn("PINE060", codes(lint_text(src)))
+
+
+class TestRejoinSplitStrings(unittest.TestCase):
+    """PINE059's repair — the inverse of the mangling that causes it."""
+
+    @staticmethod
+    def split_source():
+        # Built by joining lines, because the defect IS a real newline inside a
+        # string literal and cannot be written as one ordinary literal.
+        return "\n".join([
+            "//@version=6",
+            'indicator("T", overlay=true)',
+            'plot(close, title="M", tooltip="First half.',
+            "",
+            'Second half.")',
+        ])
+
+    def test_the_halves_are_joined_and_the_escape_restored(self):
+        fixed, log = pine_lint.rejoin_split_strings(self.split_source().split("\n"))
+        joined = "\n".join(fixed)
+        self.assertNotIn("PINE059", codes(lint_text(joined)))
+        self.assertIn(chr(92) + "n", joined)
+        self.assertIn("First half.", joined)
+        self.assertIn("Second half.", joined)
+        self.assertEqual(1, len(log))
+
+    def test_a_file_with_no_split_string_is_untouched(self):
+        src = ["//@version=6", 'indicator("T", overlay=true)', "plot(close)"]
+        fixed, log = pine_lint.rejoin_split_strings(src)
+        self.assertEqual(src, fixed)
+        self.assertEqual([], log)
+
+    def test_a_quote_that_never_closes_at_all_is_left_alone(self):
+        """A genuinely broken quote is not a split string, and guessing where it
+        should have ended would be inventing content."""
+        src = ["//@version=6", 'indicator("T", overlay=true)',
+               'plot(close, title="oops']
+        fixed, log = pine_lint.rejoin_split_strings(src)
+        self.assertEqual(src, fixed)
+        self.assertEqual([], log)
+
+    def test_the_repaired_file_relints_clean(self):
+        """Different is not the same as fixed."""
+        fixed, _ = pine_lint.rejoin_split_strings(self.split_source().split("\n"))
+        self.assertNotIn("PINE059", codes(lint_text("\n".join(fixed))))
+
+    def test_the_line_count_shrinks_which_is_why_it_runs_first(self):
+        """This is the only repair in the linter that moves line numbers, so the
+        line-based fixes have to run after it."""
+        before = self.split_source().split("\n")
+        fixed, _ = pine_lint.rejoin_split_strings(before)
+        self.assertLess(len(fixed), len(before))
