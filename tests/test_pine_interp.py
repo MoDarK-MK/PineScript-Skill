@@ -195,11 +195,25 @@ class TestHonesty(unittest.TestCase):
         self.assertIn("undeclared", str(ctx.exception))
 
     def test_approximations_are_reported(self):
+        """This used to assert that request.security() reported one, because it
+        served the chart value and had to say so. It now aggregates properly and
+        reports nothing, so the test moved to something still approximated -
+        keeping it pointed at security() would have quietly asserted that the
+        fix had not happened."""
+        r = run_source(head("""
+float sub = request.security_lower_tf(syminfo.tickerid, "1", close)
+plot(nz(sub), title="s")
+"""), BARS)
+        self.assertTrue(any("security_lower_tf" in a for a in r.approximations))
+
+    def test_an_aggregated_higher_timeframe_reports_nothing(self):
+        """The other half of the same change: an exact answer must not carry a
+        warning, or the warnings stop being read."""
         r = run_source(head("""
 float htf = request.security(syminfo.tickerid, "60", close)
 plot(htf, title="h")
 """), BARS)
-        self.assertTrue(any("request.security" in a for a in r.approximations))
+        self.assertFalse([a for a in r.approximations if "request.security(" in a])
 
     def test_a_syntax_error_names_its_line(self):
         with self.assertRaises(PineSyntaxError) as ctx:

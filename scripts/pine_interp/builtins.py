@@ -17,6 +17,7 @@ import math
 import re
 import zoneinfo
 
+from .platform import timeframe_seconds
 from .runtime import (NA, Drawing, PineArray, PineRuntimeError, UDTInstance,
                       format_number, is_na, num, nz, ta_ema, ta_extreme,
                       ta_pivot, ta_rma, ta_sma, truthy)
@@ -552,16 +553,166 @@ def _request_lower_tf(interp, pos, named, node):
     return PineArray([])
 
 
-def _request_security(interp, pos, named, node):
-    """Returns the expression as evaluated on the CHART timeframe.
+# The price series a higher-timeframe bar can answer directly. Anything else
+# has to be recomputed in its own context, which is a different job.
+HTF_SERIES = {
+    "open": lambda b: b["open"],
+    "high": lambda b: b["high"],
+    "low": lambda b: b["low"],
+    "close": lambda b: b["close"],
+    "volume": lambda b: b["volume"],
+    "time": lambda b: b["time"],
+    "hl2": lambda b: (b["high"] + b["low"]) / 2.0,
+    "hlc3": lambda b: (b["high"] + b["low"] + b["close"]) / 3.0,
+    "ohlc4": lambda b: (b["open"] + b["high"] + b["low"] + b["close"]) / 4.0,
+    "hlcc4": lambda b: (b["high"] + b["low"] + b["close"] * 2) / 4.0,
+}
 
-    That is an approximation and a real one: a higher-timeframe value is
-    different data, not the same data seen differently. It is recorded in the
-    run report so a result that depends on it cannot be read as exact."""
-    interp.approximations.add(
-        "request.security() returned the chart-timeframe value; higher-timeframe "
-        "results from this run are approximate")
-    return pos[2] if len(pos) > 2 else (pos[-1] if pos else NA)
+
+# Fixed the moment a bar opens, so asking for them on a FORMING bar is not
+# repainting - they cannot change. Everything else on an unfinished bar can.
+SETTLED_AT_OPEN = {"open", "time"}
+
+
+def _htf_buckets(interp, seconds):
+    """The chart bars grouped into higher-timeframe candles.
+
+    Cached per timeframe: a script calling request.security on every bar would
+    otherwise rebuild the whole series every time."""
+    cache = getattr(interp, "_htf_cache", None)
+    if cache is None:
+        cache = {}
+        interp._htf_cache = cache
+    if seconds in cache:
+        return cache[seconds]
+
+    period = seconds * 1000
+    bars, index = [], []
+    current = None
+    for bar in interp.bars:
+        stamp = bar.get("time")
+        if stamp is None:
+            index.append(None)
+            continue
+        slot = int(stamp // period)
+        if current is None or slot != current["slot"]:
+            current = {"slot": slot, "open": bar["open"], "high": bar["high"],
+                       "low": bar["low"], "close": bar["close"],
+                       "volume": bar.get("volume") or 0.0, "time": bar["time"]}
+            bars.append(current)
+        else:
+            current["high"] = max(current["high"], bar["high"])
+            current["low"] = min(current["low"], bar["low"])
+            current["close"] = bar["close"]
+            current["volume"] = (current["volume"] or 0.0) + (bar.get("volume") or 0.0)
+        index.append(len(bars) - 1)
+    cache[seconds] = (bars, index)
+    return cache[seconds]
+
+
+def _series_ref(node):
+    """(name, offset) for a plain price series, or None.
+
+    Read from the syntax tree rather than from the value, because by the time a
+    builtin runs its arguments are already numbers and `close` is
+    indistinguishable from any other float.
+
+    The offset counts HIGHER-timeframe bars, not chart bars: `high[1]` on a
+    daily request is yesterday's high, which is the most common thing anyone
+    asks a higher timeframe for."""
+    kind = getattr(node, "kind", None)
+    if kind == "name" and node.a in HTF_SERIES:
+        return node.a, 0
+    if kind == "history":
+        base, back = node.a, node.b
+        if (getattr(base, "kind", None) == "name" and base.a in HTF_SERIES
+                and getattr(back, "kind", None) == "num"):
+            try:
+                return base.a, int(back.a)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _expression_refs(node):
+    """The series an expression asks for, or None if it asks for something else.
+
+    A tuple is one call answering several questions, which is how anyone writes
+    this once they notice TradingView caps a script at 40 security calls."""
+    if node is None:
+        return None
+    if getattr(node, "kind", None) == "tuple":
+        parts = []
+        for item in (node.a or []):
+            ref = _series_ref(item)
+            if ref is None:
+                return None
+            parts.append(ref)
+        return parts or None
+    ref = _series_ref(node)
+    return [ref] if ref else None
+
+
+def _lookahead_on(pos, named):
+    for value in list(pos[3:]) + list((named or {}).values()):
+        path = getattr(value, "path", "")
+        if isinstance(path, str) and path.endswith("lookahead_on"):
+            return True
+    return False
+
+
+def _request_security(interp, pos, named, node):
+    """A higher-timeframe value, aggregated from the chart bars.
+
+    Only the bar that has CLOSED is served, which is what lookahead_off means
+    and the reason it does not repaint: a chart bar in the middle of an hourly
+    candle sees the PREVIOUS hourly bar. Serving the forming one would produce
+    results that cannot happen live."""
+    if len(pos) < 3:
+        return pos[-1] if pos else NA
+
+    args = getattr(node, "b", None) or []
+    expr_node = args[2][1] if len(args) > 2 else None
+    refs = _expression_refs(expr_node)
+    is_tuple = getattr(expr_node, "kind", None) == "tuple"
+    tf = pos[1]
+    seconds = timeframe_seconds(tf) if isinstance(tf, str) else NA
+
+    if refs is None or is_na(seconds) or not interp.bars:
+        interp.approximations.add(
+            "request.security() fell back to the chart-timeframe value for a "
+            "computed expression; only plain price series are aggregated offline")
+        return pos[2]
+
+    chart_seconds = timeframe_seconds(interp.platform.timeframe)
+    if not is_na(chart_seconds) and seconds <= chart_seconds:
+        # Same or lower timeframe: the chart bar IS the answer.
+        return pos[2]
+
+    bars, index = _htf_buckets(interp, int(seconds))
+    slot = index[interp.bar_index] if interp.bar_index < len(index) else None
+    if slot is None:
+        return pos[2]
+    # lookahead_off serves the last CLOSED bar; lookahead_on serves the forming
+    # one, which is exactly the repainting people reach for it by mistake.
+    ahead = _lookahead_on(pos, named)
+    base = slot if ahead else slot - 1
+
+    values = []
+    for name, back in refs:
+        use = base - back
+        # lookahead_on ALONE serves the bar still forming, which repaints. With
+        # an offset it does not: `high[1]` with lookahead_on is the previous
+        # completed bar, and asking for it that way is the standard idiom for a
+        # previous-day high precisely BECAUSE it cannot repaint. Warning about
+        # the safe form would train the reader to ignore the warning.
+        if ahead and back == 0 and name not in SETTLED_AT_OPEN:
+            interp.approximations.add(
+                "request.security() asked for the FORMING higher-timeframe bar "
+                "(lookahead_on with no history offset); that value repaints on "
+                "a live chart")
+        values.append(NA if use < 0 else HTF_SERIES[name](bars[use]))
+    return values if is_tuple else values[0]
 
 
 def _shape_note(interp, pos, named, node):

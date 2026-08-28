@@ -165,6 +165,7 @@ PineScript-Skill/
 │   ├── test_compile_error_corpus.py
 │   ├── test_docs_consistency.py
 │   ├── test_generate_release_bundle.py
+│   ├── test_htf.py
 │   ├── test_new_tooling.py
 │   ├── test_pine_interp.py
 │   ├── test_pine_lint.py
