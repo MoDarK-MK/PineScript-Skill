@@ -190,6 +190,17 @@ PineScript-Skill/
 
 ## 🛠️ The Tools
 
+### **ollama_agent.py** — Local AI Generation
+Connects to your local Ollama instance (e.g., Llama 3) and uses this repository's skill rules to generate production-ready Pine Script completely offline.
+
+```bash
+# Generate code using the default model (llama3.1)
+python3 scripts/ollama_agent.py "Write a volume weighted RSI indicator"
+
+# Specify a different local model
+python3 scripts/ollama_agent.py "Fix the repainting in this logic" --model codellama
+```
+
 ### **pine_lint.py** — Your Pre-Flight Checklist
 Offline linting for v6 compliance and performance:
 
