@@ -119,14 +119,18 @@ PineScript-Skill/
 │   ├── check_inputs_compat.py
 │   ├── check_library_sync.py
 │   ├── complexity.py
+│   ├── convert_v6.py
 │   ├── doctor.py
 │   ├── generate_release_bundle.py
 │   ├── input_inventory.py
+│   ├── inspect_mtf.py
 │   ├── install_hooks.py
 │   ├── lint_all.py
 │   ├── mutate_check.py
 │   ├── new_rule.py
 │   ├── ollama_agent.py
+│   ├── optimize_params.py
+│   ├── pine_bundle.py
 │   ├── pine_edit.py
 │   ├── pine_fmt.py
 │   ├── pine_lint.py
@@ -134,7 +138,8 @@ PineScript-Skill/
 │   ├── publish.py
 │   ├── scaffold_project.py
 │   ├── strategy_to_indicator.py
-│   └── strip_comments.py
+│   ├── strip_comments.py
+│   └── test_webhook.py
 ├── references/
 │   ├── alerts-guide.md
 │   ├── decisions.md
