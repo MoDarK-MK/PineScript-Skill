@@ -15,12 +15,20 @@ indicator(
 // block, or gate it behind a change check (references/performance-guide.md).
 
 // ————— Constants
-string THEME_DARK  = "Dark"
-string THEME_LIGHT = "Light"
-color  BULL_DARK   = #089981
-color  BEAR_DARK   = #f23645
-color  BULL_LIGHT  = #00796b
-color  BEAR_LIGHT  = #c62828
+string THEME_DARK   = "Dark"
+string THEME_LIGHT  = "Light"
+string THEME_AUTO   = "Auto"
+string THEME_CUSTOM = "Custom"
+
+// Dark palette (TradingView official chart colors)
+color  BULL_DARK    = #089981
+color  BEAR_DARK    = #f23645
+// Light palette (deeper tones needed on white)
+color  BULL_LIGHT   = #00796b
+color  BEAR_LIGHT   = #c62828
+// Neutral palette
+color  NEUTRAL_DARK  = #b2b5be
+color  NEUTRAL_LIGHT = #4a4e58
 
 // ————— Inputs
 // Every input carries a tooltip. That is not politeness: the settings dialog is
@@ -36,9 +44,16 @@ float  sourceInput        = input.source(
      tooltip="Which price each bar contributes. close is the convention; hlc3 " +
      "is steadier on noisy symbols.")
 string themeInput         = input.string(
-     THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT], group="Appearance",
-     tooltip="Match this to your chart. Pine cannot read the chart's theme, so " +
-     "getting it wrong is what produces dark text on a dark panel.")
+     THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT, THEME_AUTO, THEME_CUSTOM],
+     group="Appearance",
+     tooltip="Dark/Light: fixed palettes. Auto: reads the chart background and " +
+     "picks automatically. Custom: use the color pickers below.")
+color  customBullInput    = input.color(
+     #089981, "↑ Custom Bull", group="Appearance", inline="custom",
+     tooltip="Only used when Theme = Custom. The bullish/positive accent color.")
+color  customBearInput    = input.color(
+     #f23645, "↓ Custom Bear", group="Appearance", inline="custom",
+     tooltip="Only used when Theme = Custom. The bearish/negative accent color.")
 bool   showDashboardInput = input.bool(
      true, "Show Dashboard", group="Appearance",
      tooltip="Hides the panel without disabling any calculation.")
@@ -57,33 +72,53 @@ bool   testModeInput      = input.bool(
      "Leave OFF when publishing — the release bundle blocks on it.")
 
 // ————— Function declarations
+
+// @function Returns true when the chart background is closer to white than black.
+// Uses a simple luminance proxy (R*0.299 + G*0.587 + B*0.114).
+_isLightChart() =>
+    r   = color.r(chart.bg_color)
+    g   = color.g(chart.bg_color)
+    b   = color.b(chart.bg_color)
+    r * 0.299 + g * 0.587 + b * 0.114 > 128.0
+
 // @function Returns the bullish accent color for the selected theme.
+// Supports Dark, Light, Auto (reads chart background), and Custom (user picker).
 getBullColor(string theme) =>
     switch theme
-        THEME_LIGHT => BULL_LIGHT
-        => BULL_DARK
+        THEME_LIGHT  => BULL_LIGHT
+        THEME_AUTO   => _isLightChart() ? BULL_LIGHT : BULL_DARK
+        THEME_CUSTOM => customBullInput
+        =>             BULL_DARK
 
 // @function Returns the bearish accent color for the selected theme.
+// Supports Dark, Light, Auto (reads chart background), and Custom (user picker).
 getBearColor(string theme) =>
     switch theme
-        THEME_LIGHT => BEAR_LIGHT
-        => BEAR_DARK
+        THEME_LIGHT  => BEAR_LIGHT
+        THEME_AUTO   => _isLightChart() ? BEAR_LIGHT : BEAR_DARK
+        THEME_CUSTOM => customBearInput
+        =>             BEAR_DARK
 
 // @function Primary text color — the value column reads first.
 getTextColor(string theme) =>
     switch theme
         THEME_LIGHT => #131722
-        => #d1d4dc
+        THEME_AUTO  => _isLightChart() ? #131722 : #d1d4dc
+        =>             #d1d4dc
 
 // @function Secondary text color — deliberately lower contrast than the value.
 getMutedColor(string theme) =>
     switch theme
-        THEME_LIGHT => #4a4e58
-        => #b2b5be
+        THEME_LIGHT => NEUTRAL_LIGHT
+        THEME_AUTO  => _isLightChart() ? NEUTRAL_LIGHT : NEUTRAL_DARK
+        =>             NEUTRAL_DARK
 
 // @function Panel background for the selected theme.
 getPanelColor(string theme, int transp) =>
-    color base = theme == THEME_LIGHT ? #ffffff : #131722
+    color base = switch theme
+        THEME_LIGHT => #ffffff
+        THEME_AUTO  => _isLightChart() ? #ffffff : #131722
+        =>             #131722
     color.new(base, transp)
 
 // @function Maps a position-name string to the matching position.* constant.
@@ -92,7 +127,7 @@ tablePosFrom(string name) =>
         "Top Left"     => position.top_left
         "Bottom Right" => position.bottom_right
         "Bottom Left"  => position.bottom_left
-        => position.top_right
+        =>               position.top_right
 
 // @function One label/value dashboard row. Taking both colors as arguments is
 // what stops a cell shipping without text_color — Pine defaults cell text to
@@ -118,6 +153,14 @@ float srcHighest = ta.highest(sourceInput, lengthInput)
 // Example: Gradient coloring for visual polish
 float rsiValue = ta.rsi(sourceInput, 14)
 color gradientColor = color.from_gradient(rsiValue, 30, 70, bearColor, bullColor)
+
+// Example: Dynamic bull/bear zone fill between two series.
+// fill() only works on plot() IDs — see references/snippets/zone_fill.pine.
+// float upperBand = maValue + ta.atr(14)
+// float lowerBand = maValue - ta.atr(14)
+// p1 = plot(upperBand, display=display.none)
+// p2 = plot(lowerBand, display=display.none)
+// fill(p1, p2, color = trendUp ? color.new(bullColor, 88) : color.new(bearColor, 88))
 
 // Example: Heavy loop fingerprint caching
 // Heavy logic (like profiling) should only re-run when its inputs change, not on every tick.

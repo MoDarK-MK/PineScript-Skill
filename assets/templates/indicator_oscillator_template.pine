@@ -1,0 +1,180 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © {{SHORTTITLE}}
+
+//@version=6
+indicator(
+     "{{TITLE}}", shorttitle="{{SHORTTITLE}}", overlay=false,
+     max_labels_count=500)
+
+// Oscillator panel template — designed for a separate sub-pane.
+// Includes: hlines for overbought/oversold levels, histogram plot,
+// signal line, gradient coloring, and a live mini-dashboard.
+//
+// Replace the RSI calculation with your own oscillator logic.
+// Keep overlay=false: oscillators that fight with price candles
+// are the most common cause of "why does my indicator look wrong".
+
+// ————— Constants
+string THEME_DARK  = "Dark"
+string THEME_LIGHT = "Light"
+string THEME_AUTO  = "Auto"
+color  BULL_DARK   = #089981
+color  BEAR_DARK   = #f23645
+color  BULL_LIGHT  = #00796b
+color  BEAR_LIGHT  = #c62828
+
+// ————— Inputs
+int    lengthInput     = input.int(
+     14, "Length", minval=2, maxval=500, group="Settings",
+     tooltip="Oscillator lookback period.")
+float  sourceInput     = input.source(
+     close, "Source", group="Settings",
+     tooltip="Price series to feed the oscillator.")
+int    obLevelInput    = input.int(
+     70, "Overbought Level", minval=51, maxval=99, group="Levels",
+     tooltip="Readings above this are considered overbought.")
+int    osLevelInput    = input.int(
+     30, "Oversold Level", minval=1, maxval=49, group="Levels",
+     tooltip="Readings below this are considered oversold.")
+bool   showSignalInput = input.bool(
+     true, "Show Signal Line", group="Settings",
+     tooltip="Plots a smoothed signal line over the oscillator.")
+int    signalLenInput  = input.int(
+     9, "Signal Length", minval=1, group="Settings",
+     tooltip="EMA length for the signal line.")
+string themeInput      = input.string(
+     THEME_DARK, "Theme", options=[THEME_DARK, THEME_LIGHT, THEME_AUTO],
+     group="Appearance",
+     tooltip="Match to your chart. Auto reads the chart background.")
+bool   showDashInput   = input.bool(
+     true, "Show Mini Dashboard", group="Appearance",
+     tooltip="Small panel showing current value and state.")
+
+// ————— Function declarations
+
+// @function Returns true when chart background luminance suggests a light chart.
+_isLightChart() =>
+    r = color.r(chart.bg_color)
+    g = color.g(chart.bg_color)
+    b = color.b(chart.bg_color)
+    r * 0.299 + g * 0.587 + b * 0.114 > 128.0
+
+// @function Bull color for the selected theme.
+getBullColor(string theme) =>
+    switch theme
+        THEME_LIGHT => BULL_LIGHT
+        THEME_AUTO  => _isLightChart() ? BULL_LIGHT : BULL_DARK
+        =>             BULL_DARK
+
+// @function Bear color for the selected theme.
+getBearColor(string theme) =>
+    switch theme
+        THEME_LIGHT => BEAR_LIGHT
+        THEME_AUTO  => _isLightChart() ? BEAR_LIGHT : BEAR_DARK
+        =>             BEAR_DARK
+
+// @function Primary text color for the selected theme.
+getTextColor(string theme) =>
+    switch theme
+        THEME_LIGHT => #131722
+        THEME_AUTO  => _isLightChart() ? #131722 : #d1d4dc
+        =>             #d1d4dc
+
+// @function Muted text color for the selected theme.
+getMutedColor(string theme) =>
+    switch theme
+        THEME_LIGHT => #4a4e58
+        THEME_AUTO  => _isLightChart() ? #4a4e58 : #b2b5be
+        =>             #b2b5be
+
+// @function Panel background for the selected theme.
+getPanelColor(string theme, int transp) =>
+    color base = switch theme
+        THEME_LIGHT => #ffffff
+        THEME_AUTO  => _isLightChart() ? #ffffff : #131722
+        =>             #131722
+    color.new(base, transp)
+
+// @function One label/value row in a table.
+dashRow(table t, int row, string lbl, string val, color lblCol, color valCol) =>
+    table.cell(t, 0, row, lbl, text_color=lblCol, text_size=size.small,
+         text_halign=text.align_left)
+    table.cell(t, 1, row, val, text_color=valCol, text_size=size.small,
+         text_halign=text.align_right)
+
+// ————— Calculations
+color bullColor  = getBullColor(themeInput)
+color bearColor  = getBearColor(themeInput)
+color textColor  = getTextColor(themeInput)
+color mutedColor = getMutedColor(themeInput)
+
+// ── Replace this block with your own oscillator ──────────────────────
+float oscValue   = ta.rsi(sourceInput, lengthInput)
+// ─────────────────────────────────────────────────────────────────────
+
+float signalLine = ta.ema(oscValue, signalLenInput)
+float histogram  = oscValue - signalLine
+
+bool  isOverbought = oscValue >= obLevelInput
+bool  isOversold   = oscValue <= osLevelInput
+bool  isBullish    = oscValue > 50
+
+// ————— Visuals
+
+// Horizontal reference lines
+hline(obLevelInput, "Overbought", color=color.new(bearColor, 50),
+     linestyle=hline.style_dashed, linewidth=1)
+hline(osLevelInput, "Oversold",   color=color.new(bullColor, 50),
+     linestyle=hline.style_dashed, linewidth=1)
+hline(50, "Midline", color=color.new(color.gray, 60),
+     linestyle=hline.style_dotted, linewidth=1)
+
+// Gradient oscillator line — color intensity shows distance from midline
+color gradientColor = color.from_gradient(oscValue, osLevelInput, obLevelInput,
+     bearColor, bullColor)
+oscPlot = plot(oscValue, "Oscillator", color=gradientColor, linewidth=2)
+
+// Signal line
+plot(showSignalInput ? signalLine : na, "Signal",
+     color=color.new(textColor, 30), linewidth=1)
+
+// Histogram bars — above midline = bull, below = bear
+histColor = histogram > 0
+     ? (histogram > histogram[1] ? bullColor : color.new(bullColor, 50))
+     : (histogram < histogram[1] ? bearColor : color.new(bearColor, 50))
+plot(histogram, "Histogram", style=plot.style_columns,
+     color=histColor, linewidth=1)
+
+// Midline plot for fill()  — must be a plot ID
+midPlot = plot(50, "Mid (fill)", display=display.none)
+
+// Fill area between oscillator and midline
+fill(oscPlot, midPlot,
+     color = isBullish ? color.new(bullColor, 88) : color.new(bearColor, 88),
+     title = "Oscillator Fill")
+
+// Extreme zone backgrounds
+bgcolor(isOverbought ? color.new(bearColor, 92) : na, title="Overbought Zone")
+bgcolor(isOversold   ? color.new(bullColor, 92) : na, title="Oversold Zone")
+
+// Mini dashboard
+var table dash = table.new(position.top_right, 2, 3,
+     bgcolor=getPanelColor(themeInput, 15),
+     border_color=getPanelColor(themeInput, 80), border_width=1,
+     frame_color=color.new(mutedColor, 70), frame_width=1)
+
+if showDashInput and barstate.islast
+    string stateStr = isOverbought ? "Overbought" : isOversold ? "Oversold" : "Neutral"
+    color  stateCol = isOverbought ? bearColor : isOversold ? bullColor : mutedColor
+    table.cell(dash, 0, 0, "{{SHORTTITLE}}", text_color=textColor,
+         text_size=size.normal, text_halign=text.align_center)
+    table.cell(dash, 1, 0, "", text_color=textColor)
+    table.merge_cells(dash, 0, 0, 1, 0)
+    dashRow(dash, 1, "Value", str.tostring(oscValue, "#.00"), mutedColor, textColor)
+    dashRow(dash, 2, "State", stateStr, mutedColor, stateCol)
+
+// ————— Alerts
+alertcondition(ta.crossover(oscValue, osLevelInput),  "Oversold Exit",   "Oscillator crossed above oversold level")
+alertcondition(ta.crossunder(oscValue, obLevelInput), "Overbought Exit", "Oscillator crossed below overbought level")
+alertcondition(ta.crossover(oscValue, 50),            "Midline Bull",    "Oscillator crossed above midline")
+alertcondition(ta.crossunder(oscValue, 50),           "Midline Bear",    "Oscillator crossed below midline")

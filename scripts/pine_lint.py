@@ -129,6 +129,8 @@ RULES = {
     "PINE058": ("error", "Name shadows a built-in namespace"),
     "PINE059": ("error", "String literal not closed on its own line"),
     "PINE060": ("error", "Integer division used where a fraction was wanted"),
+    "PINE061": ("warning", "table.new() with >8 rows but no divider row (height=0 cell) — add section separators"),
+    "PINE062": ("info", "Multiple label.new() at the same bar_index without anti-collision spacing"),
 }
 
 # Rules --fix can repair mechanically. Every one of these has exactly one
@@ -2606,6 +2608,147 @@ def check_integer_division(lines, result):
 
 
 # ---------------------------------------------------------------------------
+# PINE061 — Dashboard table with many rows but no divider
+# ---------------------------------------------------------------------------
+_TABLE_NEW_RE = re.compile(r'(?<![\w.])table\.new\s*\(')
+_TABLE_CELL_HEIGHT0_RE = re.compile(r'(?<![\w.])table\.cell\s*\([^)]*height\s*=\s*0')
+
+
+def check_dashboard_divider(lines, result):
+    """Warn when a table.new() allocates more than 8 rows but no table.cell() with
+    height=0 (the divider-row pattern) appears in the same file.
+
+    The limit (8 rows) and divider pattern are from references/design-system.md §3:
+    'Past [8 rows], add a divider row ... to separate logical groups'. A file that
+    never uses height=0 in any cell almost certainly has no dividers at all.
+    At 8 rows without grouping the dashboard reads as an undifferentiated data dump.
+
+    False positive path: a file that uses height=0 cells for reasons other than
+    dividers (rare) will not trigger, which is the conservative / correct side."""
+    text = chr(10).join(lines)
+    clean_lines = [strip_strings_and_comments(l) for l in lines]
+    clean_text = chr(10).join(clean_lines)
+
+    # Quick exit: if any table.cell has height=0, dividers are present
+    if _TABLE_CELL_HEIGHT0_RE.search(clean_text):
+        return
+
+    # Find table.new() calls and check the row-count argument (second positional arg)
+    for i, raw in enumerate(clean_lines):
+        for m in _TABLE_NEW_RE.finditer(raw):
+            # Extract argument list after table.new(
+            rest = raw[m.end():]
+            # Count to the matching closing paren
+            depth = 1
+            j = 0
+            arg_text = []
+            while j < len(rest) and depth > 0:
+                c = rest[j]
+                if c == '(':
+                    depth += 1
+                elif c == ')':
+                    depth -= 1
+                    if depth == 0:
+                        break
+                arg_text.append(c)
+                j += 1
+            args = ''.join(arg_text)
+            parts = [p.strip() for p in args.split(',')]
+            # table.new(pos, columns, rows, ...) — rows is index 2
+            if len(parts) < 3:
+                continue
+            rows_str = parts[2].strip()
+            try:
+                rows = int(rows_str)
+            except ValueError:
+                continue  # dynamic row count — can't check statically
+            if rows > 8:
+                result.add(
+                    i + 1, "PINE061",
+                    f"table.new() declares {rows} rows but no divider row "
+                    "(table.cell with height=0) is used anywhere in the file. "
+                    "Past 8 rows, add at least one divider cell to separate "
+                    "logical sections — see references/design-system.md §3."
+                )
+
+
+# ---------------------------------------------------------------------------
+# PINE062 — Multiple label.new() in a barstate.islast block without spread
+# ---------------------------------------------------------------------------
+_LABEL_NEW_RE = re.compile(r'(?<![\w.])label\.new\s*\(')
+_SPREAD_LABELS_RE = re.compile(r'spreadLabels\s*\(')
+_ISLAST_RE = re.compile(r'barstate\.islast')
+
+
+def check_label_overlap(lines, result):
+    """Emit an info note when 3+ label.new() calls appear inside a barstate.islast
+    block without a spreadLabels() call nearby.
+
+    Labels anchored to the same bar_index at clustered prices stack visibly.
+    This is the most common multi-level visual defect in Pine indicators.
+    The fix is the spreadLabels() pattern from references/snippets/label_anticlash.pine.
+
+    Threshold is 3 to avoid false positives on scripts with one buy and one sell label;
+    those two rarely overlap because they are directional signals on different bars.
+
+    We check the whole file for any spreadLabels() call — if the author is already
+    using the anti-collision pattern anywhere, we trust they know what they're doing."""
+    clean_lines = [strip_strings_and_comments(l) for l in lines]
+    clean_text = chr(10).join(clean_lines)
+
+    # Skip if anti-collision pattern is already present
+    if _SPREAD_LABELS_RE.search(clean_text):
+        return
+
+    # Collect line numbers of label.new() inside barstate.islast blocks
+    in_islast_block = False
+    islast_block_labels = []
+    islast_start_line = 0
+    # Track indentation depth of the if barstate.islast block
+    islast_indent = -1
+
+    for i, raw in enumerate(clean_lines):
+        stripped = raw.lstrip()
+        indent = len(raw) - len(stripped)
+
+        # Detect `if barstate.islast` opener
+        if _ISLAST_RE.search(raw) and stripped.startswith('if '):
+            in_islast_block = True
+            islast_indent = indent
+            islast_start_line = i + 1
+            islast_block_labels = []
+            continue
+
+        # Detect end of block: a non-empty line at the same or lesser indent
+        if in_islast_block and stripped and indent <= islast_indent and not stripped.startswith('//'):
+            # Check accumulated labels before resetting
+            if len(islast_block_labels) >= 3:
+                result.add(
+                    islast_start_line, "PINE062",
+                    f"{len(islast_block_labels)} label.new() calls found inside a "
+                    "barstate.islast block with no anti-collision spacing. Labels at "
+                    "clustered price levels will stack on top of each other. Consider "
+                    "spreadLabels() from references/snippets/label_anticlash.pine."
+                )
+            in_islast_block = False
+            islast_indent = -1
+            islast_block_labels = []
+
+        if in_islast_block and _LABEL_NEW_RE.search(raw):
+            islast_block_labels.append(i + 1)
+
+    # Handle block that runs to end of file
+    if in_islast_block and len(islast_block_labels) >= 3:
+        result.add(
+            islast_start_line, "PINE062",
+            f"{len(islast_block_labels)} label.new() calls found inside a "
+            "barstate.islast block with no anti-collision spacing. Labels at "
+            "clustered price levels will stack on top of each other. Consider "
+            "spreadLabels() from references/snippets/label_anticlash.pine."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 def load_config(config_path):
@@ -2685,6 +2828,8 @@ def lint_file(path, cfg):
     check_namespace_shadowing(lines, result)
     check_unterminated_string(lines, result)
     check_integer_division(lines, result)
+    check_dashboard_divider(lines, result)
+    check_label_overlap(lines, result)
 
     file_wide, next_line, same_line = parse_suppressions(lines)
     filtered = []

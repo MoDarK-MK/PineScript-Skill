@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 59 rules spanning codes PINE001–PINE060. The code
+Note on numbering: there are 61 rules spanning codes PINE001–PINE062. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -865,3 +865,93 @@ An interpreter that is more forgiving than the platform does not merely miss
 bugs — it vouches for them.
 
 
+### PINE061 warning — table with >8 rows and no divider row
+
+Triggered when a `table.new()` call allocates more than 8 rows and no
+`table.cell()` with `height=0` appears anywhere in the file.
+
+The design guide (`references/design-system.md §3`) is explicit: past 8
+rows, add at least one divider row to group logical sections. Without
+dividers an 11-row table reads as "a log, not a dashboard" — every row
+has the same visual weight and nothing reads as primary.
+
+The divider pattern is a zero-height cell with a filled background:
+
+```pinescript
+// bad — 11 rows, no visual grouping
+var table dash = table.new(position.top_right, 2, 11, ...)
+```
+```pinescript
+// good — a height=0 divider separates the two sections
+var table dash = table.new(position.top_right, 2, 12, ...)
+
+if barstate.islast
+    // ——— Section 1: Price levels
+    dashRow(dash, 0, "PDH", str.tostring(pdh, format.mintick), ...)
+    dashRow(dash, 1, "PDL", str.tostring(pdl, format.mintick), ...)
+    // Divider row — height=0 makes it a thin coloured line
+    table.cell(dash, 0, 2, "", height=0, bgcolor=dividerColor)
+    table.cell(dash, 1, 2, "", height=0, bgcolor=dividerColor)
+    // ——— Section 2: Momentum
+    dashRow(dash, 3, "RSI", str.tostring(rsi, "#.0"), ...)
+```
+
+Suppression is appropriate when you intentionally use a tall undivided
+table (e.g. a raw log output for debugging):
+
+```pinescript
+// pine-lint-disable-next-line PINE061
+var table log = table.new(position.bottom_left, 1, 20, ...)
+```
+
+
+### PINE062 info — multiple label.new() in barstate.islast without anti-collision
+
+Triggered when 3 or more `label.new()` calls appear inside a
+`if barstate.islast` block and no `spreadLabels()` call is found anywhere
+in the file.
+
+When multiple price levels cluster near the same price value (PDH next to
+a swing high, CDL next to PDL, etc.) their labels anchor to the same
+`bar_index` at nearly the same Y. The result is a stack of overlapping
+text that is unreadable. This is the most common multi-level visual defect
+in Pine indicators.
+
+The fix is the `spreadLabels()` pattern from
+`references/snippets/label_anticlash.pine`. The function sorts labels by
+price and nudges each one downward by at least `atrValue * 0.35` from the
+previous, so the text separates without moving the lines they annotate.
+
+```pinescript
+// bad — three labels at the same bar_index, prices may cluster
+if barstate.islast
+    label.new(bar_index, pdh,    "PDH",    ...)
+    label.new(bar_index, swHigh, "Swing",  ...)
+    label.new(bar_index, cdh,    "CDH",    ...)
+```
+```pinescript
+// good — apply spreadLabels() to the Y positions before drawing
+float atr = ta.atr(14)  // global — must NOT be inside barstate.islast
+
+if barstate.islast
+    array<float> prices  = array.from(pdh, swHigh, cdh)
+    array<float> adjusted = spreadLabels(prices, atr, 0.35)
+    label.new(bar_index, array.get(adjusted, 0), "PDH",   ...)
+    label.new(bar_index, array.get(adjusted, 1), "Swing", ...)
+    label.new(bar_index, array.get(adjusted, 2), "CDH",   ...)
+    // Lines still drawn at pdh, swHigh, cdh — unchanged
+```
+
+The rule threshold is 3 labels (not 2) because a buy + sell label pair is
+a common idiom and those signals are directional — they appear on
+different bars and almost never overlap.
+
+If `spreadLabels()` is already present anywhere in the file, the rule
+assumes the author is handling overlap and stays silent. Suppress
+explicitly if your labels cannot overlap by construction:
+
+```pinescript
+// pine-lint-disable-next-line PINE062
+if barstate.islast
+    label.new(...) // labels at guaranteed non-overlapping prices
+```

@@ -1,4 +1,4 @@
-// Reference snippet: the canonical Reversal-Pro palette and theme helpers.
+// Reference snippet: the canonical palette, theme helpers, and Auto/Custom support.
 //
 // NOTE: Pine Script has no local file imports — you CANNOT `import` this file.
 // Paste the block below, or publish it as a TradingView library for real reuse.
@@ -8,8 +8,6 @@
 // #089981/#f23645 in the shipped scripts); the values below are the ones to use.
 //
 // This is a fragment, not a standalone script:
-// PINE051 too: every constant here is declared FOR the reader to copy,
-// so nothing in this file reads them.
 // pine-lint-disable PINE001,PINE002,PINE027,PINE051
 //
 // pine-lint-disable PINE056
@@ -35,48 +33,103 @@ color DIVIDER_LIGHT  = #e0e3eb
 color ACCENT_DARK  = #ffb703
 color ACCENT_LIGHT = #b07800
 
-string THEME_DARK  = "Dark"
-string THEME_LIGHT = "Light"
+// ————— Theme constants. Four modes:
+//   "Dark"   — hardcoded dark palette (TradingView default dark)
+//   "Light"  — hardcoded light palette (TradingView default light)
+//   "Auto"   — reads chart.bg_color to pick dark or light automatically
+//   "Custom" — uses the customBullInput / customBearInput color inputs
+string THEME_DARK   = "Dark"
+string THEME_LIGHT  = "Light"
+string THEME_AUTO   = "Auto"
+string THEME_CUSTOM = "Custom"
 
+// ————— Custom color inputs (only visible / used when Theme = "Custom")
+// These MUST be declared at global scope in your script, before the getters.
+// Example:
+//   color customBullInput = input.color(#089981, "Bull Color",  group="Custom Colors",
+//        inline="bull", display=display.none)
+//   color customBearInput = input.color(#f23645, "Bear Color",  group="Custom Colors",
+//        inline="bull", display=display.none)
+//
+// Then pass them into the getters:
+//   color bull = getBullColor(themeInput, customBullInput)
+
+// ————— Auto-detection helper.
+// chart.bg_color varies per user, so we classify it rather than hardcode a threshold.
+// A luminance proxy: R*0.299 + G*0.587 + B*0.114.  Pure black = 0; white = 255.
+// We treat anything above 128 as a "light" chart.
+//
+// This is a simple approximation — it fails on saturated custom backgrounds (e.g.
+// pure red), but those are exotic. The user can always switch to "Dark" or "Light"
+// manually if Auto misbehaves.
+_isLightChart() =>
+    r = color.r(chart.bg_color)
+    g = color.g(chart.bg_color)
+    b = color.b(chart.bg_color)
+    lum = r * 0.299 + g * 0.587 + b * 0.114
+    lum > 128.0
+
+// ————— Core getters — pass customBull/customBear as na when Theme != Custom.
 // @function Bullish accent for the selected theme.
-getBullColor(string theme) =>
+// @param theme    One of THEME_DARK, THEME_LIGHT, THEME_AUTO, THEME_CUSTOM.
+// @param custom   The user's custom color (only used when theme == THEME_CUSTOM).
+getBullColor(string theme, color custom) =>
     switch theme
-        THEME_LIGHT => BULL_LIGHT
-        => BULL_DARK
+        THEME_LIGHT  => BULL_LIGHT
+        THEME_AUTO   => _isLightChart() ? BULL_LIGHT : BULL_DARK
+        THEME_CUSTOM => na(custom) ? BULL_DARK : custom
+        =>             BULL_DARK
 
 // @function Bearish accent for the selected theme.
-getBearColor(string theme) =>
+// @param theme    One of THEME_DARK, THEME_LIGHT, THEME_AUTO, THEME_CUSTOM.
+// @param custom   The user's custom color (only used when theme == THEME_CUSTOM).
+getBearColor(string theme, color custom) =>
     switch theme
-        THEME_LIGHT => BEAR_LIGHT
-        => BEAR_DARK
+        THEME_LIGHT  => BEAR_LIGHT
+        THEME_AUTO   => _isLightChart() ? BEAR_LIGHT : BEAR_DARK
+        THEME_CUSTOM => na(custom) ? BEAR_DARK : custom
+        =>             BEAR_DARK
 
-// @function Accent for non-directional elements.
+// @function Accent for non-directional elements (zones, POC lines, neutral labels).
 getAccentColor(string theme) =>
     switch theme
         THEME_LIGHT => ACCENT_LIGHT
-        => ACCENT_DARK
+        THEME_AUTO  => _isLightChart() ? ACCENT_LIGHT : ACCENT_DARK
+        =>             ACCENT_DARK
 
 // @function Primary text colour — the value column of a dashboard.
 getTextColor(string theme) =>
     switch theme
         THEME_LIGHT => #131722
-        => #d1d4dc
+        THEME_AUTO  => _isLightChart() ? #131722 : #d1d4dc
+        =>             #d1d4dc
 
 // @function Secondary text colour — the label column. Deliberately lower
 // contrast than getTextColor so the value reads first.
 getMutedColor(string theme) =>
     switch theme
         THEME_LIGHT => NEUTRAL_LIGHT
-        => NEUTRAL_DARK
+        THEME_AUTO  => _isLightChart() ? NEUTRAL_LIGHT : NEUTRAL_DARK
+        =>             NEUTRAL_DARK
 
 // @function Table background. Keep transparency between 10 and 25: at 80+ the
 // candles behind the table win and the numbers become unreadable.
 getPanelColor(string theme, int transp) =>
-    color base = theme == THEME_LIGHT ? #ffffff : #131722
+    color base = switch theme
+        THEME_LIGHT => #ffffff
+        THEME_AUTO  => _isLightChart() ? #ffffff : #131722
+        =>             #131722
     color.new(base, math.max(0, math.min(100, transp)))
 
 // @function Divider / frame colour for table borders.
 getDividerColor(string theme) =>
     switch theme
         THEME_LIGHT => DIVIDER_LIGHT
-        => DIVIDER_DARK
+        THEME_AUTO  => _isLightChart() ? DIVIDER_LIGHT : DIVIDER_DARK
+        =>             DIVIDER_DARK
+
+// ————— Backward-compat wrappers (2-arg signatures, for old callers that don't
+// pass a custom color yet). These default custom to na, which falls through to
+// the theme default — existing scripts continue to work unmodified.
+getBullColorSimple(string theme) => getBullColor(theme, na)
+getBearColorSimple(string theme) => getBearColor(theme, na)

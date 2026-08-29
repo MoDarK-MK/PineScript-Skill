@@ -1,0 +1,122 @@
+// Reference snippet: dynamic bull/bear zone fill between two price series.
+//
+// NOTE: Pine Script has no local file imports — you CANNOT `import` this file.
+// Paste the block you need, replacing the placeholder series names.
+//
+// pine-lint-disable PINE001,PINE002,PINE022,PINE027,PINE040,PINE051,PINE056
+// (This file is a fragment — no indicator() declaration, and the plot IDs are
+// intentionally unused because they exist to be copied, not run here.)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// RULE: fill() only works on plot() IDs, NOT on float values directly.
+//
+// Wrong (compile error):
+//   fill(upperBand, lowerBand, ...)  // ← these are floats, not plot IDs
+//
+// Correct: assign plot() results to variables first, then pass THOSE:
+//   p1 = plot(upperBand, ...)
+//   p2 = plot(lowerBand, ...)
+//   fill(p1, p2, ...)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ─────────────────────────────────────────────────────────────────────
+// Pattern A — Simple conditional fill (bull = green, bear = red)
+// Best for: MA ribbon, Bollinger bands, Keltner channels, ATR bands.
+// ─────────────────────────────────────────────────────────────────────
+
+// Replace these with your own series:
+float upperBand = ta.sma(close, 20) + ta.atr(14)
+float lowerBand = ta.sma(close, 20) - ta.atr(14)
+bool  isBullish = close > ta.sma(close, 20)
+
+// Transparency guide (from references/design-system.md §5):
+//   85–92  → trend/zone fills   ← use this for fills
+//   88–95  → band/channel fills
+//   70–80  → single-bar signal flash
+int FILL_TRANSP = 88   // barely visible — shows zone without winning over candles
+
+plotId1 = plot(upperBand, "Upper Band", color=color.new(color.gray, 80),
+     linewidth=1, display=display.pane)
+plotId2 = plot(lowerBand, "Lower Band", color=color.new(color.gray, 80),
+     linewidth=1, display=display.pane)
+
+// The fill switches color based on trend direction each bar.
+// color.from_gradient() can also be used here (see Pattern B).
+fill(plotId1, plotId2,
+     color  = isBullish ? color.new(bullColor, FILL_TRANSP)
+                        : color.new(bearColor, FILL_TRANSP),
+     title  = "Zone Fill")
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Pattern B — Gradient fill (momentum or oscillator intensity)
+// Best for: RSI zones, momentum bands, volume delta fills.
+// ─────────────────────────────────────────────────────────────────────
+// color.from_gradient() maps a continuous series to a smooth color ramp.
+// One gradient-colored fill per pane is the limit before it reads as a
+// heat map (references/design-system.md §6).
+
+float momentumValue = ta.rsi(close, 14)    // replace with your series
+
+plotIdTop    = plot(80, "Overbought", display=display.none)
+plotIdBottom = plot(20, "Oversold",   display=display.none)
+plotIdValue  = plot(momentumValue, "RSI", color=color.from_gradient(
+     momentumValue, 20, 80,
+     color.new(bearColor, 60),    // bottom of range → bear tint
+     color.new(bullColor, 60)),   // top of range    → bull tint
+     linewidth=2, display=display.pane)
+
+// Fill the area between the value line and the midline (50):
+plotIdMid    = plot(50, "Midline", color=color.new(color.gray, 85), display=display.pane)
+fill(plotIdValue, plotIdMid,
+     color = color.from_gradient(momentumValue, 20, 80,
+         color.new(bearColor, 85),
+         color.new(bullColor, 85)),
+     title = "RSI Gradient Fill")
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Pattern C — Multi-band ribbon (e.g. MA ribbon with 3 MAs)
+// Best for: MA alignment ribbons, EMA stacks.
+// Each pair of adjacent MAs gets its own fill call.
+// ─────────────────────────────────────────────────────────────────────
+
+float ma8  = ta.ema(close, 8)
+float ma21 = ta.ema(close, 21)
+float ma55 = ta.ema(close, 55)
+bool  ribbonBullish = ma8 > ma21 and ma21 > ma55
+
+color ribbonColor = ribbonBullish ? color.new(bullColor, 85) : color.new(bearColor, 85)
+
+pMa8  = plot(ma8,  "EMA 8",  color=ribbonBullish ? bullColor : bearColor, linewidth=1)
+pMa21 = plot(ma21, "EMA 21", color=ribbonBullish ? bullColor : bearColor, linewidth=1)
+pMa55 = plot(ma55, "EMA 55", color=ribbonBullish ? bullColor : bearColor, linewidth=2)
+
+fill(pMa8,  pMa21, color=ribbonColor, title="Ribbon Inner Fill")
+fill(pMa21, pMa55, color=color.new(ribbonBullish ? bullColor : bearColor, 92),
+     title="Ribbon Outer Fill")
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Pattern D — Supply/Demand zone fill using box objects
+// Best for: SMC zones, order blocks, support/resistance areas.
+// Uses box.new() instead of fill(), so it persists across bars.
+// ─────────────────────────────────────────────────────────────────────
+//
+// For dynamic zones that stay on chart until deleted or replaced:
+
+// var box demandZone = na
+// var box supplyZone = na
+//
+// if barstate.islast
+//     // Demand zone: price zone between two lows
+//     float zoneTop    = ta.lowest(low, 20) * 1.005
+//     float zoneBottom = ta.lowest(low, 20) * 0.995
+//     int   zoneLeft   = bar_index - 20
+//
+//     if not na(demandZone)
+//         box.delete(demandZone)
+//     demandZone := box.new(
+//          left=zoneLeft, top=zoneTop, right=bar_index + 10, bottom=zoneBottom,
+//          bgcolor=color.new(bullColor, 88),
+//          border_color=color.new(bullColor, 60), border_width=1)

@@ -1,0 +1,27 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © {{SHORTTITLE}}
+
+//@version=6
+indicator(
+     "{{TITLE}}", shorttitle="{{SHORTTITLE}}", overlay={{OVERLAY}})
+
+// Lightweight indicator template — no dashboard, no test block.
+// Best for: simple overlays, single-line indicators, quick scripts.
+// Use the "full" profile when you need a dashboard, tests, or theming.
+
+// ————— Inputs
+int   lengthInput = input.int(14, "Length", minval=1, maxval=2000,
+     tooltip="Lookback in bars.")
+float sourceInput = input.source(close, "Source",
+     tooltip="Price series to compute from.")
+
+// ————— Calculations
+float maValue = ta.sma(sourceInput, lengthInput)
+bool  trendUp = sourceInput > maValue
+
+// ————— Visuals
+color maColor = trendUp ? #089981 : #f23645
+plot(maValue, "MA", color=maColor, linewidth=2)
+
+// ————— Alerts
+alertcondition(ta.cross(sourceInput, maValue), "MA Cross", "Price crossed the MA")

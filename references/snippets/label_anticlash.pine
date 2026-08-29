@@ -1,0 +1,132 @@
+// Reference snippet: anti-collision label placement for multiple price levels.
+//
+// NOTE: Pine Script has no local file imports — you CANNOT `import` this file.
+// Paste the spreadLabels() function and the usage pattern into your script.
+//
+// pine-lint-disable PINE001,PINE002,PINE022,PINE027,PINE051,PINE056
+// (Fragment file — no indicator() declaration; helpers intentionally uncalled.)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// THE PROBLEM:
+//   When multiple price levels cluster near the same price (e.g. PDH next
+//   to a swing high, or CDL next to PDL), their labels stack on top of each
+//   other. The result is a single pile of overlapping text that reads as
+//   garbage. This is the most common visual defect in multi-level indicators.
+//
+// THE SOLUTION:
+//   Sort labels by price (descending), walk the list, and push each label
+//   DOWN when it would be closer than `minGap` to the previous one.
+//   The LINE stays at the true price — only the LABEL TEXT moves.
+//   Use a fraction of ATR as minGap so it scales with the instrument.
+//
+// IMPORTANT: call this only inside `if barstate.islast`. It processes the
+// entire array on every realtime tick — which is fine because the array is
+// small (~3–10 items) and `islast` does not re-run on historical bars.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// @function Computes anti-collision Y positions for a set of price labels.
+//
+// Takes an array of TRUE prices and returns an array of ADJUSTED Y positions
+// with the same indices. Labels that would overlap are nudged downward until
+// there is at least `minGap` between adjacent label centers.
+//
+// @param prices    array<float>  The true price for each level (parallel to your label array).
+// @param atrValue  float         Current ATR — minGap is derived as atrValue * gapFactor.
+// @param gapFactor float         Fraction of ATR between label centers (default 0.35).
+// @returns         array<float>  Adjusted Y positions (same indices as input).
+//
+// Usage:
+//   Only the LABEL Y changes — your LINE stays at the true price.
+//   Example:
+//     array<float> adjusted = spreadLabels(levelPrices, ta.atr(14), 0.35)
+//     for i = 0 to array.size(levelPrices) - 1
+//         float truePrice    = array.get(levelPrices, i)
+//         float labelY       = array.get(adjusted,    i)
+//         label lbl          = array.get(labelArray,  i)
+//         label.set_y(lbl, labelY)
+//         // line stays at truePrice — already drawn
+
+spreadLabels(array<float> prices, float atrValue, float gapFactor) =>
+    int           n        = array.size(prices)
+    array<float>  adjusted = array.copy(prices)          // output — same indices
+    float         minGap   = atrValue * math.max(gapFactor, 0.05)
+
+    if n > 0
+        // Sort indices descending by price (highest label placed first)
+        array<int> order = array.sort_indices(prices, order.descending)
+        float      lastY = na
+
+        for k = 0 to n - 1
+            int   i      = array.get(order, k)
+            float p      = array.get(prices, i)
+            float labelY = p
+
+            // If this label would be too close to the previous one, push it down.
+            if not na(lastY) and (lastY - labelY) < minGap
+                labelY := lastY - minGap
+
+            lastY := labelY
+            array.set(adjusted, i, labelY)
+
+    adjusted
+
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// FULL USAGE EXAMPLE — Copy and adapt this block.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// Setup: build your levels array and parallel label/line arrays, using var
+// so they persist across bars. Populate them wherever your signal fires.
+
+// var array<float> levelPrices = array.new<float>()
+// var array<label> levelLabels = array.new<label>()
+// var array<line>  levelLines  = array.new<line>()
+//
+// float atr = ta.atr(14)   // must be global — ta.* inside barstate.islast corrupts state
+//
+// // Example: add three key levels when bar closes
+// if barstate.isconfirmed and bar_index == 100   // replace with your own signal
+//     array.clear(levelPrices)
+//     array.clear(levelLabels)
+//     array.clear(levelLines)
+//
+//     // Add levels — true prices go into levelPrices
+//     for each [price, lbl_text, lbl_color] in your_levels_data
+//         array.push(levelPrices, price)
+//         array.push(levelLines,  line.new(bar_index - 20, price, bar_index + 10, price,
+//              color=lbl_color, width=1))
+//         array.push(levelLabels, label.new(bar_index + 10, price, lbl_text,
+//              color=lbl_color, textcolor=color.white,
+//              style=label.style_label_left, size=size.small))
+//
+// if barstate.islast
+//     // Apply anti-collision — move LABELS only, lines stay at true prices
+//     array<float> adjusted = spreadLabels(levelPrices, atr, 0.35)
+//     for i = 0 to array.size(levelPrices) - 1
+//         label.set_y(array.get(levelLabels, i), array.get(adjusted, i))
+//         // The line Y is NOT changed — it stays at array.get(levelPrices, i)
+
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// LITE VARIANT — for a small fixed set of levels (no arrays needed).
+// Useful when you have exactly 2–4 hard-coded key levels per bar.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// @function Nudge labelY away from anchorY by at least minGap if needed.
+// Returns the (possibly adjusted) Y position for the label.
+// The caller is responsible for keeping lines at the true price.
+nudgeLabel(float labelY, float anchorY, float minGap) =>
+    math.abs(labelY - anchorY) < minGap
+        ? (labelY < anchorY ? anchorY - minGap : anchorY + minGap)
+        : labelY
+//
+// Example with 3 levels:
+//   float atr   = ta.atr(14)
+//   float pdh   = ta.highest(high, 1)[1]
+//   float swHigh = ta.highest(high, 20)
+//   float pdl   = ta.lowest(low,  1)[1]
+//
+//   if barstate.islast
+//       float adjSwHigh = nudgeLabel(swHigh, pdh, atr * 0.4)
+//       label.set_y(swingLabel, adjSwHigh)
+//       // pdh line and label stay at true pdh price
