@@ -1,0 +1,38 @@
+{
+  "name": "pinescript-skill-vscode",
+  "displayName": "Pine Script v6 Professional Tooling",
+  "description": "Production-grade Pine Script v6 linter, formatter, snippets, and offline tools for TradingView traders.",
+  "version": "1.0.0",
+  "publisher": "pinescript-skill",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Snippets"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "pinescript",
+        "aliases": ["Pine Script", "pine", "pinescript"],
+        "extensions": [".pine", ".pinescript"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "pinescript",
+        "scopeName": "source.pinescript",
+        "path": "./syntaxes/pinescript.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "pinescript",
+        "path": "./snippets/pinescript.json"
+      }
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "Indicator Template": {
+    "prefix": "pine-indicator",
+    "body": [
+      "//@version=6",
+      "indicator(\"${1:Indicator Title}\", overlay = ${2|true,false|})",
+      "",
+      "// ————— Inputs",
+      "len = input.int(${3:14}, \"Length\", minval = 1)",
+      "src = input.source(close, \"Source\")",
+      "",
+      "// ————— Calculations",
+      "val = ta.rsi(src, len)",
+      "",
+      "// ————— Rendering",
+      "plot(val, \"${1:Indicator Title}\", color = color.blue)",
+      "$0"
+    ],
+    "description": "Standard Pine Script v6 Indicator scaffold"
+  },
+  "Strategy Template": {
+    "prefix": "pine-strategy",
+    "body": [
+      "//@version=6",
+      "strategy(\"${1:Strategy Title}\", overlay = true, initial_capital = 10000, default_qty_type = strategy.percent_of_equity, default_qty_value = 10)",
+      "",
+      "// ————— Inputs",
+      "fastLen = input.int(9, \"Fast Length\")",
+      "slowLen = input.int(21, \"Slow Length\")",
+      "",
+      "// ————— Logic",
+      "fastMa = ta.ema(close, fastLen)",
+      "slowMa = ta.ema(close, slowLen)",
+      "",
+      "longCondition = ta.crossover(fastMa, slowMa)",
+      "shortCondition = ta.crossunder(fastMa, slowMa)",
+      "",
+      "if longCondition",
+      "    strategy.entry(\"Long\", strategy.long)",
+      "",
+      "if shortCondition",
+      "    strategy.close(\"Long\")",
+      "$0"
+    ],
+    "description": "Standard Pine Script v6 Strategy with execution"
+  },
+  "MTF Security Call": {
+    "prefix": "pine-mtf",
+    "body": [
+      "htf_${1:val} = request.security(syminfo.tickerid, \"${2:60}\", ${3:close}[1], lookahead = barmerge.lookahead_on)"
+    ],
+    "description": "Safe, non-repainting Multi-Timeframe security call"
+  }
+}

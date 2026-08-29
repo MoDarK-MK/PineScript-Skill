@@ -1,0 +1,96 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Pine Script",
+  "scopeName": "source.pinescript",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#builtins" },
+    { "include": "#constants" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.pinescript",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.pinescript",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "name": "constant.character.escape.pinescript", "match": "\\\\." }]
+        },
+        {
+          "name": "string.quoted.single.pinescript",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "name": "constant.character.escape.pinescript", "match": "\\\\." }]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.pinescript",
+          "match": "\\b\\d+\\.\\d+([eE][+-]?\\d+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.pinescript",
+          "match": "\\b\\d+\\b"
+        },
+        {
+          "name": "constant.other.color.hex.pinescript",
+          "match": "#[0-9a-fA-F]{6,8}\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.pinescript",
+          "match": "\\b(if|else|for|to|by|while|switch|break|continue|return)\\b"
+        },
+        {
+          "name": "keyword.declaration.pinescript",
+          "match": "\\b(var|varip|export|import|method|type)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.pinescript",
+          "match": "\\b(int|float|bool|string|color|line|label|box|table|polyline|chart\\.point|array|matrix|map)\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.class.pinescript",
+          "match": "\\b(ta|math|request|str|color|array|matrix|map|box|line|label|table|polyline|strategy|syminfo|timeframe|barstate)\\b"
+        },
+        {
+          "name": "support.function.pinescript",
+          "match": "\\b(indicator|strategy|library|input|input\\.int|input\\.float|input\\.bool|input\\.string|input\\.color|input\\.source|input\\.time|plot|plotshape|plotchar|plotcandle|plotbar|bgcolor|fill|alert|alertcondition)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.pinescript",
+          "match": "\\b(true|false|na|open|high|low|close|hl2|hlc3|ohlc4|volume|time|timenow|bar_index|last_bar_index)\\b"
+        }
+      ]
+    }
+  }
+}

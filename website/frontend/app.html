@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PineScript-Skill | Live IDE</title>
+    <title>PineScript-Skill | Live IDE & Trading Studio</title>
     
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -11,78 +11,330 @@
     <!-- Phosphor Icons -->
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
     
-    <link rel="stylesheet" href="style.css?v=1.0.2">
-    
+    <!-- TradingView Lightweight Charts (Standalone) -->
+    <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+
     <!-- Monaco Editor Styles -->
     <link rel="stylesheet" data-name="vs/editor/editor.main" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.38.0/min/vs/editor/editor.main.min.css">
+    
+    <link rel="stylesheet" href="style.css?v=2.0.0">
 </head>
 <body class="ide-layout">
     
     <!-- Left Activity Bar -->
     <div class="activity-bar">
-        <a href="index.html" class="activity-icon active" title="Back to Home"><i class="ph ph-house"></i></a>
-        <div class="activity-icon" title="Files"><i class="ph ph-files"></i></div>
-        <div class="activity-icon" title="Search"><i class="ph ph-magnifying-glass"></i></div>
-        <div class="activity-icon" title="Source Control"><i class="ph ph-git-branch"></i></div>
-        <div class="activity-icon" title="Settings" style="margin-top: auto;"><i class="ph ph-gear"></i></div>
+        <a href="index.html" class="activity-icon" title="Back to Home"><i class="ph ph-house"></i></a>
+        <div class="activity-icon active" id="act-files" title="Project Files"><i class="ph ph-files"></i></div>
+        <div class="activity-icon" id="act-chart" title="Chart & Backtesting Studio"><i class="ph ph-chart-line-up"></i></div>
+        <div class="activity-icon" id="act-mtf" title="MTF Repainting Inspector"><i class="ph ph-shield-check"></i></div>
+        <div class="activity-icon" id="act-tools" title="Tools (Convert v6 / Bundler)"><i class="ph ph-wrench"></i></div>
+        <div class="activity-icon" id="act-webhook" title="Alert Webhook Tester"><i class="ph ph-broadcast"></i></div>
+        <div class="activity-icon" id="act-designer" title="Visual Input Designer"><i class="ph ph-palette"></i></div>
+        <div class="activity-icon" id="act-settings" style="margin-top: auto;" title="AI & Engine Settings"><i class="ph ph-gear"></i></div>
     </div>
 
-    <!-- Main Workspace -->
+    <!-- Main Workspace Area -->
     <div class="workspace">
         
-        <!-- Center Editor Area -->
+        <!-- Files Sidebar -->
+        <div class="files-sidebar" id="files-sidebar">
+            <div class="files-header">
+                <span>EXPLORER</span>
+                <button class="btn-icon-sm" id="btn-refresh-files" title="Refresh"><i class="ph ph-arrows-clockwise"></i></button>
+            </div>
+            <div class="file-tree" id="file-tree">
+                <!-- Dynamically populated from /api/files/list -->
+                <div class="tree-loading"><i class="ph ph-circle-notch ph-spin"></i> Loading workspace...</div>
+            </div>
+        </div>
+
+        <!-- Center Main Area (Editor & Multi-Tab Studio) -->
         <div class="editor-area">
-            <!-- Tabs -->
+            
+            <!-- Top Toolbar & Tabs -->
             <div class="editor-tabs">
-                <div class="tab active"><i class="ph ph-file-code text-accent"></i> main.pine</div>
+                <div class="tab active" id="active-file-tab">
+                    <i class="ph ph-file-code text-accent"></i> <span id="current-filename">main.pine</span>
+                </div>
                 <div class="tab-spacer"></div>
-                <button id="btn-lint" class="btn-icon" title="Lint Code"><i class="ph ph-magic-wand text-accent"></i></button>
-                <div class="loader-wrapper"><i class="ph ph-circle-notch ph-spin text-muted" id="loader" style="display:none;"></i></div>
+
+                <!-- Action Buttons -->
+                <button id="btn-run-backtest" class="btn btn-primary btn-sm" title="Run Offline Backtest & Render Chart">
+                    <i class="ph ph-play-circle"></i> Run Backtest
+                </button>
+                <button id="btn-lint" class="btn btn-outline btn-sm" title="Lint Pine Script v6">
+                    <i class="ph ph-magic-wand text-accent"></i> Lint
+                </button>
+                <button id="btn-autofix" class="btn btn-outline btn-sm" title="Apply Mechanical Auto-Fixes">
+                    <i class="ph ph-wrench"></i> Auto-Fix
+                </button>
+                <button id="btn-convert-v6" class="btn btn-outline btn-sm" title="Convert v4/v5 to v6">
+                    <i class="ph ph-arrows-clockwise"></i> Convert v6
+                </button>
+                <button id="btn-save-file" class="btn btn-outline btn-sm" title="Save File (Ctrl+S)">
+                    <i class="ph ph-floppy-disk"></i> Save
+                </button>
+
+                <div class="loader-wrapper">
+                    <i class="ph ph-circle-notch ph-spin text-muted" id="loader" style="display:none;"></i>
+                </div>
             </div>
             
-            <!-- Monaco Container -->
+            <!-- Monaco Editor Container -->
             <div id="monaco-editor"></div>
             
-            <!-- Bottom Panel (Terminal) -->
+            <!-- Bottom Multi-Tab Panel -->
             <div class="bottom-panel">
                 <div class="panel-header">
-                    <div class="panel-tab active">TERMINAL</div>
-                    <div class="panel-tab">PROBLEMS</div>
+                    <div class="panel-tab active" data-tab="terminal"><i class="ph ph-terminal"></i> TERMINAL</div>
+                    <div class="panel-tab" data-tab="problems"><i class="ph ph-warning-circle"></i> PROBLEMS <span class="badge" id="badge-problems">0</span></div>
+                    <div class="panel-tab" data-tab="chart"><i class="ph ph-chart-bar"></i> CHART & METRICS</div>
+                    <div class="panel-tab" data-tab="debugger"><i class="ph ph-bug"></i> STEP DEBUGGER</div>
+                    <div class="panel-tab" data-tab="mtf"><i class="ph ph-git-merge"></i> MTF INSPECTOR</div>
+                    <div class="panel-tab" data-tab="benchmark"><i class="ph ph-table"></i> BENCHMARK MATRIX</div>
                 </div>
-                <div id="console-output">
-                    <span class="text-accent">PineScript-Skill v1.0.0</span>
-                    <br><span class="text-muted">Type code in the editor and click the magic wand icon to lint.</span>
+
+                <div class="panel-body">
+                    <!-- Tab: Terminal -->
+                    <div class="tab-content active" id="tab-terminal">
+                        <div id="console-output">
+                            <span class="text-accent font-bold">🎯 PineScript-Skill v2.0 Studio Ready</span>
+                            <br><span class="text-muted">Type Pine Script v6 code and click 'Run Backtest' or 'Lint'. Offline engine loaded.</span>
+                        </div>
+                    </div>
+
+                    <!-- Tab: Problems -->
+                    <div class="tab-content" id="tab-problems">
+                        <div id="problems-list">
+                            <div class="text-muted p-3">No lint findings yet. Click 'Lint' to analyze.</div>
+                        </div>
+                    </div>
+
+                    <!-- Tab: Chart & Performance Metrics -->
+                    <div class="tab-content" id="tab-chart">
+                        <div class="chart-dashboard">
+                            <!-- Metrics Cards Bar -->
+                            <div class="metrics-bar" id="metrics-bar">
+                                <div class="metric-card">
+                                    <span class="m-label">Net Return</span>
+                                    <span class="m-val text-accent" id="m-return">-- %</span>
+                                </div>
+                                <div class="metric-card">
+                                    <span class="m-label">Sharpe Ratio</span>
+                                    <span class="m-val" id="m-sharpe">--</span>
+                                </div>
+                                <div class="metric-card">
+                                    <span class="m-label">Max Drawdown</span>
+                                    <span class="m-val text-danger" id="m-drawdown">-- %</span>
+                                </div>
+                                <div class="metric-card">
+                                    <span class="m-label">Win Rate</span>
+                                    <span class="m-val" id="m-winrate">-- %</span>
+                                </div>
+                                <div class="metric-card">
+                                    <span class="m-label">Profit Factor</span>
+                                    <span class="m-val" id="m-profitfactor">--</span>
+                                </div>
+                                <div class="metric-card">
+                                    <span class="m-label">Total Trades</span>
+                                    <span class="m-val" id="m-trades">--</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Lightweight Charts Canvas Container -->
+                            <div id="lightweight-chart-container"></div>
+                        </div>
+                    </div>
+
+                    <!-- Tab: Step Debugger -->
+                    <div class="tab-content" id="tab-debugger">
+                        <div class="debugger-toolbar">
+                            <button class="btn btn-sm btn-outline" id="dbg-prev"><i class="ph ph-skip-back"></i> Prev Bar</button>
+                            <button class="btn btn-sm btn-outline" id="dbg-play"><i class="ph ph-play"></i> Auto Step</button>
+                            <button class="btn btn-sm btn-outline" id="dbg-next"><i class="ph ph-skip-forward"></i> Next Bar</button>
+                            <span class="text-muted ml-3">Bar Index: <b class="text-accent" id="dbg-bar-index">0</b> / <span id="dbg-total-bars">300</span></span>
+                        </div>
+                        <div class="debugger-table-container">
+                            <table class="data-table" id="dbg-var-table">
+                                <thead>
+                                    <tr><th>Variable</th><th>Type</th><th>Value at Current Bar</th><th>Previous Bar [1]</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td colspan="4" class="text-muted">Click 'Run Backtest' to populate debug series.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Tab: MTF Inspector -->
+                    <div class="tab-content" id="tab-mtf">
+                        <div id="mtf-results" class="p-3">
+                            <div class="text-muted">Click 'Inspect MTF' or run MTF check from sidebar to view multi-timeframe future leakage analysis.</div>
+                        </div>
+                    </div>
+
+                    <!-- Tab: Benchmark Matrix -->
+                    <div class="tab-content" id="tab-benchmark">
+                        <div class="p-3">
+                            <div class="benchmark-header">
+                                <h4>Strategy Performance Comparison Matrix</h4>
+                                <button class="btn btn-sm btn-primary" id="btn-run-benchmark"><i class="ph ph-gauge"></i> Benchmark All Strategies</button>
+                            </div>
+                            <table class="data-table mt-2" id="benchmark-table">
+                                <thead>
+                                    <tr><th>Strategy</th><th>Return %</th><th>Sharpe</th><th>Max DD %</th><th>Win Rate</th><th>Profit Factor</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>Current Script</td><td class="text-accent">+18.4%</td><td>1.85</td><td class="text-danger">-8.2%</td><td>64.0%</td><td>2.10</td></tr>
+                                    <tr><td>RSI Divergence Strategy</td><td class="text-accent">+12.1%</td><td>1.42</td><td class="text-danger">-11.5%</td><td>58.2%</td><td>1.75</td></tr>
+                                    <tr><td>EMA Cross Trend Follower</td><td class="text-accent">+24.8%</td><td>2.15</td><td class="text-danger">-6.4%</td><td>61.5%</td><td>2.45</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                 </div>
             </div>
         </div>
 
-        <!-- Right Sidebar (AI Chat) -->
+        <!-- Right Sidebar (AI Copilot & Multi-Provider) -->
         <div class="chat-sidebar">
             <div class="chat-header">
                 <div class="ai-branding">
                     <i class="ph ph-robot text-accent"></i>
-                    <span>Ollama AI</span>
+                    <span>PineScript AI</span>
                 </div>
-                <select id="model-select" class="model-select" title="Select Local Model">
-                    <option value="llama3.1">llama3.1 (default)</option>
-                </select>
+                <div class="provider-selector">
+                    <select id="provider-select" class="provider-select" title="AI Provider">
+                        <option value="ollama">Local Ollama</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Claude</option>
+                        <option value="deepseek">DeepSeek</option>
+                    </select>
+                    <select id="model-select" class="model-select" title="Model">
+                        <option value="llama3.1">llama3.1</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Quick Action Chips -->
+            <div class="quick-chips">
+                <button class="chip" data-prompt="Add a standard ATR stop-loss and 2-stage take profit risk module to this script."><i class="ph ph-shield-plus"></i> Add Risk Model</button>
+                <button class="chip" data-prompt="Generate in-script @test assertion blocks to verify edge cases for this script."><i class="ph ph-check-square"></i> Generate Tests</button>
+                <button class="chip" data-prompt="Explain this script and suggest performance optimizations for TradingView."><i class="ph ph-lightning"></i> Optimize</button>
             </div>
             
             <div class="chat-messages" id="chat-messages">
                 <div class="message ai">
-                    Hello! I'm connected to the PineScript-Skill rules. I can help you write, debug, and understand Pine Script v6.
+                    Hello! I'm your **PineScript-Skill AI Copilot**. I have full context on Pine Script v6 rules, risk management modules, repainting guards, and backtesting. Ask me to write, debug, or convert any script!
                 </div>
             </div>
             
             <div class="chat-input-area">
-                <textarea id="chat-input" placeholder="Ask AI to generate or explain code..." rows="2"></textarea>
+                <textarea id="chat-input" placeholder="Ask AI to write, fix, or optimize Pine Script..." rows="2"></textarea>
                 <button id="btn-send" class="btn-send" title="Send Request"><i class="ph ph-paper-plane-right"></i></button>
             </div>
         </div>
         
     </div>
     
-    <!-- Modal for Explanations -->
+    <!-- Modal: Settings (API Keys & Host) -->
+    <div id="settings-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="ph ph-gear"></i> Settings & AI API Keys</h3>
+                <span class="close-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Local Ollama Host URL:</label>
+                    <input type="text" id="cfg-ollama-host" class="form-control" value="http://localhost:11434">
+                </div>
+                <div class="form-group">
+                    <label>OpenAI API Key:</label>
+                    <input type="password" id="cfg-openai-key" class="form-control" placeholder="sk-...">
+                </div>
+                <div class="form-group">
+                    <label>Anthropic API Key (Claude):</label>
+                    <input type="password" id="cfg-anthropic-key" class="form-control" placeholder="sk-ant-...">
+                </div>
+                <div class="form-group">
+                    <label>DeepSeek API Key:</label>
+                    <input type="password" id="cfg-deepseek-key" class="form-control" placeholder="sk-...">
+                </div>
+                <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Visual Input Designer -->
+    <div id="designer-modal" class="modal">
+        <div class="modal-content" style="max-width: 650px;">
+            <div class="modal-header">
+                <h3><i class="ph ph-palette"></i> Visual Input & Theme Designer</h3>
+                <span class="close-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted">Visually configure input fields and generate clean Pine Script v6 declarations:</p>
+                <div id="input-rows">
+                    <div class="input-row">
+                        <input type="text" placeholder="Title" class="form-control inp-title" value="Fast Length">
+                        <select class="form-control inp-type">
+                            <option value="int">int</option>
+                            <option value="float">float</option>
+                            <option value="bool">bool</option>
+                            <option value="string">string</option>
+                            <option value="color">color</option>
+                        </select>
+                        <input type="text" placeholder="Default" class="form-control inp-def" value="14">
+                        <input type="text" placeholder="Group" class="form-control inp-grp" value="Parameters">
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-outline mt-2" id="btn-add-input-row"><i class="ph ph-plus"></i> Add Input</button>
+                <div class="mt-3">
+                    <label>Generated Pine Script Code:</label>
+                    <pre><code id="generated-input-code">// Click Generate to preview code</code></pre>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-outline" id="btn-gen-input-code">Generate Code</button>
+                    <button class="btn btn-primary" id="btn-insert-input-code">Insert into Editor</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Webhook Tester -->
+    <div id="webhook-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="ph ph-broadcast"></i> TradingView Alert Webhook Simulator</h3>
+                <span class="close-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Target Webhook URL (e.g. 3Commas, Binance bot, custom listener):</label>
+                    <input type="text" id="wh-url" class="form-control" placeholder="http://localhost:5000/webhook">
+                </div>
+                <div class="form-group">
+                    <label>Alert JSON Template (with placeholders):</label>
+                    <textarea id="wh-payload" class="form-control" rows="6">{
+  "ticker": "{{ticker}}",
+  "action": "{{strategy.order.action}}",
+  "contracts": {{strategy.order.contracts}},
+  "price": {{strategy.order.price}},
+  "timestamp": {{timenow}}
+}</textarea>
+                </div>
+                <button class="btn btn-primary" id="btn-test-webhook"><i class="ph ph-paper-plane-tilt"></i> Test Webhook Dispatch</button>
+                <div class="mt-3">
+                    <label>Result:</label>
+                    <pre><code id="wh-result">Ready to test.</code></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Rule Explanation -->
     <div id="explanation-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -97,6 +349,6 @@
 
     <!-- Monaco Editor Loader -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.38.0/min/vs/loader.min.js"></script>
-    <script src="app.js?v=1.0.2"></script>
+    <script src="app.js?v=2.0.0"></script>
 </body>
 </html>

@@ -133,8 +133,10 @@ RULES = {
 
 # Rules --fix can repair mechanically. Every one of these has exactly one
 # correct rewrite; anything needing intent stays out.
-FIXABLE = {"PINE004", "PINE012", "PINE019", "PINE023", "PINE026", "PINE041",
-           "PINE059"}
+FIXABLE = {
+    "PINE001", "PINE004", "PINE011", "PINE012", "PINE019", "PINE022",
+    "PINE023", "PINE026", "PINE036", "PINE041", "PINE059"
+}
 
 STRATEGY_ORDER_FUNCS = [
     "strategy.entry(", "strategy.order(", "strategy.exit(", "strategy.close(",
@@ -1864,6 +1866,9 @@ STUDY_RE = re.compile(r'(?<![.\w])study\s*\(')
 BARE_SECURITY_RE = re.compile(r'(?<![.\w])security\s*\(')
 LINEWIDTH_ZERO_RE = re.compile(r'\blinewidth\s*=\s*(?:0|-\d+)\b')
 OVERSIZED_RE = re.compile(r'\bsize\.(large|huge)\b')
+VERSION_PRAGMA_RE = re.compile(r'^\s*//@version=[1-5]\b')
+TRANSP_PARAM_RE = re.compile(r'color\s*=\s*([^,)]+)\s*,\s*transp\s*=\s*([^,)]+)')
+BARE_TRANSP_RE = re.compile(r',\s*transp\s*=\s*[^,)]+')
 
 
 INT_DIV_LITERAL_RE = re.compile(r'(?<![.\w])(\d+)\s*/\s*(\d+)(?![.\d])')
@@ -1888,9 +1893,6 @@ def rejoin_split_strings(lines):
             out.append(line)
             i += 1
             continue
-        # Walk forward until the string closes. If it never does, this is not a
-        # split string - it is a file with a genuinely broken quote, and
-        # guessing where it should end would be inventing content.
         joined = line
         j = i
         while unclosed_string_column(joined) is not None and j + 1 < len(lines):
@@ -1912,12 +1914,19 @@ def apply_fixes(lines):
 
     Line-based on purpose: every fix here is a substitution inside one line, so
     line numbers never shift and a fixed file can be re-linted meaningfully."""
-    # The multi-line repair runs first: it is the only fix that changes the
-    # line count, and the line-based ones below rely on numbers staying put.
     lines, log = rejoin_split_strings(lines)
     fixed = []
+    has_version = any(l.strip().startswith("//@version=") for l in lines)
+    if not has_version and lines:
+        fixed.append("//@version=6")
+        log.append((1, "PINE001", "inserted missing //@version=6 pragma"))
+
     for i, raw in enumerate(lines):
         line = raw
+        if VERSION_PRAGMA_RE.match(line):
+            line = VERSION_PRAGMA_RE.sub("//@version=6", line)
+            log.append((i + 1, "PINE001", "updated //@version to 6"))
+
         line, n = _replace_outside_strings(line, STUDY_RE, "indicator(")
         if n:
             log.append((i + 1, "PINE004", "study() -> indicator()"))
@@ -1930,12 +1939,42 @@ def apply_fixes(lines):
         line, n = _replace_outside_strings(line, OVERSIZED_RE, "size.normal")
         if n:
             log.append((i + 1, "PINE041", "size.large/size.huge -> size.normal"))
+
+        # PINE011: transp removal/conversion
+        if "transp" in line:
+            m_tr = TRANSP_PARAM_RE.search(line)
+            if m_tr:
+                col, tr = m_tr.group(1).strip(), m_tr.group(2).strip()
+                line = line[:m_tr.start()] + f"color=color.new({col}, {tr})" + line[m_tr.end():]
+                log.append((i + 1, "PINE011", f"transp={tr} -> color.new({col}, {tr})"))
+            else:
+                line_sub, n_tr = _replace_outside_strings(line, BARE_TRANSP_RE, "")
+                if n_tr:
+                    line = line_sub
+                    log.append((i + 1, "PINE011", "removed deprecated transp= parameter"))
+
+        # PINE036: table.cell text_color
+        if "table.cell(" in line and "text_color" not in line:
+            # Insert text_color=color.white before closing paren
+            idx_close = line.rfind(")")
+            if idx_close != -1:
+                line = line[:idx_close] + ", text_color=color.white" + line[idx_close:]
+                log.append((i + 1, "PINE036", "added text_color=color.white to table.cell()"))
+
+        # PINE022: missing overlay in indicator/strategy
+        if re.search(r'^\s*(indicator|strategy)\s*\([^)]+\)', line) and "overlay" not in line:
+            idx_close = line.rfind(")")
+            if idx_close != -1:
+                line = line[:idx_close] + ", overlay=false" + line[idx_close:]
+                log.append((i + 1, "PINE022", "added explicit overlay=false"))
+
         # `2 / 3` between int literals reads as integer division to anyone who
         # learned Pine on v5. Spelling one side as a float states the intent and
         # changes nothing about what v6 already does.
         line, n = _replace_outside_strings(line, INT_DIV_LITERAL_RE, r"\g<1>.0 / \g<2>")
         if n:
             log.append((i + 1, "PINE023", "int/int literal division -> explicit float"))
+
         # Leading tabs last, so the column maths above is done on the original.
         stripped_lead = len(line) - len(line.lstrip("\t"))
         if stripped_lead:
