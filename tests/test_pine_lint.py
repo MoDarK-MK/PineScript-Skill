@@ -1271,3 +1271,63 @@ class TestRejoinSplitStrings(unittest.TestCase):
         before = self.split_source().split("\n")
         fixed, _ = pine_lint.rejoin_split_strings(before)
         self.assertLess(len(fixed), len(before))
+
+
+class TestReservedName(unittest.TestCase):
+    """PINE063. The dangerous kind of reserved word: it does nothing today, no
+    editor marks it, and it is a name anyone would reach for."""
+
+    def test_a_reserved_variable_name_is_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+float range = high - low
+plot(range, title="C")
+"""
+        self.assertIn("PINE063", codes(lint_text(src)))
+
+    def test_a_reserved_parameter_name_is_flagged(self):
+        """The shape that had already been handed over in a real indicator."""
+        src = """//@version=6
+indicator("T", overlay=true)
+tag(box b, string text) =>
+    box.get_left(b)
+plot(close, title="C")
+"""
+        self.assertIn("PINE063", codes(lint_text(src)))
+
+    def test_a_reserved_function_name_is_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+in(int x) =>
+    x + 1
+plot(close, title="C")
+"""
+        self.assertIn("PINE063", codes(lint_text(src)))
+
+    def test_an_ordinary_name_is_not_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+float span = high - low
+string caption = "fine"
+plot(span, title="C")
+"""
+        self.assertNotIn("PINE063", codes(lint_text(src)))
+
+    def test_a_reserved_word_inside_a_string_is_just_text(self):
+        """`strip_strings_and_comments` runs first, so prose mentioning the
+        word does not trip the rule. Every tooltip in this repo says 'range'."""
+        src = """//@version=6
+indicator("T", overlay=true)
+float span = high - low
+plot(span, title="the range of the bar")
+"""
+        self.assertNotIn("PINE063", codes(lint_text(src)))
+
+    def test_a_name_that_merely_contains_a_reserved_word_is_fine(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+float rangeSize = high - low
+float priceRange = high - low
+plot(rangeSize + priceRange, title="C")
+"""
+        self.assertNotIn("PINE063", codes(lint_text(src)))

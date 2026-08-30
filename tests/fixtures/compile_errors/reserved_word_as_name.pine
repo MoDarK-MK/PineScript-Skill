@@ -1,0 +1,23 @@
+// FIXTURE — must be caught by PINE063
+//
+// TradingView: Error at 204:15 "range" cannot be used as a variable or
+// function name.
+//
+// Pine reserves a set of words for FUTURE use. They do nothing today, nothing
+// in the editor marks them, and every one of them is a name somebody would
+// reach for without thinking - range, text, in, is, do, return.
+//
+// `float range = high - low` reads as completely ordinary code. It shipped
+// twice from one file here, and a third copy was sitting in the shared library,
+// which therefore could not compile either and nobody had noticed because
+// nothing had ever tried to.
+//@version=6
+indicator("Reserved Word", overlay = true)
+
+// bad — reserved
+float range = high - low
+
+// good — an ordinary name
+float span = high - low
+
+plot(span, title = "Span")

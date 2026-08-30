@@ -151,8 +151,8 @@ export positionBetween(float value, float lo, float hi) =>
 // @param barClose The bar's close.
 // @returns 0.0-1.0. A zero-range bar returns 0.5 rather than na.
 export buyShare(float barOpen, float barHigh, float barLow, float barClose) =>
-    float range = barHigh - barLow
-    float share = range > 0 ? (barClose - barLow) / range : 0.5
+    float span = barHigh - barLow
+    float share = span > 0 ? (barClose - barLow) / span : 0.5
     math.max(0.0, math.min(1.0, share))
 
 // ————— Mapping helpers

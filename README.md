@@ -11,14 +11,14 @@ Transform your TradingView Pine Script ideas into **production-ready indicators 
 
 Most Pine Script traders treat each indicator as a one-off script. Pine Script Skill treats them like **real projects**:
 
-- 🔍 **61-Rule Linter** — v6 compile errors, repainting traps, scope violations, performance costs, invisible dashboard text. Seven rules repair themselves with `--fix`
+- 🔍 **62-Rule Linter** — v6 compile errors, repainting traps, scope violations, performance costs, invisible dashboard text. Seven rules repair themselves with `--fix`
 - ▶️ **It Runs The Code** — a Pine interpreter in Python executes a script offline, bar by bar, with real series history. Not a lint pass: actual execution, with parameter sweeps and every approximation reported
 - 🧠 **Real Static Analysis** — A symbol table catches `:=` to an undeclared name (TradingView's `Undeclared identifier`) and variables written but never read. Loop nests are costed at their worst case against Pine's 500 ms limit
 - 🎨 **Formatter** — `pine_fmt.py --check` in CI. It never touches block indentation, because in Pine that is structure, not style
 - 📋 **Professional Templates** — Scaffold indicators/strategies with theme-aware dashboards, test blocks, and best-practice structure
 - 🛡️ **Strategy Risk Modules** — Risk-% sizing, ATR stops, breakeven + trailing, TP1/TP2 partials, session and date-window filters, account-level guards — wired together and ready to use
 - ✅ **In-Script Testing** — Assertions inside your Pine code; results show in a test-mode table
-- 🧬 **Tests That Are Themselves Tested** — `mutate_check.py` disables each lint rule and confirms the suite goes red. Its first run found 16 of 61 rules with no test at all
+- 🧬 **Tests That Are Themselves Tested** — `mutate_check.py` disables each lint rule and confirms the suite goes red. Its first run found 16 of 62 rules with no test at all
 - 📦 **Automated Releases** — Lint report, version bump, changelog, git tag, publish description, and a generated table of every setting
 - ⚡ **Live & Fast** — Work-tiering and memoization so a dashboard tracks price tick-by-tick without re-running heavy scans
 - 📚 **13 Reference Guides** — including a volume & key levels guide, multi-timeframe guide, symptom-first troubleshooting index, and decision record
@@ -505,7 +505,7 @@ Every script benefits from these docs; required reading before shipping:
 | **[decisions.md](references/decisions.md)** | Decision record — what was decided, why, and what would change our mind |
 | **[pine-v6-guide.md](references/pine-v6-guide.md)** | v5→v6 breaking changes, platform limits, dynamic requests, repainting traps, `var`/`varip` semantics |
 | **[style-guide.md](references/style-guide.md)** | Official naming conventions (camelCase/SNAKE_CASE), section order, spacing, line wrapping |
-| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 61 lint rules (codes PINE001–PINE062; PINE024 unassigned) with examples and rationale |
+| **[lint-rules.md](references/lint-rules.md)** | Full catalog of 62 lint rules (codes PINE001–PINE063; PINE024 unassigned) with examples and rationale |
 | **[performance-guide.md](references/performance-guide.md)** | Keeping a script fast AND live: work tiering, memoization, buffer reuse, drawing updates, var vs varip |
 | **[strategy-guide.md](references/strategy-guide.md)** | Building strategies: signal design, position sizing math, the four risk modules, filters, overfitting, walk-forward |
 | **[design-system.md](references/design-system.md)** | Theming, gradients, multi-color palettes, watermarks, dashboard patterns |
@@ -580,14 +580,14 @@ multiple ±25% and see whether the result degrades gracefully or collapses.
 
 | | |
 |---|---|
-| **61 lint rules** | PINE001–PINE062 (PINE024 vacant), fact-checked against TradingView's docs; 7 auto-fixable |
+| **62 lint rules** | PINE001–PINE063 (PINE024 vacant), fact-checked against TradingView's docs; 7 auto-fixable |
 | **Offline execution** | `pine_run.py` runs a script bar by bar over real or synthetic OHLCV, with series history and `var` semantics |
 | **Parameter sweeps** | One file, many settings — `input.*()` reads from an override map |
 | **Symbol table** | Undeclared `:=` targets, unused and write-only variables |
 | **Cost analysis** | Loop nests costed at their inputs' `maxval`; drawings made in loops checked against `max_*_count` |
 | **Formatter** | `--check` gate in CI; never re-indents, never collapses alignment columns |
 | **230 tests** | stdlib `unittest`, zero dependencies |
-| **Mutation-checked** | 61/61 rules verified to have a test that fails when the rule is disabled |
+| **Mutation-checked** | 62/62 rules verified to have a test that fails when the rule is disabled |
 | **Strategy risk modules** | Risk-% sizing, ATR stops, breakeven, trailing, partials, filters, `strategy.risk.*` account guards |
 | **Backtest realism gate** | Blocks lookahead bias, synthetic chart types, zero-cost backtests |
 | **In-script testing** | Assertion counter inside the Pine file; no external runner |

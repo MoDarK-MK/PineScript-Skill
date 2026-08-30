@@ -756,3 +756,50 @@ class TestTheShippedTemplateRuns(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestParameterCoercion(unittest.TestCase):
+    """Pine casts an argument to its parameter's declared type on the way in.
+
+    Without that, `f(1240000)` into `f(float v)` left v an INT, and `v /
+    1000000` became integer division - which is how the shared library's own
+    self-check came out failing while the library was perfectly correct."""
+
+    def test_an_int_argument_to_a_float_parameter_divides_as_a_float(self):
+        r = run_source(head("""
+f(float v) =>
+    v / 1000000
+plot(f(1240000), title="d")
+"""), BARS)
+        self.assertAlmostEqual(1.24, r.last("d"), places=9)
+
+    def test_the_library_idiom_produces_the_string_it_claims(self):
+        """Verbatim from pine_toolkit's formatVolume, which asserts this of
+        itself and was reporting failure."""
+        r = run_source(head("""
+f(float v) =>
+    float av = math.abs(nz(v))
+    switch
+        av >= 1000000 => str.tostring(v / 1000000, "#.##") + "M"
+        => str.tostring(nz(v), "#.#")
+plot(f(1240000) == "1.24M" ? 1 : 0, title="d")
+"""), BARS)
+        self.assertEqual(1, r.last("d"))
+
+    def test_a_float_argument_to_an_int_parameter_truncates(self):
+        r = run_source(head("""
+f(int n) =>
+    n
+plot(f(7.9), title="d")
+"""), BARS)
+        self.assertEqual(7, r.last("d"))
+
+    def test_an_untyped_parameter_is_left_alone(self):
+        """Pine allows a parameter with no type. Coercing it to something would
+        be inventing a decision the author did not make."""
+        r = run_source(head("""
+f(v) =>
+    v / 2
+plot(f(7), title="d")
+"""), BARS)
+        self.assertEqual(3, r.last("d"))

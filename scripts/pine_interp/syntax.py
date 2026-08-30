@@ -411,7 +411,11 @@ class Parser:
                 self.toks, self.ti = group[eq + 1:], 0
                 default = self.expression()
                 self.toks, self.ti = saved
-            params.append((names[-1], default))
+            # The type words come with the name. A `float v` parameter
+            # handed an int argument must hold a float, or the body's
+            # divisions become integer divisions - Pine casts on the way
+            # in and so must this.
+            params.append((names[-1], default, tuple(names[:-1])))
         self.eat("op", "=>")
 
         if self.ti < len(self.toks):          # single-line body

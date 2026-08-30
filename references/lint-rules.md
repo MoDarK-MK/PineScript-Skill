@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 61 rules spanning codes PINE001–PINE062. The code
+Note on numbering: there are 62 rules spanning codes PINE001–PINE063. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -61,6 +61,7 @@ added *after* the error was hit in real use.
 | `Undeclared identifier "x"` / "cannot register side effect" | **PINE055** | A global declared BELOW the code that reads it |
 | *(no error — the wrong value is simply used)* | **PINE058** | A name shadowing a built-in namespace, then dereferenced |
 | *(no error — the array just accumulates)* | **PINE054** | A `var` collection grown on a tick with no confirmation guard |
+| `"x" cannot be used as a variable or function name` | **PINE063** | A word Pine reserves used as a name |
 | *(no error — the arithmetic is simply wrong)* | **PINE060** | Two ints divided where a fraction was wanted |
 | "Missing enclosing character in the literal string" | **PINE059** | A string opened on a line that ends before closing it |
 | `Pine cannot determine the referencing length…` | *(none yet)* | A dynamic history index without `max_bars_back` |
@@ -863,6 +864,41 @@ every test agreed with the broken script. `scripts/pine_interp/` now truncates
 integer division and carries declared types so it can tell an int from a float.
 An interpreter that is more forgiving than the platform does not merely miss
 bugs — it vouches for them.
+
+### PINE063 — error — Reserved word used as a variable or function name
+Pine reserves a set of words for FUTURE use:
+
+    catch  class  do  ellipse  in  is  polygon  range  return  struct  text
+    throw  try
+
+They are the dangerous kind of reserved word. They do nothing today, nothing in
+the editor marks them, and every one of them is a name somebody would reach for
+without thinking:
+```pinescript
+// bad — reads as completely ordinary code, and does not compile
+float range = high - low
+string text = "label"
+f(float range) => range * 2
+```
+```pinescript
+// good
+float span = high - low
+string caption = "label"
+f(float span) => span * 2
+```
+
+> Error at 204:15 "range" cannot be used as a variable or function name.
+
+This shipped from this repo twice in one file. A THIRD copy was sitting in the
+shared library `pine_toolkit`, which therefore could not compile either and
+nobody had noticed, because nothing had ever tried to compile it. A fourth was
+in an indicator that had already been handed over.
+
+Only `range` is confirmed by a TradingView error message seen here; the rest of
+the list is Pine's documented set of reserved words. If one of them turns out to
+be usable, remove it from `PINE_RESERVED` — renaming is cheap and a false
+positive here costs nothing but a better name.
+
 
 
 ### PINE061 — warning — table with >8 rows and no divider row

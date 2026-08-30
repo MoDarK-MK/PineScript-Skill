@@ -130,7 +130,7 @@ RULES = {
     "PINE059": ("error", "String literal not closed on its own line"),
     "PINE060": ("error", "Integer division used where a fraction was wanted"),
     "PINE061": ("warning", "table.new() with >8 rows but no divider row (height=0 cell) — add section separators"),
-    "PINE062": ("info", "Multiple label.new() at the same bar_index without anti-collision spacing"),
+    "PINE062": ("info", "Multiple label.new() at the same bar_index without anti-collision spacing"),    "PINE063": ("error", "Reserved word used as a variable or function name"),
 }
 
 # Rules --fix can repair mechanically. Every one of these has exactly one
@@ -2754,6 +2754,66 @@ def check_label_overlap(lines, result):
         )
 
 
+# @rule PINE063
+# Reserved for future use by Pine. They do nothing today, no editor marks them,
+# and each one is a name somebody would reach for without thinking.
+PINE_RESERVED = {
+    "catch", "class", "do", "ellipse", "in", "is", "polygon", "range",
+    "return", "struct", "text", "throw", "try",
+}
+RESERVED_DECL_RE = re.compile(
+    r'^\s*(?:var(?:ip)?\s+)?'
+    r'(?:int|float|bool|string|color|line|label|box|table|linefill|polyline|'
+    r'array(?:<[^>]*>)?|matrix(?:<[^>]*>)?|map(?:<[^>]*>)?|[A-Z]\w*)\s+'
+    r'([a-zA-Z_]\w*)\s*=(?![=>])')
+RESERVED_FUNC_RE = re.compile(r'^\s*(?:export\s+|method\s+)?([a-zA-Z_]\w*)\s*\(')
+RESERVED_PARAM_RE = re.compile(
+    r'(?:int|float|bool|string|color|line|label|box|table|'
+    r'array(?:<[^>]*>)?|matrix(?:<[^>]*>)?|map(?:<[^>]*>)?)\s+([a-zA-Z_]\w*)'
+    r'\s*(?=[,)=])')
+
+
+def check_reserved_name(lines, result):
+    """PINE063 - Pine reserves a set of words for future use, and using one as a
+    name is `"<word>" cannot be used as a variable or function name.`
+
+    They are the dangerous kind of reserved word: they do nothing today, no
+    editor marks them, and every one of them - range, text, in, is, do, return -
+    is a name somebody would reach for without thinking. `float range = high -
+    low` reads as completely ordinary code.
+
+    This shipped from this repo twice in one file, and a third copy was sitting
+    in the shared library, which therefore could not compile either and nobody
+    had noticed because nothing ever tried to."""
+    reported = set()
+    for i, raw in enumerate(lines):
+        text = strip_strings_and_comments(raw)
+        if not text.strip():
+            continue
+        found = []
+        m = RESERVED_DECL_RE.match(text)
+        if m and m.group(1) in PINE_RESERVED:
+            found.append((m.group(1), "variable"))
+        m = RESERVED_FUNC_RE.match(text)
+        if m and m.group(1) in PINE_RESERVED and "=>" in text:
+            found.append((m.group(1), "function"))
+        for m in RESERVED_PARAM_RE.finditer(text):
+            if m.group(1) in PINE_RESERVED:
+                found.append((m.group(1), "parameter"))
+        for name, kind in found:
+            key = (i + 1, name)
+            if key in reported:
+                continue
+            reported.add(key)
+            result.add(i + 1, "PINE063",
+                       "'%s' is reserved by Pine and cannot be a %s name - "
+                       "TradingView rejects it with \"%s cannot be used as a "
+                       "variable or function name\". It is reserved for future "
+                       "use, so it does nothing today and nothing in the editor "
+                       "marks it, which is exactly why it reads as ordinary "
+                       "code. Rename it." % (name, kind, name))
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -2834,6 +2894,7 @@ def lint_file(path, cfg):
     check_namespace_shadowing(lines, result)
     check_unterminated_string(lines, result)
     check_integer_division(lines, result)
+    check_reserved_name(lines, result)
     check_dashboard_divider(lines, result)
     check_label_overlap(lines, result)
 

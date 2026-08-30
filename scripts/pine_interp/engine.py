@@ -595,7 +595,9 @@ class Interpreter:
     def call_user(self, name, positional, named, node):
         params, body = self.functions[name]
         scope = Scope(self.globals)
-        for i, (pname, default) in enumerate(params):
+        for i, param in enumerate(params):
+            pname, default = param[0], param[1]
+            ptypes = param[2] if len(param) > 2 else ()
             if pname in named:
                 value = named[pname]
             elif i < len(positional):
@@ -605,7 +607,12 @@ class Interpreter:
             else:
                 value = NA
             s = Series()
-            s.set(value)
+            # Pine casts an int argument to a float parameter on the way in.
+            # Without this, `f(1240000)` into `f(float v)` left v an int and
+            # `v / 1000000` became integer division - which is how a library's
+            # own self-check came out failing while the library was correct.
+            s.decl_type = ptypes
+            s.set(coerce_declared(value, ptypes))
             scope.declare(pname, s)
         return self.exec_block(body, scope)
 
