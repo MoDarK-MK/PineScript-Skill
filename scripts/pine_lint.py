@@ -130,7 +130,8 @@ RULES = {
     "PINE059": ("error", "String literal not closed on its own line"),
     "PINE060": ("error", "Integer division used where a fraction was wanted"),
     "PINE061": ("warning", "table.new() with >8 rows but no divider row (height=0 cell) — add section separators"),
-    "PINE062": ("info", "Multiple label.new() at the same bar_index without anti-collision spacing"),    "PINE063": ("error", "Reserved word used as a variable or function name"),
+    "PINE062": ("info", "Multiple label.new() at the same bar_index without anti-collision spacing"),
+    "PINE063": ("error", "Reserved word used as a variable or function name"),
 }
 
 # Rules --fix can repair mechanically. Every one of these has exactly one

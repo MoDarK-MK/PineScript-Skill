@@ -72,7 +72,8 @@ def load_bars(args):
 
 def run_once(args, bars, overrides):
     return run_file(args.file, bars, inputs=overrides,
-                    platform=Platform(mintick=args.mintick, timeframe=args.timeframe))
+                    platform=Platform(mintick=args.mintick, timeframe=args.timeframe,
+                                      intrabars=args.intrabars))
 
 
 def main():
@@ -88,6 +89,11 @@ def main():
                         help="Print a global variable's final value. Repeatable.")
     parser.add_argument("--sweep", metavar="TITLE=a,b,c",
                         help="Run once per value and compare the results")
+    parser.add_argument("--intrabars", type=int, default=0,
+                        help="Synthesise N sub-bars per chart bar for "
+                             "request.security_lower_tf(), so the intrabar "
+                             "code path can run. Values are invented; the "
+                             "run says so.")
     parser.add_argument("--mintick", type=float, default=0.01)
     parser.add_argument("--timeframe", default="5")
     parser.add_argument("--json", action="store_true")

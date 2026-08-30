@@ -1331,3 +1331,87 @@ float priceRange = high - low
 plot(rangeSize + priceRange, title="C")
 """
         self.assertNotIn("PINE063", codes(lint_text(src)))
+
+
+class TestDashboardDivider(unittest.TestCase):
+    """PINE061. A table of more than eight rows with no separator reads as one
+    undifferentiated wall of text at the size a chart panel actually renders."""
+
+    def test_a_long_table_with_no_divider_is_flagged(self):
+        rows = "\n".join(
+            f'    table.cell(t, 0, {i}, "row {i}", text_size = size.small)'
+            for i in range(12))
+        src = f"""//@version=6
+indicator("T", overlay=true)
+var table t = table.new(position.top_right, 2, 12)
+if barstate.islast
+{rows}
+plot(close, title="C")
+"""
+        self.assertIn("PINE061", codes(lint_text(src)))
+
+    def test_a_long_table_with_a_divider_row_is_not(self):
+        rows = "\n".join(
+            f'    table.cell(t, 0, {i}, "row {i}", text_size = size.small)'
+            for i in range(12))
+        src = f"""//@version=6
+indicator("T", overlay=true)
+var table t = table.new(position.top_right, 2, 13)
+if barstate.islast
+{rows}
+    table.cell(t, 0, 6, "", height = 0)
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE061", codes(lint_text(src)))
+
+    def test_a_short_table_needs_no_divider(self):
+        """Four rows read fine as a block. Asking for a separator there would be
+        the rule inventing work."""
+        src = """//@version=6
+indicator("T", overlay=true)
+var table t = table.new(position.top_right, 2, 4)
+if barstate.islast
+    table.cell(t, 0, 0, "a")
+    table.cell(t, 0, 1, "b")
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE061", codes(lint_text(src)))
+
+
+class TestLabelOverlap(unittest.TestCase):
+    """PINE062. Several labels created at the same bar land on top of each
+    other, and the one you wanted is the one underneath."""
+
+    def test_several_labels_in_one_islast_block_are_flagged(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+if barstate.islast
+    label.new(bar_index, high, "one")
+    label.new(bar_index, high, "two")
+    label.new(bar_index, high, "three")
+plot(close, title="C")
+"""
+        self.assertIn("PINE062", codes(lint_text(src)))
+
+    def test_a_spread_call_settles_it(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+spreadLabels(int n) =>
+    n
+if barstate.islast
+    spreadLabels(3)
+    label.new(bar_index, high, "one")
+    label.new(bar_index, high, "two")
+    label.new(bar_index, high, "three")
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE062", codes(lint_text(src)))
+
+    def test_one_label_is_not_a_collision(self):
+        src = """//@version=6
+indicator("T", overlay=true)
+if barstate.islast
+    label.new(bar_index, high, "only")
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE062", codes(lint_text(src)))

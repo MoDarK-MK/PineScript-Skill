@@ -170,6 +170,41 @@ def check_interpreter():
     return PASS, f"{len(targets)} script(s) executed over 150 bars"
 
 
+def check_release_bundles():
+    """Is every release bundle current with the source it was built from?
+
+    A bundle is only rebuilt when someone rebuilds it, so a change to the
+    comment-stripping - or to anything else in the pipeline - reaches only the
+    projects that happen to be regenerated afterwards. Three bundles here still
+    carried 492 lines of comment long after the release stopped shipping any,
+    and nothing said so because nothing was looking."""
+    import strip_comments
+    stale, checked = [], 0
+    for base in ("indicators", "strategies"):
+        d = ROOT / base
+        if not d.is_dir():
+            continue
+        for project in sorted(d.iterdir()):
+            src = project / "src" / f"{project.name}.pine"
+            rel = project / "release" / f"{project.name}.pine"
+            if not (src.exists() and rel.exists()):
+                continue
+            checked += 1
+            want = strip_comments.strip_pine_comments(
+                src.read_text(encoding="utf-8"))
+            have = rel.read_text(encoding="utf-8")
+            code = lambda s: [l for l in s.splitlines()
+                              if l.strip() and not l.strip().startswith("//")]
+            if code(want) != code(have):
+                stale.append(project.name)
+    if checked == 0:
+        return SKIP, "no release bundles to check"
+    if stale:
+        return FAIL, ("stale bundle(s): " + ", ".join(stale) +
+                      " — run scripts/generate_release_bundle.py")
+    return PASS, f"{checked} bundle(s) match their source"
+
+
 def check_private_backup():
     """Is the gitignored work backed up, and is the backup current?
 
@@ -220,6 +255,7 @@ CHECKS = [
     Check("persian reference", check_fa_reference),
     Check("part builds", check_part_builds),
     Check("interpreter run", check_interpreter),
+    Check("release bundles", check_release_bundles),
     Check("private backup", check_private_backup),
     Check("rule mutation", check_mutation, slow=True),
 ]

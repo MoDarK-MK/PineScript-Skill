@@ -531,12 +531,98 @@ def _tf_in_seconds(interp, pos, named, node):
     return timeframe_seconds(tf)
 
 
+def _synthetic_intrabars(interp, count):
+    """`count` sub-bars for the CURRENT chart bar, as one plausible path.
+
+    Two properties are guaranteed and they are what make this defensible rather
+    than decorative: the sub-bars span exactly the chart bar's own high and low,
+    and their volumes sum exactly to its volume. Nothing is created and nothing
+    is lost - only distributed.
+
+    The path is deterministic. An up bar goes open, down to the low, up to the
+    high, back to the close; a down bar mirrors it. That is a convention, not a
+    measurement, and it is the same convention every time so a result can be
+    compared with the previous run."""
+    i = interp.bar_index
+    o = interp.hist["open"][i]
+    h = interp.hist["high"][i]
+    lo = interp.hist["low"][i]
+    c = interp.hist["close"][i]
+    v = interp.hist["volume"][i]
+    if any(x is None or is_na(x) for x in (o, h, lo, c)):
+        return [], [], [], []
+    total = 0.0 if v is None or is_na(v) else float(v)
+
+    up = c >= o
+    legs = [o, lo, h, c] if up else [o, h, lo, c]
+    highs, lows, closes, vols = [], [], [], []
+    # Walk the path in `count` equal steps, so the sub-bars tile the whole leg
+    # rather than sampling points on it.
+    steps = max(1, count)
+    prev = legs[0]
+    for k in range(steps):
+        t0 = k * 3.0 / steps
+        t1 = (k + 1) * 3.0 / steps
+        a = _path_point(legs, t0)
+        b = _path_point(legs, t1)
+        seg_hi = max(a, b, prev)
+        seg_lo = min(a, b, prev)
+        highs.append(seg_hi)
+        lows.append(seg_lo)
+        closes.append(b)
+        vols.append(total / steps)
+        prev = b
+    # The extremes must be the bar's own, not merely close to them: a profile
+    # built from sub-bars that never reach the high would put volume where the
+    # chart says none traded.
+    if highs:
+        highs[highs.index(max(highs))] = h
+        lows[lows.index(min(lows))] = lo
+        closes[-1] = c
+    return highs, lows, closes, vols
+
+
+def _path_point(legs, t):
+    """Position along a three-leg path at parameter t in [0, 3]."""
+    t = max(0.0, min(3.0, t))
+    seg = min(2, int(t))
+    frac = t - seg
+    return legs[seg] + (legs[seg + 1] - legs[seg]) * frac
+
+
 def _request_lower_tf(interp, pos, named, node):
     """No intrabar data exists offline, so this returns na — deliberately.
 
     Fabricating sub-bars would produce a profile that LOOKS measured and is
     invented. Returning na exercises the script's own fallback, which is the
     behaviour worth testing anyway."""
+    count = getattr(interp.platform, "intrabars", 0) or 0
+    if count > 0:
+        interp.approximations.add(
+            f"request.security_lower_tf() returned {count} SYNTHETIC sub-bars "
+            "per chart bar; they span the bar's own high and low and their "
+            "volumes sum to its volume, but the path between them is invented. "
+            "Anything measured from them describes the synthesis, not a market")
+        hi, lo, cl, vol = _synthetic_intrabars(interp, count)
+        expr = pos[2] if len(pos) > 2 else None
+        if isinstance(expr, (list, tuple)):
+            # Match the requested series to the arguments, by name, from the
+            # syntax tree - the caller may ask for any subset in any order.
+            args = getattr(node, "b", None) or []
+            expr_node = args[2][1] if len(args) > 2 else None
+            names = []
+            if getattr(expr_node, "kind", None) == "tuple":
+                for item in (expr_node.a or []):
+                    names.append(getattr(item, "a", None)
+                                 if getattr(item, "kind", None) == "name" else None)
+            by_name = {"high": hi, "low": lo, "close": cl, "volume": vol}
+            out = []
+            for k in range(len(expr)):
+                series = by_name.get(names[k] if k < len(names) else None)
+                out.append(PineArray(list(series if series is not None else cl)))
+            return out
+        return PineArray(list(cl))
+
     interp.approximations.add(
         "request.security_lower_tf() returned na (no intrabar data offline); "
         "the script's fallback path ran instead")
@@ -720,16 +806,29 @@ def _shape_note(interp, pos, named, node):
 
 
 def _timeframe_change(interp, pos, named, node):
-    """True on the first bar of a new higher-timeframe period.
+    """True on the FIRST bar of a new higher-timeframe period.
 
-    Offline there is no higher-timeframe series to change, so this is always
-    false and says so. A script gated on it takes its "nothing new" path for
-    the whole run, which is a limitation worth seeing rather than a value worth
-    inventing."""
-    interp.approximations.add(
-        "timeframe.change() was always false; higher-timeframe boundaries are not "
-        "modelled offline")
-    return False
+    The buckets that request.security() aggregates over already say which
+    higher-timeframe candle each chart bar belongs to, so a boundary is simply
+    the bar whose bucket differs from the one before it.
+
+    This used to return false unconditionally, which meant a script gated on it
+    took its "nothing new" path for the entire run - the branch never executed
+    at all, and every test of it agreed that nothing happened."""
+    tf = pos[0] if pos else None
+    if not isinstance(tf, str) or not interp.bars:
+        return False
+    seconds = timeframe_seconds(tf)
+    if is_na(seconds):
+        return False
+    _bars, index = _htf_buckets(interp, int(seconds))
+    i = interp.bar_index
+    if i >= len(index) or index[i] is None:
+        return False
+    # The first bar of the series opens a period by definition.
+    if i == 0:
+        return True
+    return index[i] != index[i - 1]
 
 
 SESSION_CACHE = {}
@@ -881,9 +980,15 @@ def _timestamp(interp, pos, named, node):
     import datetime
     values = [v for v in pos if not isinstance(v, str)]
     strings = [v for v in pos if isinstance(v, str)]
-    if strings:
+    # Pine takes the timezone as an optional FIRST argument. A date built in
+    # Tokyo and one built in New York are different instants, and treating them
+    # as the same one made every date window silently wrong by up to a day.
+    zone = _zone(strings[0]) if strings else datetime.timezone.utc
+    if strings and zone is None:
         interp.approximations.add(
-            "timestamp() ignored its timezone argument and used UTC")
+            f"timestamp() was given timezone {strings[0]!r}, which this machine "
+            "does not know; UTC was used instead")
+        zone = datetime.timezone.utc
     if len(values) < 3:
         return NA
     y, mo, d = (_i(values[0]), _i(values[1]), _i(values[2]))
@@ -891,10 +996,11 @@ def _timestamp(interp, pos, named, node):
     mi = _i(values[4], 0) if len(values) > 4 else 0
     s = _i(values[5], 0) if len(values) > 5 else 0
     try:
-        dt = datetime.datetime(y, mo, d, h, mi, s, tzinfo=datetime.timezone.utc)
+        dt = datetime.datetime(y, mo, d, h, mi, s, tzinfo=zone)
     except ValueError:
         return NA
-    return int(calendar.timegm(dt.utctimetuple())) * 1000
+    # timestamp() from the zone it was given, not from UTC pretending to be it.
+    return int(dt.timestamp() * 1000)
 
 
 def _year(interp, pos, named, node):

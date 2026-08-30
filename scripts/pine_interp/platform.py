@@ -44,12 +44,17 @@ class Platform:
     """Per-run symbol and chart settings, overridable by the harness."""
 
     def __init__(self, mintick=0.01, ticker="TEST", timeframe="5",
-                 pointvalue=1.0, currency="USD"):
+                 pointvalue=1.0, currency="USD", intrabars=0):
         self.mintick = mintick
         self.ticker = ticker
         self.timeframe = timeframe
         self.pointvalue = pointvalue
         self.currency = currency
+        # Sub-bars per chart bar for request.security_lower_tf(). Zero means it
+        # returns empty, which is the honest default: there is no intrabar data
+        # offline. Above zero it SYNTHESISES a path, so the intrabar code path
+        # can be executed at all - see _synthetic_intrabars.
+        self.intrabars = intrabars
 
     def constants(self, interp):
         """Resolves a dotted path to a value, or returns MISSING."""
