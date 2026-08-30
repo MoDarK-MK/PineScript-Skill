@@ -179,6 +179,72 @@ export sizeFrom(string name) =>
         "Small" => size.small
         => size.normal
 
+// ————— Volume & Key Level Helpers
+
+// @function Calculates Effort vs Result (VSA ratio) for a candle.
+// @param spread Current candle high - low.
+// @param vol Current candle volume.
+// @param avgSpread Average candle range (e.g. ATR).
+// @param avgVol Average candle volume (e.g. SMA of volume).
+// @returns The ratio (> 2.0 indicates high effort with little price progress / absorption).
+export effortResultRatio(float spread, float vol, float avgSpread, float avgVol) =>
+    float sRatio = avgSpread > 0 ? math.max(0.05, spread / avgSpread) : 1.0
+    float vRatio = avgVol > 0 ? vol / avgVol : 1.0
+    vRatio / sRatio
+
+// @function Detects if a bar's volume qualifies as a volume climax / capitulation surge.
+// @param vol Bar volume.
+// @param avgVol Benchmark average volume.
+// @param multiplier Multiplier threshold (e.g. 2.5 or 3.0).
+// @returns True if volume exceeds threshold.
+export isVolumeClimax(float vol, float avgVol, float multiplier) =>
+    avgVol > 0 and vol >= (avgVol * multiplier)
+
+// @function Detects if a pullback bar represents a low-volume supply/demand test.
+// @param vol Bar volume.
+// @param avgVol Benchmark average volume.
+// @param ratio Ratio threshold (e.g. 0.5 for volume under 50% average).
+// @returns True if volume is dry.
+export isLowVolumeTest(float vol, float avgVol, float ratio) =>
+    avgVol > 0 and vol <= (avgVol * ratio)
+
+// @function Checks if a price is within the Value Area (VAH to VAL).
+// @param price The price to check.
+// @param vah Value Area High.
+// @param val Value Area Low.
+// @returns True if price is inside or at the edges of the Value Area.
+export inValueArea(float price, float vah, float val) =>
+    not na(price) and not na(vah) and not na(val) and price >= val and price <= vah
+
+// @function Calculates an institutional confluence score for a Key Level (0 - 100).
+// @param touches Number of previous price rejections/touches at this level.
+// @param isHtf Whether this level is rooted in a higher timeframe (e.g. Daily/Weekly).
+// @param isVpoc Whether this level aligns with a Virgin POC.
+// @param isUnmitigated Whether the level is still fresh (untested / unmitigated).
+// @returns Confluence score integer between 0 and 100.
+export scoreKeyLevel(int touches, bool isHtf, bool isVpoc, bool isUnmitigated) =>
+    int score = 0
+    score := score + (isHtf ? 35 : 15)
+    score := score + (isVpoc ? 25 : 0)
+    score := score + (isUnmitigated ? 20 : 5)
+    score := score + math.min(20, touches * 5)
+    math.min(100, score)
+
+// @function Analyzes two swing points for regular delta divergence.
+// @param priceCurr Price at the current swing point.
+// @param pricePrev Price at the previous swing point.
+// @param cvdCurr Cumulative Delta at current swing point.
+// @param cvdPrev Cumulative Delta at previous swing point.
+// @param isBullish True to check bullish divergence (lower low in price, higher low in CVD).
+// @returns True if delta divergence is present.
+export detectDeltaDivergence(float priceCurr, float pricePrev, float cvdCurr, float cvdPrev, bool isBullish) =>
+    bool div = false
+    if isBullish
+        div := priceCurr < pricePrev and cvdCurr > cvdPrev
+    else
+        div := priceCurr > pricePrev and cvdCurr < cvdPrev
+    div
+
 // ————— Library self-check
 // A library cannot be unit-tested offline, so it plots its own invariants. Load
 // it on a chart once: every one of these must read 1.
@@ -190,3 +256,6 @@ plot(clamp(7, 0, 5) == 5 ? 1 : 0, "selfcheck: clamp", display = display.data_win
 plot(positionBetween(5, 0, 10) == 50 ? 1 : 0, "selfcheck: positionBetween", display = display.data_window)
 plot(buyShare(1, 2, 1, 2) == 1.0 ? 1 : 0, "selfcheck: buyShare", display = display.data_window)
 plot(na(positionBetween(5, 10, 10)) ? 1 : 0, "selfcheck: positionBetween na", display = display.data_window)
+plot(inValueArea(100.0, 110.0, 90.0) ? 1 : 0, "selfcheck: inValueArea", display = display.data_window)
+plot(isVolumeClimax(300.0, 100.0, 2.5) ? 1 : 0, "selfcheck: isVolumeClimax", display = display.data_window)
+plot(scoreKeyLevel(3, true, true, true) == 95 ? 1 : 0, "selfcheck: scoreKeyLevel", display = display.data_window)

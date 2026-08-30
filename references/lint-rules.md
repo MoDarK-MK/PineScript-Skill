@@ -865,7 +865,7 @@ An interpreter that is more forgiving than the platform does not merely miss
 bugs — it vouches for them.
 
 
-### PINE061 warning — table with >8 rows and no divider row
+### PINE061 — warning — table with >8 rows and no divider row
 
 Triggered when a `table.new()` call allocates more than 8 rows and no
 `table.cell()` with `height=0` appears anywhere in the file.
@@ -905,7 +905,7 @@ var table log = table.new(position.bottom_left, 1, 20, ...)
 ```
 
 
-### PINE062 info — multiple label.new() in barstate.islast without anti-collision
+### PINE062 — info — multiple label.new() in barstate.islast without anti-collision
 
 Triggered when 3 or more `label.new()` calls appear inside a
 `if barstate.islast` block and no `spreadLabels()` call is found anywhere

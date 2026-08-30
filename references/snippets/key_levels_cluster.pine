@@ -1,0 +1,69 @@
+// Reference snippet: Multi-Timeframe Key Level Aggregator, Liquidity Sweep Detector, and Clustering Engine.
+//
+// NOTE: Pine Script has no local file imports — paste these patterns into your script.
+//
+// Features:
+//   • Zero-repaint MTF extraction for PDH, PDL, PWH, PWL, and Session Opens.
+//   • Equal Highs (EQH) and Equal Lows (EQL) liquidity pool detector.
+//   • Liquidity Sweep / Turtle Soup detection with volume expansion validation.
+//   • Proximity-based Level Clustering with institutional confluence scoring.
+//
+// This is a fragment, not a standalone script:
+// pine-lint-disable PINE001,PINE002,PINE027,PINE051
+
+// ————— Safe Zero-Repaint MTF Extraction
+// Lookahead is explicitly turned OFF; closed historical bars [1] are retrieved
+[pdh, pdl] = request.security(
+     syminfo.tickerid, "D", [high[1], low[1]],
+     lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+
+[pwh, pwl] = request.security(
+     syminfo.tickerid, "W", [high[1], low[1]],
+     lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+
+// ————— Liquidity Sweep / False Breakout Detector
+// Detects when price pierces a key level intraday but rejects and closes back inside
+detectSweep(float keyLevel, bool isHighLevel, float volThresholdRatio) =>
+    bool swept = false
+    float avgV = ta.sma(nz(volume), 20)
+    bool volSurge = avgV > 0 and nz(volume) >= (avgV * volThresholdRatio)
+
+    if isHighLevel
+        // Price wicked above high level but closed back below it
+        swept := high > keyLevel and close < keyLevel and volSurge
+    else
+        // Price wicked below low level but closed back above it
+        swept := low < keyLevel and close > keyLevel and volSurge
+    swept
+
+// ————— Equal Highs / Equal Lows (Liquidity Pools)
+// Checks if current pivot is within tolerance of previous pivot
+detectEqualLevel(float pCurr, float pPrev, float toleranceTicks) =>
+    float diff = math.abs(pCurr - pPrev)
+    diff <= (toleranceTicks * syminfo.mintick)
+
+// ————— Key Level Clustering & Confluence Evaluator
+// Evaluates proximity between multiple candidates to form a weighted zone
+clusterLevels(float[] candidatePrices, float[] candidateWeights, float clusterDist) =>
+    int n = array.size(candidatePrices)
+    float bestClusterPrice = na
+    float bestClusterScore = 0.0
+
+    if n > 0
+        for i = 0 to n - 1
+            float basePrice = array.get(candidatePrices, i)
+            float sumWeightedPrice = 0.0
+            float totalWeight = 0.0
+
+            for j = 0 to n - 1
+                float targetP = array.get(candidatePrices, j)
+                if math.abs(targetP - basePrice) <= clusterDist
+                    float w = array.get(candidateWeights, j)
+                    sumWeightedPrice += targetP * w
+                    totalWeight += w
+
+            if totalWeight > bestClusterScore
+                bestClusterScore := totalWeight
+                bestClusterPrice := sumWeightedPrice / totalWeight
+
+    [bestClusterPrice, bestClusterScore]

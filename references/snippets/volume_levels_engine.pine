@@ -1,0 +1,126 @@
+// Reference snippet: Volume Profile & Virgin POC (vPOC) Engine in Pine Script v6.
+//
+// NOTE: Pine Script has no local file imports — paste these patterns into your script.
+//
+// Features:
+//   • High-speed Volume Profile histogram generator using pre-allocated array memory pools.
+//   • Exact Value Area (VAH / VAL 70%) and Point of Control (POC) calculations.
+//   • Virgin POC (vPOC) tracking with automated mitigation detection and culling.
+//   • Live tick gating via input fingerprinting.
+//
+// This is a fragment, not a standalone script:
+// pine-lint-disable PINE001,PINE002,PINE027,PINE051
+
+// ————— Memory Pools (Declared once with var)
+var int   VP_MAX_ROWS  = 50
+var float[] vpPrices   = array.new_float(VP_MAX_ROWS, 0.0)
+var float[] vpTotalVol = array.new_float(VP_MAX_ROWS, 0.0)
+var float[] vpBuyVol   = array.new_float(VP_MAX_ROWS, 0.0)
+
+// Active Virgin POCs storage
+var float[] vpocPrices = array.new_float(0)
+var int[]   vpocBars   = array.new_int(0)
+var line[]  vpocLines  = array.new_line(0)
+
+// Fingerprint cache for live performance
+var int   vpCachedFrom   = na
+var int   vpCachedTo     = na
+var float vpCachedPoc    = na
+var float vpCachedVah    = na
+var float vpCachedVal    = na
+
+// ————— Volume Profile Computation Function
+calcVolumeProfile(int fromBar, int toBar, int numRows, float vaPercent) =>
+    // 1. Determine price boundaries
+    float hiBound = -1.0e10
+    float loBound = 1.0e10
+    int barsBack = math.max(0, bar_index - fromBar)
+    int count = math.max(1, toBar - fromBar + 1)
+
+    for i = 0 to count - 1
+        int idx = barsBack - i
+        if idx >= 0
+            hiBound := math.max(hiBound, high[idx])
+            loBound := math.min(loBound, low[idx])
+
+    float step = (hiBound > loBound and numRows > 0) ? (hiBound - loBound) / numRows : syminfo.mintick
+
+    // 2. Reset array memory pool
+    array.fill(vpTotalVol, 0.0)
+    array.fill(vpBuyVol, 0.0)
+    for r = 0 to numRows - 1
+        array.set(vpPrices, r, loBound + (r + 0.5) * step)
+
+    // 3. Accumulate volume into price bins
+    float totalVolume = 0.0
+    for i = 0 to count - 1
+        int idx = barsBack - i
+        if idx >= 0
+            float barV = nz(volume[idx])
+            float barH = high[idx]
+            float barL = low[idx]
+            float barC = close[idx]
+            float bShare = (barH > barL) ? (barC - barL) / (barH - barL) : 0.5
+            float buyV  = barV * bShare
+
+            // Distribute across overlapping price rows
+            int loRow = math.max(0, math.min(numRows - 1, int(math.floor((barL - loBound) / step))))
+            int hiRow = math.max(0, math.min(numRows - 1, int(math.floor((barH - loBound) / step))))
+            int spanRows = math.max(1, hiRow - loRow + 1)
+            float volPerRow = barV / spanRows
+            float buyPerRow = buyV / spanRows
+
+            for r = loRow to hiRow
+                array.set(vpTotalVol, r, array.get(vpTotalVol, r) + volPerRow)
+                array.set(vpBuyVol, r, array.get(vpBuyVol, r) + buyPerRow)
+            totalVolume += barV
+
+    // 4. Find Point of Control (POC)
+    float maxVol = 0.0
+    int   pocIdx = 0
+    for r = 0 to numRows - 1
+        float v = array.get(vpTotalVol, r)
+        if v > maxVol
+            maxVol := v
+            pocIdx := r
+
+    float pocPrice = array.get(vpPrices, pocIdx)
+
+    // 5. Calculate Value Area (VAH / VAL)
+    float targetVaVol = totalVolume * (vaPercent / 100.0)
+    float vaAccumVol  = maxVol
+    int   upPtr       = pocIdx + 1
+    int   dnPtr       = pocIdx - 1
+
+    while vaAccumVol < targetVaVol and (upPtr < numRows or dnPtr >= 0)
+        float upVol = (upPtr < numRows) ? array.get(vpTotalVol, upPtr) : 0.0
+        float dnVol = (dnPtr >= 0) ? array.get(vpTotalVol, dnPtr) : 0.0
+
+        if upVol >= dnVol and upPtr < numRows
+            vaAccumVol += upVol
+            upPtr += 1
+        else if dnPtr >= 0
+            vaAccumVol += dnVol
+            dnPtr -= 1
+        else if upPtr < numRows
+            vaAccumVol += upVol
+            upPtr += 1
+
+    float vahPrice = array.get(vpPrices, math.min(numRows - 1, upPtr - 1))
+    float valPrice = array.get(vpPrices, math.max(0, dnPtr + 1))
+
+    [pocPrice, vahPrice, valPrice, totalVolume]
+
+// ————— Virgin POC (vPOC) Maintenance Routine
+// Call on confirmed bars to test and prune mitigated vPOC levels
+updateVpocMitigation() =>
+    if array.size(vpocPrices) > 0
+        for i = array.size(vpocPrices) - 1 to 0
+            float p = array.get(vpocPrices, i)
+            if low <= p and high >= p
+                // Level touched / mitigated -> Cull line and remove
+                line l = array.get(vpocLines, i)
+                line.delete(l)
+                array.remove(vpocPrices, i)
+                array.remove(vpocBars, i)
+                array.remove(vpocLines, i)

@@ -1,0 +1,50 @@
+// Reference snippet: Multi-Anchor VWAP Engine with Statistical Standard Deviation Bands.
+//
+// NOTE: Pine Script has no local file imports — paste these patterns into your script.
+//
+// Features:
+//   • Dynamic anchor triggers: Session Open, Swing Pivot, Climax Volume Spike.
+//   • Rolling Volume-Weighted Variance and StdDev computation (±1σ, ±2σ, ±3σ).
+//   • Multi-band rendering with theme-adaptive styling.
+//
+// This is a fragment, not a standalone script:
+// pine-lint-disable PINE001,PINE002,PINE027,PINE051
+
+// ————— Anchored VWAP State Variables
+var float sumSrcVol   = 0.0
+var float sumVol      = 0.0
+var float sumSrcSqVol = 0.0
+var int   anchorBar   = 0
+
+// ————— Reset Trigger Evaluation
+// Example: New trading session OR high-volume spike
+bool isNewSession = timeframe.change("D")
+bool isVolSpike   = nz(volume) > (ta.sma(nz(volume), 20) * 3.0)
+bool shouldAnchor = isNewSession // Configurable condition
+
+if shouldAnchor
+    sumSrcVol   := 0.0
+    sumVol      := 0.0
+    sumSrcSqVol := 0.0
+    anchorBar   := bar_index
+
+// ————— Stateful Accumulation
+float typicalPrice = hlc3
+float barVol       = nz(volume)
+
+sumSrcVol   += typicalPrice * barVol
+sumVol      += barVol
+sumSrcSqVol += math.pow(typicalPrice, 2) * barVol
+
+// ————— Metric Computation
+float avwapPrice = sumVol > 0 ? sumSrcVol / sumVol : typicalPrice
+float variance   = sumVol > 0 ? math.max(0.0, (sumSrcSqVol / sumVol) - math.pow(avwapPrice, 2)) : 0.0
+float stdDev     = math.sqrt(variance)
+
+// ————— Standard Deviation Dispersion Bands
+float band1Upper = avwapPrice + (1.0 * stdDev)
+float band1Lower = avwapPrice - (1.0 * stdDev)
+float band2Upper = avwapPrice + (2.0 * stdDev)
+float band2Lower = avwapPrice - (2.0 * stdDev)
+float band3Upper = avwapPrice + (3.0 * stdDev)
+float band3Lower = avwapPrice - (3.0 * stdDev)

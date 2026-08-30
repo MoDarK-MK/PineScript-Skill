@@ -7,7 +7,7 @@ description: Use this skill whenever the user wants to write, edit, review, vers
 
 A skill for writing production-quality TradingView Pine Script (v6) indicators and
 strategies, and wrapping them in a lightweight "CI/CD"-style workflow: git repo
-structure, a 59-rule offline linter, professional visual design, in-script logical
+structure, a 61-rule offline linter, professional visual design, in-script logical
 tests, semantic versioning, and an automated release-bundle step.
 
 **Important framing to give the user up front (once, briefly):** TradingView has no
@@ -21,20 +21,21 @@ TradingView's servers.
 
 | File | Covers |
 |---|---|
+| `references/volume-keylevels-guide.md` | Institutional guide: Auction Market Theory, Volume Profile, vPOCs, CVD/Delta divergence, Anchored VWAP, and Key Level clustering |
 | `references/mtf-guide.md` | `request.security` / `request.security_lower_tf`: the three lookahead combinations, which one is the bug, gaps, the 40-call budget, and what "repaint" actually means |
 | `references/alerts-guide.md` | `alertcondition` vs `alert()`, frequency, placeholders, webhook JSON payloads, and why no secret belongs in a message |
 | `references/troubleshooting.md` | Symptom-first index of every failure this repo actually hit, with the rule that now catches each one |
 | `references/decisions.md` | Decision record: what was decided, why, and what would change our mind |
 | `references/pine-v6-guide.md` | v5→v6 breaking changes, dynamic requests, repainting traps, `var`/`varip`, verified hard platform limits |
 | `references/style-guide.md` | Official naming/structure/spacing conventions (camelCase, SNAKE_CASE, section order, line-wrapping) |
-| `references/lint-rules.md` | Full catalog of all 59 lint rules (codes PINE001–PINE060; PINE024 unassigned) with bad/good examples |
+| `references/lint-rules.md` | Full catalog of all 61 lint rules (codes PINE001–PINE062; PINE024 unassigned) with bad/good examples |
 | `references/design-system.md` | Making indicators look professional: theming, dashboards, gradients, palettes |
 | `references/strategy-guide.md` | Building strategies: signal design, position sizing math, the four risk modules, filters, overfitting, walk-forward, v6 strategy pitfalls |
 | `references/publishing-guide.md` | TradingView House Rules condensed: privacy/visibility, strategy realism, description format |
 | `references/repo-structure.md` | Folder layout, `version.json`, `CHANGELOG.md` format, optional pre-commit hook |
 | `references/performance-guide.md` | Work tiering, memoization, buffer reuse, drawing pools, `var` vs `varip` |
-| `references/snippets/` | Copy-paste Pine fragments for the parts a library cannot hold: `table_helpers.pine`, `glyphs.pine`, `live_update.pine`, `palette.pine`. Pine has no local imports, so stateful helpers are pasted |
-| `libraries/pine_toolkit/` | The pure helpers as a real Pine `library()`: theme palette, `formatVolume`, `glyphMeter`, `clamp`/`safeDiv`/`positionBetween`/`buyShare`, constant mappers. Publish it once, then `import` instead of pasting |
+| `references/snippets/` | Copy-paste Pine fragments for the parts a library cannot hold: `table_helpers.pine`, `glyphs.pine`, `live_update.pine`, `palette.pine`, `volume_levels_engine.pine`, `anchored_vwap.pine`, `key_levels_cluster.pine`. Pine has no local imports, so stateful helpers are pasted |
+| `libraries/pine_toolkit/` | The pure helpers as a real Pine `library()`: theme palette, `formatVolume`, `glyphMeter`, `clamp`/`safeDiv`/`positionBetween`/`buyShare`, `effortResultRatio`, `isVolumeClimax`, `isLowVolumeTest`, `inValueArea`, `scoreKeyLevel`, `detectDeltaDivergence`, constant mappers. Publish it once, then `import` instead of pasting |
 
 Several of these apply to any single request — e.g. "write me an indicator" still
 benefits from `pine-v6-guide.md` (correctness) and `design-system.md` (it not looking
@@ -182,10 +183,33 @@ levels, tick-vs-price units, unguarded `position_avg_price`, bad `qty`, orphan
 gate for `"kind": "strategy"` projects — lookahead bias, synthetic chart types, and
 zero-cost backtests block the release outright.
 
+## Engineering Volume & Key Level Indicators
+
+When the user asks to build indicators or strategies based on **Volume**, **Order Flow**,
+**Volume Profile**, **vPOCs**, **Anchored VWAP**, or **Key Levels / Liquidity Sweeps**:
+
+1. **Follow Auction Market Theory (AMT)**: Read `references/volume-keylevels-guide.md`.
+   - Calculate exact Value Area (70% Volume) and Point of Control (POC).
+   - Track **Virgin / Naked POCs (vPOC)** in dynamic arrays and prune them as soon as price tests/mitigates them (`low <= vpoc && high >= vpoc`).
+2. **Order Flow & Delta Aggressor Modeling**:
+   - Use normalized range models `buyShare = (close - low) / (high - low)` for fast single-bar delta, or `request.security_lower_tf()` for high-precision intrabar delta (with seconds-fallback safety).
+   - Compute Cumulative Volume Delta (CVD) and evaluate Regular/Hidden Delta Divergence at swing highs/lows.
+   - Detect **Volume Absorption** via Effort vs Result (EVR = Normalized Volume / Normalized Spread > 2.2).
+3. **Anchored VWAP & Statistical Dispersion**:
+   - Accumulate typical price $\times$ volume, total volume, and squared price $\times$ volume to calculate rolling VWAP and exact $\pm 1\sigma, \pm 2\sigma$ dispersion bands without loop overhead.
+4. **Key Level Clustering & Liquidity Sweeps**:
+   - Fetch HTF levels (PDH, PDL, PWH, PWL) with zero lookahead (`lookahead=barmerge.lookahead_off`, `high[1]`/`low[1]`).
+   - Detect false breakouts / liquidity sweeps: price pierces a key level but closes back inside with volume expansion ($\ge 1.8\times \text{SMA}_{20}$).
+   - Cluster close proximity levels into single weighted Confluence Zones to avoid chart clutter and prevent exceeding drawing limits.
+5. **Drawing & Performance Discipline**:
+   - Declare pre-allocated array memory pools (`var float[]`) instead of reallocating in loops.
+   - Restrict heavy recalculations in `barstate.islast` using input fingerprint caching.
+   - Manage drawing pools to strictly respect the 500 boxes/lines/labels limit.
+
 ## Linting (the "CI" part)
 
 `scripts/pine_lint.py` is a rule-based, OFFLINE linter — it does NOT compile the
-script (no such public tool exists). All 59 rules are fact-checked against
+script (no such public tool exists). All 61 rules are fact-checked against
 TradingView's official docs (migration guide, limitations page, style guide) as of
 mid-2026; full catalog with examples in `references/lint-rules.md`. Highlights:
 
