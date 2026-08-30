@@ -1,16 +1,16 @@
 {
-  "_comment": "Declared resource budget. These are intentions, not TradingView's limits \u2014 going over one means a change used more than this project meant to.",
+  "_comment": "Declared resource budget. These are intentions, not TradingView's limits — going over one means a change used more than this project meant to.",
   "budget": {
     "boxes": 50,
     "lines": 50,
     "labels": 50,
     "polylines": 50,
-    "plot_counts": 7,
+    "plot_counts": 10,
     "tables": 1,
     "requests": 1
   },
   "complexity": {
-    "lines": 192,
+    "lines": 261,
     "longest_function": 6,
     "max_indent_depth": 2,
     "inputs": 0

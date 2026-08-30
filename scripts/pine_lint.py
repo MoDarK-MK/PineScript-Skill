@@ -1541,7 +1541,13 @@ def check_plot_and_drawing_limits(text, lines, result, cfg):
 # collecting declarations only costs detection power, while under-collecting
 # them would invent false "undeclared" findings on correct code.
 # ---------------------------------------------------------------------------
-IDENT_ASSIGN_RE = re.compile(r'([A-Za-z_]\w*)\s*(:=|=)(?!=)')
+# Not preceded by a digit or a dot, and not followed by `>`.
+#
+# `1e9` is a number, and without the leading guard its exponent reads as a
+# variable named `e9`. `=>` is a switch branch or a function arrow, not an
+# assignment, and without the trailing guard `v >= 1e9 => "B"` is reported
+# as declaring something. Both were live false positives.
+IDENT_ASSIGN_RE = re.compile(r'(?<![\w.])([A-Za-z_]\w*)\s*(:=|=)(?![=>])')
 TUPLE_DECL_RE = re.compile(r'^\s*\[([^\]]+)\]\s*=(?!=)')
 FOR_IN_RE = re.compile(r'^\s*for\s+(?:\[([^\]]+)\]|([A-Za-z_]\w*))\s+in\b')
 TYPE_BLOCK_RE = re.compile(r'^\s*type\s+[A-Za-z_]\w*\s*$')
