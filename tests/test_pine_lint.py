@@ -1415,3 +1415,67 @@ if barstate.islast
 plot(close, title="C")
 """
         self.assertNotIn("PINE062", codes(lint_text(src)))
+
+
+class TestFieldAssignmentTarget(unittest.TestCase):
+    """PINE064. Pine needs a name on the left of a field assignment; a call
+    returns a value and there is nothing to write the field back into."""
+
+    HEAD = """//@version=6
+indicator("T", overlay=true)
+type Zone
+    int   rank
+    float value
+var array<Zone> zones = array.new<Zone>()
+"""
+
+    def test_assigning_a_field_on_a_call_result_is_flagged(self):
+        src = self.HEAD + """if barstate.islast
+    array.get(zones, 0).rank := 5
+plot(close, title="C")
+"""
+        self.assertIn("PINE064", codes(lint_text(src)))
+
+    def test_binding_to_a_name_first_is_not(self):
+        src = self.HEAD + """if barstate.islast
+    Zone z = array.get(zones, 0)
+    z.rank := 5
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE064", codes(lint_text(src)))
+
+    def test_reading_the_same_expression_is_legal(self):
+        """The reason this needs a rule rather than a shape match: the identical
+        expression on the RIGHT compiles and works, so the two look
+        symmetrical."""
+        src = self.HEAD + """if barstate.islast
+    Zone z = array.get(zones, 0)
+    float x = array.get(zones, 0).value
+    z.value := x + array.get(zones, 0).value
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE064", codes(lint_text(src)))
+
+    def test_a_compound_assignment_on_a_call_result_is_flagged_too(self):
+        src = self.HEAD + """if barstate.islast
+    array.get(zones, 0).value += 1.0
+plot(close, title="C")
+"""
+        self.assertIn("PINE064", codes(lint_text(src)))
+
+    def test_a_call_inside_the_index_is_still_the_target(self):
+        """`array.get(zones, array.size(zones) - 1).rank := 1` is the same
+        defect with a busier subscript, and the extra parens must not hide it."""
+        src = self.HEAD + """if barstate.islast
+    array.get(zones, array.size(zones) - 1).rank := 1
+plot(close, title="C")
+"""
+        self.assertIn("PINE064", codes(lint_text(src)))
+
+    def test_a_field_read_in_a_condition_is_not_an_assignment(self):
+        src = self.HEAD + """if barstate.islast and array.size(zones) > 0
+    if array.get(zones, 0).rank == 1
+        alert("first")
+plot(close, title="C")
+"""
+        self.assertNotIn("PINE064", codes(lint_text(src)))

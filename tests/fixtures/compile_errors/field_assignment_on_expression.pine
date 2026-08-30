@@ -1,0 +1,36 @@
+// FIXTURE — must be caught by PINE064
+//
+// TradingView: Error at 283:40 Unable to determine the object for the field
+// assignment. Try putting the object into a separate variable before assigning
+// values to its fields.
+//
+// Pine needs a NAME on the left of a field assignment. A call returns a value,
+// and there is nothing for it to write the field back into.
+//
+// What makes this worth a rule is that READING the identical expression is
+// legal: `array.get(zones, 0).rank` on the right-hand side compiles and does
+// exactly what it looks like. The two shapes read as symmetrical and only one
+// of them is.
+//@version=6
+indicator("Field Assignment", overlay = true)
+
+type Zone
+    int   rank
+    float value
+
+var array<Zone> zones = array.new<Zone>()
+
+if barstate.islast
+    array.push(zones, Zone.new(0, 1.0))
+
+    // bad — the target is a call result
+    array.get(zones, 0).rank := 5
+
+    // good — bound to a name first
+    Zone z = array.get(zones, 0)
+    z.rank := 6
+
+    // and this is a legal READ of the same shape
+    z.value := array.get(zones, 0).value + 1
+
+plot(close, title = "C")

@@ -132,6 +132,7 @@ RULES = {
     "PINE061": ("warning", "table.new() with >8 rows but no divider row (height=0 cell) — add section separators"),
     "PINE062": ("info", "Multiple label.new() at the same bar_index without anti-collision spacing"),
     "PINE063": ("error", "Reserved word used as a variable or function name"),
+    "PINE064": ("error", "Field assigned on an expression instead of a variable"),
 }
 
 # Rules --fix can repair mechanically. Every one of these has exactly one
@@ -2815,6 +2816,49 @@ def check_reserved_name(lines, result):
                        "code. Rename it." % (name, kind, name))
 
 
+# @rule PINE064
+# A field assignment whose target is a CALL result rather than a name. The
+# closing paren immediately before the dot is the whole tell.
+CALL_FIELD_ASSIGN_RE = re.compile(r'\)\s*\.\s*([a-zA-Z_]\w*)\s*(?::=|\+=|-=|\*=|/=|%=)')
+# Anything already assigned earlier on the line means this match is on the
+# RIGHT of it, and reading a field off a call is legal.
+ASSIGN_BEFORE_RE = re.compile(r':=|\+=|-=|\*=|/=|%=|(?<![=!<>])=(?!=)')
+
+
+def check_field_assignment_target(lines, result):
+    """PINE064 - Pine needs a NAME on the left of a field assignment.
+
+    `array.get(zones, i).rank := 1` is `Unable to determine the object for the
+    field assignment`: a call returns a value, and there is nothing for Pine to
+    write the field back into.
+
+    What makes it worth a rule is that READING the identical expression is
+    legal. `array.get(zones, i).rank` on the right-hand side compiles and does
+    what it looks like, so the two shapes read as symmetrical when only one of
+    them is. This shipped from this repo in exactly that form."""
+    for i, raw in enumerate(lines):
+        text = strip_strings_and_comments(raw)
+        if ")" not in text:
+            continue
+        for m in CALL_FIELD_ASSIGN_RE.finditer(text):
+            # Only an assignment TARGET counts. The identical expression on
+            # the right-hand side is a read and is perfectly legal, so the test
+            # is whether any assignment has already happened on this line.
+            op = m.group(0).strip()[-2:]
+            before = text[:m.start()]
+            if not ASSIGN_BEFORE_RE.search(before):
+                result.add(i + 1, "PINE064",
+                           "'%s' is being assigned on the result of a CALL. Pine "
+                           "needs a variable there - a call returns a value and "
+                           "there is nothing to write the field back into, so "
+                           "this is \"Unable to determine the object for the "
+                           "field assignment\" at compile time. Bind it first: "
+                           "`MyType v = array.get(...)` then `v.%s %s ...`. "
+                           "Reading the same expression IS legal, which is why "
+                           "the two look symmetrical."
+                           % (m.group(1), m.group(1), op))
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -2896,6 +2940,7 @@ def lint_file(path, cfg):
     check_unterminated_string(lines, result)
     check_integer_division(lines, result)
     check_reserved_name(lines, result)
+    check_field_assignment_target(lines, result)
     check_dashboard_divider(lines, result)
     check_label_overlap(lines, result)
 

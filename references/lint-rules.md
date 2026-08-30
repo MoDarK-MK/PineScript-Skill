@@ -15,7 +15,7 @@ Suppress any rule with `// pine-lint-disable-next-line CODE`,
 `// pine-lint-disable-line CODE`, or file-wide with a top-of-file
 `// pine-lint-disable CODE1,CODE2`.
 
-Note on numbering: there are 62 rules spanning codes PINE001–PINE063. The code
+Note on numbering: there are 63 rules spanning codes PINE001–PINE064. The code
 **PINE024 is intentionally unassigned** (a rule retired before release; the
 number is kept vacant so existing suppression comments never change meaning).
 
@@ -61,6 +61,7 @@ added *after* the error was hit in real use.
 | `Undeclared identifier "x"` / "cannot register side effect" | **PINE055** | A global declared BELOW the code that reads it |
 | *(no error — the wrong value is simply used)* | **PINE058** | A name shadowing a built-in namespace, then dereferenced |
 | *(no error — the array just accumulates)* | **PINE054** | A `var` collection grown on a tick with no confirmation guard |
+| `Unable to determine the object for the field assignment` | **PINE064** | A field assigned on a call result |
 | `"x" cannot be used as a variable or function name` | **PINE063** | A word Pine reserves used as a name |
 | *(no error — the arithmetic is simply wrong)* | **PINE060** | Two ints divided where a fraction was wanted |
 | "Missing enclosing character in the literal string" | **PINE059** | A string opened on a line that ends before closing it |
@@ -898,6 +899,32 @@ Only `range` is confirmed by a TradingView error message seen here; the rest of
 the list is Pine's documented set of reserved words. If one of them turns out to
 be usable, remove it from `PINE_RESERVED` — renaming is cheap and a false
 positive here costs nothing but a better name.
+
+### PINE064 — error — Field assigned on an expression instead of a variable
+Pine needs a NAME on the left of a field assignment. A call returns a value, and
+there is nothing for it to write the field back into.
+```pinescript
+// bad
+array.get(zones, i).rank := i + 1
+```
+```pinescript
+// good
+Zone z = array.get(zones, i)
+z.rank := i + 1
+```
+
+> Error at 283:40 Unable to determine the object for the field assignment. Try
+> putting the object into a separate variable before assigning values to its
+> fields.
+
+What makes this worth a rule is that READING the identical expression is legal:
+`array.get(zones, i).rank` on the right-hand side compiles and does exactly what
+it looks like. The two shapes read as symmetrical and only one of them is, which
+is why the rule tests whether an assignment has already happened on the line
+rather than simply matching the shape.
+
+This shipped from this repo in exactly that form.
+
 
 
 
