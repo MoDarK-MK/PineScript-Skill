@@ -34,8 +34,48 @@ LOCAL_RE = re.compile(r'^([a-zA-Z_]\w*)\s*\(')
 EXEMPT_RE = re.compile(r'//\s*library-sync-exempt\b')
 
 
+# Local names for library functions, where the copy could NOT keep the library's
+# name. These three could not: `textColor` and `mutedColor` are already
+# variables in every script that uses them -
+#
+#     color textColor = getTextColor(themeInput)
+#
+# so a copy called `textColor` would collide with the value it produces. The
+# `get` prefix is load-bearing, not noise, and renaming to match would create
+# exactly the shadowing bug that has already cost this repo a release.
+#
+# Comparing by name alone meant these were never compared at all, and three
+# helpers across four projects drifted into two versions each.
+LOCAL_ALIASES = {
+    "getTextColor": "textColor",
+    "getMutedColor": "mutedColor",
+    "getPanelColor": "panelColor",
+}
+
+
 def read_lines(path):
     return path.read_text(encoding="utf-8").splitlines()
+
+
+# A script names its themes; a library cannot, because the constant belongs to
+# the consumer. Normalising them is what keeps 27 style differences from burying
+# the one real difference underneath - a missing transparency clamp, in this
+# case, which nobody could see through the noise.
+CONSTANT_EQUIVALENTS = {
+    "THEME_LIGHT": '"Light"',
+    "THEME_DARK": '"Dark"',
+}
+
+
+def normalise(body):
+    """A function body with known constant names replaced by their values, and
+    `switch x` / ternary spellings of the same two-way choice made comparable."""
+    out = []
+    for line in body:
+        for name, literal in CONSTANT_EQUIVALENTS.items():
+            line = re.sub(r'(?<![\w.])' + name + r'(?![\w])', literal, line)
+        out.append(" ".join(line.split()))
+    return out
 
 
 def collect_functions(lines, pattern):
@@ -98,15 +138,17 @@ def main():
     for path in source_files():
         local = collect_functions(read_lines(path), LOCAL_RE)
         for name, (line_no, body) in sorted(local.items()):
-            if name not in exported:
+            canonical = LOCAL_ALIASES.get(name, name)
+            if canonical not in exported:
                 continue
             matched += 1
-            if body != exported[name][1]:
+            if normalise(body) != normalise(exported[canonical][1]):
                 drift.append({
-                    "function": name,
+                    "function": name if canonical == name
+                                else f"{name} [library: {canonical}]",
                     "file": str(path.relative_to(ROOT)).replace("\\", "/"),
                     "line": line_no,
-                    "library_line": exported[name][0],
+                    "library_line": exported[canonical][0],
                 })
 
     if args.json:

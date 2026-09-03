@@ -182,6 +182,7 @@ PineScript-Skill/
 │   ├── test_generate_release_bundle.py
 │   ├── test_htf.py
 │   ├── test_intrabars.py
+│   ├── test_library_aliases.py
 │   ├── test_new_tooling.py
 │   ├── test_pine_interp.py
 │   ├── test_pine_lint.py

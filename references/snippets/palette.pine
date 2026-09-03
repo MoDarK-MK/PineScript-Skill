@@ -98,6 +98,9 @@ getAccentColor(string theme) =>
         =>             ACCENT_DARK
 
 // @function Primary text colour — the value column of a dashboard.
+// library-sync-exempt: this variant supports a third theme, THEME_AUTO, which
+// follows the chart's own light/dark setting. The library has only two, because
+// a published library cannot read the chart it is imported into.
 getTextColor(string theme) =>
     switch theme
         THEME_LIGHT => #131722
@@ -106,6 +109,9 @@ getTextColor(string theme) =>
 
 // @function Secondary text colour — the label column. Deliberately lower
 // contrast than getTextColor so the value reads first.
+// library-sync-exempt: this variant supports a third theme, THEME_AUTO, which
+// follows the chart's own light/dark setting. The library has only two, because
+// a published library cannot read the chart it is imported into.
 getMutedColor(string theme) =>
     switch theme
         THEME_LIGHT => NEUTRAL_LIGHT
@@ -114,6 +120,9 @@ getMutedColor(string theme) =>
 
 // @function Table background. Keep transparency between 10 and 25: at 80+ the
 // candles behind the table win and the numbers become unreadable.
+// library-sync-exempt: this variant supports a third theme, THEME_AUTO, which
+// follows the chart's own light/dark setting. The library has only two, because
+// a published library cannot read the chart it is imported into.
 getPanelColor(string theme, int transp) =>
     color base = switch theme
         THEME_LIGHT => #ffffff

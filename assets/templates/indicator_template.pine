@@ -100,6 +100,9 @@ getBearColor(string theme) =>
         =>             BEAR_DARK
 
 // @function Primary text color — the value column reads first.
+// library-sync-exempt: this variant supports a third theme, THEME_AUTO, which
+// follows the chart's own light/dark setting. The library has only two, because
+// a published library cannot read the chart it is imported into.
 getTextColor(string theme) =>
     switch theme
         THEME_LIGHT => #131722
@@ -107,6 +110,9 @@ getTextColor(string theme) =>
         =>             #d1d4dc
 
 // @function Secondary text color — deliberately lower contrast than the value.
+// library-sync-exempt: this variant supports a third theme, THEME_AUTO, which
+// follows the chart's own light/dark setting. The library has only two, because
+// a published library cannot read the chart it is imported into.
 getMutedColor(string theme) =>
     switch theme
         THEME_LIGHT => NEUTRAL_LIGHT
@@ -114,6 +120,9 @@ getMutedColor(string theme) =>
         =>             NEUTRAL_DARK
 
 // @function Panel background for the selected theme.
+// library-sync-exempt: this variant supports a third theme, THEME_AUTO, which
+// follows the chart's own light/dark setting. The library has only two, because
+// a published library cannot read the chart it is imported into.
 getPanelColor(string theme, int transp) =>
     color base = switch theme
         THEME_LIGHT => #ffffff

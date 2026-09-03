@@ -182,21 +182,16 @@ getBearColor(string theme) =>
 
 // @function Primary text color — the value column reads first.
 getTextColor(string theme) =>
-    switch theme
-        THEME_LIGHT => #131722
-        => #d1d4dc
+    theme == THEME_LIGHT ? #131722 : #d1d4dc
 
 // @function Secondary text color — deliberately lower contrast than the value.
 getMutedColor(string theme) =>
-    switch theme
-        THEME_LIGHT => #4a4e58
-        => #b2b5be
+    theme == THEME_LIGHT ? #4a4e58 : #b2b5be
 
 // @function Panel background. Keep transparency low (10-25): at 80+ the candles
 // behind the panel win and the numbers stop being readable.
 getPanelColor(string theme, int transp) =>
-    color base = theme == THEME_LIGHT ? #ffffff : #131722
-    color.new(base, transp)
+    color.new(theme == THEME_LIGHT ? #ffffff : #131722, math.max(0, math.min(100, transp)))
 
 // @function Maps a position-name string to the matching position.* constant.
 tablePosFrom(string name) =>

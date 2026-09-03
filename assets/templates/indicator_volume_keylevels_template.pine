@@ -129,12 +129,21 @@ getAccentColor() =>
         THEME_LIGHT => ACCENT_LIGHT
         =>             ACCENT_DARK
 
+// library-sync-exempt: this variant supports a third theme, THEME_AUTO, which
+// follows the chart's own light/dark setting. The library has only two, because
+// a published library cannot read the chart it is imported into.
 getTextColor() =>
     themeInput == THEME_LIGHT or (themeInput == THEME_AUTO and _isLightChart()) ? #131722 : #d1d4dc
 
+// library-sync-exempt: this variant supports a third theme, THEME_AUTO, which
+// follows the chart's own light/dark setting. The library has only two, because
+// a published library cannot read the chart it is imported into.
 getMutedColor() =>
     themeInput == THEME_LIGHT or (themeInput == THEME_AUTO and _isLightChart()) ? #4a4e58 : #b2b5be
 
+// library-sync-exempt: this variant supports a third theme, THEME_AUTO, which
+// follows the chart's own light/dark setting. The library has only two, because
+// a published library cannot read the chart it is imported into.
 getPanelColor() =>
     color.new(
          themeInput == THEME_LIGHT or (themeInput == THEME_AUTO and _isLightChart()) ? #ffffff : #131722,
