@@ -19,6 +19,7 @@ import re
 import sys
 import time
 import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Dict, Any, Tuple
 

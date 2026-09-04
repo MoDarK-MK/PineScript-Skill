@@ -72,46 +72,22 @@ spreadLabels(array<float> prices, float atrValue, float gapFactor) =>
 
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// FULL USAGE EXAMPLE — Copy and adapt this block.
+// USAGE WORKFLOW:
+// 1. Maintain parallel persistent arrays for prices, labels, and lines:
+//      var array<float> levelPrices = array.new<float>()
+//      var array<label> levelLabels = array.new<label>()
+// 2. On bar update, store true level prices in `levelPrices` and drawings in `levelLabels`.
+// 3. Inside `if barstate.islast`, apply anti-collision to labels only:
+//      array<float> adjusted = spreadLabels(levelPrices, ta.atr(14), 0.35)
+//      for i = 0 to array.size(levelPrices) - 1
+//          label.set_y(array.get(levelLabels, i), array.get(adjusted, i))
+//          // Note: The underlying price lines remain anchored to array.get(levelPrices, i)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//
-// Setup: build your levels array and parallel label/line arrays, using var
-// so they persist across bars. Populate them wherever your signal fires.
-
-// var array<float> levelPrices = array.new<float>()
-// var array<label> levelLabels = array.new<label>()
-// var array<line>  levelLines  = array.new<line>()
-//
-// float atr = ta.atr(14)   // must be global — ta.* inside barstate.islast corrupts state
-//
-// // Example: add three key levels when bar closes
-// if barstate.isconfirmed and bar_index == 100   // replace with your own signal
-//     array.clear(levelPrices)
-//     array.clear(levelLabels)
-//     array.clear(levelLines)
-//
-//     // Add levels — true prices go into levelPrices
-//     for each [price, lbl_text, lbl_color] in your_levels_data
-//         array.push(levelPrices, price)
-//         array.push(levelLines,  line.new(bar_index - 20, price, bar_index + 10, price,
-//              color=lbl_color, width=1))
-//         array.push(levelLabels, label.new(bar_index + 10, price, lbl_text,
-//              color=lbl_color, textcolor=color.white,
-//              style=label.style_label_left, size=size.small))
-//
-// if barstate.islast
-//     // Apply anti-collision — move LABELS only, lines stay at true prices
-//     array<float> adjusted = spreadLabels(levelPrices, atr, 0.35)
-//     for i = 0 to array.size(levelPrices) - 1
-//         label.set_y(array.get(levelLabels, i), array.get(adjusted, i))
-//         // The line Y is NOT changed — it stays at array.get(levelPrices, i)
-
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // LITE VARIANT — for a small fixed set of levels (no arrays needed).
 // Useful when you have exactly 2–4 hard-coded key levels per bar.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//
 // @function Nudge labelY away from anchorY by at least minGap if needed.
 // Returns the (possibly adjusted) Y position for the label.
 // The caller is responsible for keeping lines at the true price.
@@ -119,14 +95,3 @@ nudgeLabel(float labelY, float anchorY, float minGap) =>
     math.abs(labelY - anchorY) < minGap
         ? (labelY < anchorY ? anchorY - minGap : anchorY + minGap)
         : labelY
-//
-// Example with 3 levels:
-//   float atr   = ta.atr(14)
-//   float pdh   = ta.highest(high, 1)[1]
-//   float swHigh = ta.highest(high, 20)
-//   float pdl   = ta.lowest(low,  1)[1]
-//
-//   if barstate.islast
-//       float adjSwHigh = nudgeLabel(swHigh, pdh, atr * 0.4)
-//       label.set_y(swingLabel, adjSwHigh)
-//       // pdh line and label stay at true pdh price

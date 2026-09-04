@@ -163,23 +163,8 @@ float srcHighest = ta.highest(sourceInput, lengthInput)
 float rsiValue = ta.rsi(sourceInput, 14)
 color gradientColor = color.from_gradient(rsiValue, 30, 70, bearColor, bullColor)
 
-// Example: Dynamic bull/bear zone fill between two series.
-// fill() only works on plot() IDs — see references/snippets/zone_fill.pine.
-// float upperBand = maValue + ta.atr(14)
-// float lowerBand = maValue - ta.atr(14)
-// p1 = plot(upperBand, display=display.none)
-// p2 = plot(lowerBand, display=display.none)
-// fill(p1, p2, color = trendUp ? color.new(bullColor, 88) : color.new(bearColor, 88))
-
-// Example: Heavy loop fingerprint caching
-// Heavy logic (like profiling) should only re-run when its inputs change, not on every tick.
-// var int cachedBar = na
-// var float heavyResult = na
-// if barstate.islast
-//     if cachedBar != bar_index // Fingerprint check
-//         cachedBar := bar_index
-//         heavyResult := 0.0 // Do heavy loop here
-//     // Update drawings using heavyResult here
+// Note: For dynamic bull/bear zone fills, see references/snippets/zone_fill.pine.
+// Note: For heavy calculation caching on realtime bars, see references/performance-guide.md.
 
 // ————— Visuals
 // Use display.pane to keep the status line clean for plots that are just visual aids

@@ -260,21 +260,12 @@ strategy.risk.max_cons_loss_days(maxConsLossDaysInput)
 strategy.risk.max_intraday_filled_orders(maxDailyOrdersInput)
 
 // ————— Calculations
-// ————— Calculations
 color bullColor  = getBullColor(themeInput)
 color bearColor  = getBearColor(themeInput)
 color textColor  = getTextColor(themeInput)
 color mutedColor = getMutedColor(themeInput)
 
-// Example: Heavy loop fingerprint caching
-// Heavy logic (like profiling) should only re-run when its inputs change, not on every tick.
-// var int cachedBar = na
-// var float heavyResult = na
-// if barstate.islast
-//     if cachedBar != bar_index // Fingerprint check
-//         cachedBar := bar_index
-//         heavyResult := 0.0 // Do heavy loop here
-//     // Update drawings using heavyResult here
+// Note: For heavy calculation caching on realtime bars, see references/performance-guide.md.
 
 // Every ta.*/request.* result is computed into a named variable BEFORE any
 // condition uses it — v6 evaluates and/or lazily, so a call placed after an

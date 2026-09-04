@@ -9,7 +9,7 @@
 //   • Proximity-based Level Clustering with institutional confluence scoring.
 //
 // This is a fragment, not a standalone script:
-// pine-lint-disable PINE001,PINE002,PINE027,PINE051
+// pine-lint-disable PINE001,PINE002,PINE027,PINE051,PINE056
 
 // ————— Safe Zero-Repaint MTF Extraction
 // Lookahead is explicitly turned OFF; closed historical bars [1] are retrieved

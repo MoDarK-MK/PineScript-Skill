@@ -12,7 +12,6 @@ Usage:
     python3 scripts/install_hooks.py --uninstall
 """
 import argparse
-import os
 import stat
 import subprocess
 import sys

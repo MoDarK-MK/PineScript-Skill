@@ -26,9 +26,6 @@ color NEUTRAL_DARK  = #b2b5be
 color BULL_LIGHT    = #00796b
 color BEAR_LIGHT    = #c62828
 color ACCENT_LIGHT  = #b26a00
-color NEUTRAL_LIGHT = #4a4e58
-
-color TRANSPARENT   = #00000000
 
 // ————— Inputs: Multi-Timeframe Key Levels
 string G_HTF = "Key Levels & MTF"
@@ -45,8 +42,8 @@ float  sweepVolMultInput = input.float(
      1.8, "Sweep Volume Multiplier", minval=1.0, maxval=10.0, step=0.1, group=G_HTF,
      tooltip="Volume must exceed this multiple of the 20-bar average to qualify as an institutional sweep.")
 
-// ————— Inputs: Volume Profile & Virgin POC
-string G_VP = "Volume Profile & vPOC"
+// ————— Inputs: Volume Profile
+string G_VP = "Volume Profile"
 bool   showVpInput       = input.bool(
      true, "Enable Volume Profile", group=G_VP,
      tooltip="Computes horizontal volume distribution, POC, and Value Area (VAH/VAL).")
@@ -59,9 +56,6 @@ int    vpRowsInput       = input.int(
 float  vaPercentInput    = input.float(
      70.0, "Value Area %", minval=50.0, maxval=90.0, step=1.0, group=G_VP,
      tooltip="Percentage of volume encompassed by Value Area (Standard Auction Theory uses 70%).")
-bool   showVpocInput     = input.bool(
-     true, "Track Virgin POCs (vPOC)", group=G_VP,
-     tooltip="Draws historical unmitigated Point of Control lines and removes them when retested.")
 
 // ————— Inputs: Anchored VWAP & Order Flow
 string G_OF = "Order Flow & Anchored VWAP"

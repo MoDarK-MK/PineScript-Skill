@@ -102,21 +102,17 @@ fill(pMa21, pMa55, color=color.new(ribbonBullish ? bullColor : bearColor, 92),
 // Best for: SMC zones, order blocks, support/resistance areas.
 // Uses box.new() instead of fill(), so it persists across bars.
 // ─────────────────────────────────────────────────────────────────────
-//
-// For dynamic zones that stay on chart until deleted or replaced:
+float zoneLow20    = ta.lowest(low, 20)
+float zoneTop      = zoneLow20 * 1.005
+float zoneBottom   = zoneLow20 * 0.995
 
-// var box demandZone = na
-// var box supplyZone = na
-//
-// if barstate.islast
-//     // Demand zone: price zone between two lows
-//     float zoneTop    = ta.lowest(low, 20) * 1.005
-//     float zoneBottom = ta.lowest(low, 20) * 0.995
-//     int   zoneLeft   = bar_index - 20
-//
-//     if not na(demandZone)
-//         box.delete(demandZone)
-//     demandZone := box.new(
-//          left=zoneLeft, top=zoneTop, right=bar_index + 10, bottom=zoneBottom,
-//          bgcolor=color.new(bullColor, 88),
-//          border_color=color.new(bullColor, 60), border_width=1)
+var box demandZone = box.new(
+     left=bar_index, top=high, right=bar_index, bottom=low,
+     bgcolor=color.new(bullColor, 88),
+     border_color=color.new(bullColor, 60), border_width=1)
+
+if barstate.islast
+    box.set_left(demandZone, bar_index - 20)
+    box.set_right(demandZone, bar_index + 10)
+    box.set_top(demandZone, zoneTop)
+    box.set_bottom(demandZone, zoneBottom)

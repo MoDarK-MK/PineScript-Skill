@@ -9,7 +9,7 @@
 //   • Live tick gating via input fingerprinting.
 //
 // This is a fragment, not a standalone script:
-// pine-lint-disable PINE001,PINE002,PINE027,PINE051
+// pine-lint-disable PINE001,PINE002,PINE027,PINE051,PINE056
 
 // ————— Memory Pools (Declared once with var)
 var int   VP_MAX_ROWS  = 50
